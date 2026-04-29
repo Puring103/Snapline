@@ -35,6 +35,14 @@ impl AppPaths {
     pub fn markdown_asset_path(&self, note_id: &NoteId, asset_id: &AssetId, ext: &str) -> String {
         format!("assets/notes/{}/{}.{}", note_id, asset_id, ext)
     }
+
+    pub fn resolve_markdown_asset_path(&self, markdown_path: &str) -> PathBuf {
+        self.data_dir.join(markdown_path)
+    }
+
+    pub fn markdown_asset_url(&self, markdown_path: &str) -> String {
+        format!("asset://localhost/{}", markdown_path.trim_start_matches('/'))
+    }
 }
 
 #[cfg(test)]

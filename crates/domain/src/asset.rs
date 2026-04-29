@@ -19,4 +19,6 @@ impl std::fmt::Display for AssetId {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetRef {
     pub markdown_path: String,
+    pub filesystem_path: String,
+    pub asset_url: String,
 }
