@@ -25,6 +25,14 @@ pub struct BootstrapState {
     pub data_dir: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncAccountState {
+    pub account_id: Option<String>,
+    pub device_id: String,
+    pub server_base_url: Option<String>,
+    pub is_logged_in: bool,
+}
+
 impl AppCore {
     pub fn open(paths: AppPaths) -> Result<Self> {
         fs::create_dir_all(&paths.data_dir)?;
@@ -133,6 +141,30 @@ impl AppCore {
 
     pub fn set_open_shortcut(&self, shortcut: &str) -> Result<()> {
         self.repo.set_setting(OPEN_SHORTCUT_KEY, Some(shortcut))
+    }
+
+    pub fn sync_account_state(&self) -> Result<SyncAccountState> {
+        let state = self.repo.get_or_create_sync_state()?;
+        Ok(SyncAccountState {
+            account_id: state.account_id,
+            device_id: state.device_id,
+            server_base_url: state.server_base_url,
+            is_logged_in: state.access_token.is_some(),
+        })
+    }
+
+    pub fn save_sync_login(
+        &self,
+        server_base_url: &str,
+        account_id: &str,
+        access_token: &str,
+    ) -> Result<SyncAccountState> {
+        let mut state = self.repo.get_or_create_sync_state()?;
+        state.server_base_url = Some(server_base_url.to_string());
+        state.account_id = Some(account_id.to_string());
+        state.access_token = Some(access_token.to_string());
+        self.repo.save_sync_state(&state)?;
+        self.sync_account_state()
     }
 
     pub fn pending_sync_changes(&self) -> Result<Vec<snapline_storage::ChangeQueueItem>> {

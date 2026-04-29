@@ -1,44 +1,66 @@
 :root {
   color-scheme: light;
-  --bg: #eef2f5;
-  --canvas: #fff8d8;
-  --surface: #ffffff;
-  --surface-soft: #f6f8fa;
-  --line: #d6dde4;
-  --line-strong: #c0c9d2;
-  --text: #1f2328;
-  --muted: #66707b;
-  --accent: #2f6f8f;
-  --accent-soft: #d7ebf6;
-  --danger: #b14a3d;
-  --code-bg: #172026;
-  --code-text: #e7edf2;
-  --code-muted: #91a4b3;
-  --code-accent: #7cc7a4;
-  --scroll-thumb: rgba(31, 35, 40, 0.18);
-  --shadow: 0 16px 40px rgba(31, 35, 40, 0.12);
+  --bg: #f5eee1;
+  --bg-glow: rgba(255, 229, 138, 0.18);
+  --desk: #fffdf9;
+  --canvas: #fff9dc;
+  --canvas-strong: #ffed9c;
+  --surface: #fffefa;
+  --surface-soft: #faf3e4;
+  --line: #eadfc0;
+  --line-strong: #d7be64;
+  --note-line: #e9dba3;
+  --text: #2c2618;
+  --muted: #746952;
+  --accent: #2f8577;
+  --accent-soft: #e1f3ee;
+  --icon: #3b3324;
+  --pin-active: #8a6314;
+  --pin-active-bg: #ffe48a;
+  --danger: #b85b4d;
+  --code-bg: #f3ead0;
+  --code-text: #4a402b;
+  --code-line: #d9c891;
+  --code-muted: #8d805f;
+  --code-accent: #2f8577;
+  --inline-code-bg: #efe2b7;
+  --code-chip-text: #3b3324;
+  --scroll-thumb: rgba(78, 56, 24, 0.2);
+  --shadow: 0 18px 38px rgba(78, 56, 24, 0.095);
+  --note-shadow: 0 10px 20px rgba(88, 63, 20, 0.1);
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 
 html[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #16191c;
-  --canvas: #272219;
-  --surface: #20252a;
-  --surface-soft: #262c31;
-  --line: #394149;
-  --line-strong: #4a5661;
-  --text: #eceff1;
-  --muted: #a7b0b8;
-  --accent: #79b7cf;
-  --accent-soft: #1e3b47;
-  --danger: #e28a7c;
-  --code-bg: #11161a;
-  --code-text: #dce5ec;
-  --code-muted: #7f93a3;
-  --code-accent: #8ed6b3;
-  --scroll-thumb: rgba(236, 239, 241, 0.2);
-  --shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
+  --bg: #151815;
+  --bg-glow: rgba(177, 138, 61, 0.1);
+  --desk: #191c18;
+  --canvas: #332f1e;
+  --canvas-strong: #4a3d1f;
+  --surface: #20251f;
+  --surface-soft: #282b23;
+  --line: #403f31;
+  --line-strong: #766337;
+  --note-line: #5c4f2d;
+  --text: #f7ecd3;
+  --muted: #cabc9d;
+  --accent: #94d7c4;
+  --accent-soft: #24463d;
+  --icon: #f0e6cf;
+  --pin-active: #ffe08a;
+  --pin-active-bg: #5e4d24;
+  --danger: #e08c7e;
+  --code-bg: #1d211d;
+  --code-text: #f2e8d1;
+  --code-line: #4b4934;
+  --code-muted: #a99b7d;
+  --code-accent: #94d7c4;
+  --inline-code-bg: #30382f;
+  --code-chip-text: #f2e8d1;
+  --scroll-thumb: rgba(247, 236, 211, 0.2);
+  --shadow: 0 20px 48px rgba(0, 0, 0, 0.28);
+  --note-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
 }
 
 html,
@@ -51,8 +73,9 @@ body,
 body {
   overflow: hidden;
   background:
-    radial-gradient(circle at 20% 0%, rgba(47, 111, 143, 0.12), transparent 26%),
-    linear-gradient(180deg, var(--surface-soft) 0%, var(--bg) 100%);
+    radial-gradient(circle at 18% 4%, var(--bg-glow), transparent 30%),
+    radial-gradient(circle at 92% 18%, rgba(47, 133, 119, 0.08), transparent 27%),
+    linear-gradient(180deg, var(--desk), var(--bg));
   color: var(--text);
 }
 
@@ -105,6 +128,15 @@ button {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 253, 248, 0.78);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+}
+
+html[data-theme="dark"] .shellFrame {
+  background: rgba(25, 29, 25, 0.88);
 }
 
 .listShell {
@@ -112,7 +144,16 @@ button {
   flex-direction: column;
   max-width: 360px;
   padding: 8px;
-  gap: 6px;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 253, 248, 0.78);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+}
+
+html[data-theme="dark"] .listShell {
+  background: rgba(25, 29, 25, 0.88);
 }
 
 .editorShellRoot {
@@ -128,17 +169,18 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-bottom: 2px;
 }
 
 .iconButton {
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 10px;
   background: var(--surface);
+  color: var(--icon);
   cursor: pointer;
   flex: none;
   transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
@@ -146,7 +188,7 @@ button {
 
 .iconButton:hover {
   border-color: var(--line-strong);
-  box-shadow: var(--shadow);
+  box-shadow: 0 7px 16px rgba(78, 56, 24, 0.08);
   transform: translateY(-1px);
 }
 
@@ -159,57 +201,74 @@ button {
 .iconButtonActive {
   border-color: var(--accent);
   background: var(--accent-soft);
+  color: var(--icon);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .iconButton.danger {
-  color: var(--danger);
+  color: color-mix(in srgb, var(--danger) 76%, var(--icon));
 }
 
-.flatIcon {
-  width: 16px;
-  height: 16px;
+.chromeBar .iconButtonActive {
+  border-color: var(--line-strong);
+  background: var(--pin-active-bg);
+  color: var(--pin-active);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pin-active-bg) 45%, transparent);
+}
+
+.flatIcon,
+.pinIcon,
+.gearIcon {
+  width: 18px;
+  height: 18px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.8;
+  stroke-width: 1.75;
 }
 
 .logoMark {
-  width: 28px;
-  height: 28px;
+  width: 38px;
+  height: 38px;
   flex: none;
-  fill: var(--accent-soft);
-  stroke: var(--accent);
+  padding: 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: var(--canvas);
+  fill: none;
+  stroke: var(--icon);
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.8;
+  stroke-width: 1.9;
+  box-shadow: var(--note-shadow);
 }
 
 .brandBlock {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
 }
 
 .titleInput {
   flex: 1;
   min-width: 0;
-  height: 30px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-  padding: 0 10px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  padding: 0 12px;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text);
   outline: none;
 }
 
 .titleInput:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(47, 111, 143, 0.14);
+  border-color: var(--line);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .noteSurface {
@@ -218,22 +277,21 @@ button {
   display: flex;
   flex-direction: column;
   background: var(--canvas);
-  border: 1px solid #eadfa6;
-  border-radius: 8px;
-  box-shadow: var(--shadow);
+  border: 1px solid var(--note-line);
+  border-radius: 15px;
+  box-shadow: 0 8px 20px rgba(88, 63, 20, 0.06);
   overflow: hidden;
 }
 
 .noteMeta {
-  min-height: 28px;
+  min-height: 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 0 12px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  gap: 10px;
+  padding: 0 4px 2px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .errorBanner {
@@ -256,7 +314,7 @@ button {
 }
 
 .editorSurface {
-  padding: 10px 12px 14px;
+  padding: 14px 18px 22px;
 }
 
 .editorLoadingSurface {
@@ -269,20 +327,20 @@ button {
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 14px;
-  line-height: 1.42;
+  font-size: 15px;
+  line-height: 1.34;
 }
 
 .editorSurface .ProseMirror {
   min-height: calc(100vh - 132px);
   outline: none;
-  font-size: 14px;
-  line-height: 1.42;
+  font-size: 15px;
+  line-height: 1.34;
   color: var(--text);
 }
 
 .editorSurface .ProseMirror > * {
-  margin: 0 0 0.28em;
+  margin: 0 0 0.34em;
 }
 
 .editorSurface .ProseMirror > *:first-child {
@@ -290,34 +348,81 @@ button {
 }
 
 .editorSurface .ProseMirror p {
-  margin: 0 0 0.28em;
+  margin: 0 0 0.34em;
 }
 
 .editorSurface .ProseMirror h1,
 .editorSurface .ProseMirror h2,
 .editorSurface .ProseMirror h3 {
   line-height: 1.2;
-  margin: 0.6em 0 0.24em;
+  margin: 0.58em 0 0.32em;
+  letter-spacing: 0;
 }
 
 .editorSurface .ProseMirror img {
   display: block;
   max-width: 100%;
+  height: auto;
   border-radius: 6px;
   box-shadow: var(--shadow);
 }
 
+.editorSurface .ProseMirror table {
+  width: 100%;
+  margin: 0 0 0.65em;
+  border-collapse: collapse;
+  border: 1px solid var(--note-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface) 58%, var(--canvas));
+  font-size: 14px;
+}
+
+.editorSurface .ProseMirror th,
+.editorSurface .ProseMirror td {
+  position: relative;
+  min-width: 34px;
+  border: 1px solid var(--note-line);
+  padding: 7px 9px;
+  vertical-align: top;
+}
+
+.editorSurface .ProseMirror th {
+  background: var(--note-strong);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.editorSurface .ProseMirror th p,
+.editorSurface .ProseMirror td p {
+  margin: 0;
+}
+
+.editorSurface .ProseMirror .selectedCell::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 .editorSurface .ProseMirror pre {
-  margin: 0.55em 0;
-  padding: 10px 12px;
+  margin: 14px 0 0;
+  padding: 13px 14px;
   overflow: auto;
-  border-radius: 7px;
+  border: 1px solid var(--code-line);
+  border-radius: 10px;
   background: var(--code-bg);
   color: var(--code-text);
   font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.55;
   tab-size: 2;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36);
+}
+
+html[data-theme="dark"] .editorSurface .ProseMirror pre {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .editorSurface .ProseMirror code {
@@ -326,9 +431,9 @@ button {
 
 .editorSurface .ProseMirror :not(pre) > code {
   padding: 1px 4px;
-  border-radius: 4px;
-  background: rgba(47, 111, 143, 0.12);
-  color: var(--text);
+  border-radius: 5px;
+  background: var(--inline-code-bg);
+  color: var(--code-chip-text);
   font-size: 0.92em;
 }
 
@@ -361,7 +466,34 @@ button {
 .editorSurface .ProseMirror ul,
 .editorSurface .ProseMirror ol {
   padding-left: 1.5em;
-  margin: 0 0 0.28em;
+  margin: 0 0 0.5em;
+}
+
+.editorSurface .ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.editorSurface .ProseMirror li[data-type="taskItem"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.editorSurface .ProseMirror li[data-type="taskItem"] > label {
+  flex: none;
+  margin-top: 1px;
+}
+
+.editorSurface .ProseMirror li[data-type="taskItem"] input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+}
+
+.editorSurface .ProseMirror li[data-type="taskItem"] > div {
+  min-width: 0;
+  flex: 1;
 }
 
 .editorSurface .ProseMirror li > p {
@@ -381,28 +513,29 @@ button {
 
 .listHeader {
   flex: none;
-  min-height: 36px;
+  min-height: 38px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   padding: 2px 2px 0;
+  margin-bottom: 0;
 }
 
 .listTitle {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 15px;
+  font-weight: 800;
 }
 
 .listSub {
   margin-top: 1px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
 .listHeaderActions {
   display: flex;
-  gap: 4px;
+  gap: 6px;
 }
 
 .listPanel {
@@ -411,7 +544,7 @@ button {
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   padding: 2px 2px 6px;
 }
 
@@ -419,19 +552,20 @@ button {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
-  padding: 12px 10px 10px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: var(--surface-soft);
+  padding: 13px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 6px 14px rgba(78, 56, 24, 0.065);
   cursor: pointer;
-  transition: background 160ms ease, border-color 160ms ease;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
 .noteRow:hover {
-  border-color: var(--line);
-  background: var(--surface);
+  border-color: var(--line-strong);
+  transform: translateY(-1px);
 }
 
 .noteRow:focus-visible {
@@ -440,8 +574,19 @@ button {
 }
 
 .noteRow.pinned {
-  background: #fffef5;
-  border-color: rgba(47, 111, 143, 0.16);
+  background: var(--canvas-strong);
+  border-color: var(--line-strong);
+}
+
+.noteRow.pinned::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 14px;
+  bottom: 14px;
+  width: 3px;
+  border-radius: 0 999px 999px 0;
+  background: var(--pin-active);
 }
 
 .noteRowHeader {
@@ -461,8 +606,8 @@ button {
 }
 
 .noteRowTitle {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 800;
   line-height: 1.35;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -472,8 +617,8 @@ button {
 .noteRowPreview {
   display: block;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 13px;
+  line-height: 1.45;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -541,7 +686,7 @@ button {
 }
 
 .noteRowTime {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   line-height: 1.3;
   overflow-wrap: anywhere;
@@ -549,8 +694,60 @@ button {
 
 .noteRowActions {
   display: flex;
-  gap: 4px;
+  gap: 5px;
   flex: none;
+  opacity: 0.72;
+  transition: opacity 160ms ease;
+}
+
+.noteRow:hover .noteRowActions,
+.noteRow.pinned .noteRowActions {
+  opacity: 1;
+}
+
+.noteRowActions .iconButton {
+  width: 27px;
+  height: 27px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 66%, transparent);
+  color: var(--icon);
+  box-shadow: none;
+  transform: none;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.noteRowActions .iconButton:hover {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  box-shadow: none;
+  transform: none;
+}
+
+.noteRowActions .iconButtonActive {
+  background: var(--pin-active-bg);
+  border-color: var(--line-strong);
+  color: var(--pin-active);
+  box-shadow: none;
+}
+
+.noteRowActions .iconButton.danger {
+  color: color-mix(in srgb, var(--danger) 76%, var(--icon));
+}
+
+.noteRowActions .iconButton.danger:hover {
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
+  color: var(--danger);
+}
+
+.noteRowActions .flatIcon,
+.noteRowActions .pinIcon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
 }
 
 .listFooter {
@@ -571,7 +768,8 @@ button {
   align-items: flex-end;
   justify-content: center;
   padding: 10px;
-  background: rgba(31, 35, 40, 0.18);
+  background: rgba(78, 56, 24, 0.18);
+  backdrop-filter: blur(6px);
 }
 
 .settingsPanel {
@@ -579,9 +777,9 @@ button {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 12px;
+  padding: 13px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 15px;
   background: var(--surface);
   box-shadow: var(--shadow);
 }
@@ -634,14 +832,14 @@ button {
   gap: 4px;
   padding: 3px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--surface-soft);
 }
 
 .segment {
   height: 30px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -669,7 +867,7 @@ button {
   padding: 6px 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.8);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
   color: var(--muted);
   font-size: 11px;
   box-shadow: var(--shadow);
@@ -687,7 +885,7 @@ button {
   width: 100%;
   height: 30px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 9px;
   padding: 0 10px;
   background: var(--surface);
   color: var(--text);
@@ -696,13 +894,13 @@ button {
 
 .shortcutInput:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(47, 111, 143, 0.12);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .drawerAction {
   height: 30px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 9px;
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
@@ -710,4 +908,36 @@ button {
 
 .drawerAction:hover {
   border-color: var(--line-strong);
+}
+
+.syncButton {
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.syncSettings {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, 180px) minmax(140px, 180px) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.syncSettings input {
+  min-width: 0;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 8px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-soft);
 }

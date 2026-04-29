@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AssetRef, BootstrapState, Note, NoteSummary } from "./types";
+import type { AssetRef, BootstrapState, Note, NoteSummary, SyncAccountState } from "./types";
 
 export const api = {
   launchedInBackground: () => invoke<boolean>("launched_in_background"),
@@ -14,4 +14,7 @@ export const api = {
     invoke<AssetRef>("save_png_asset", { noteId, bytes }),
   getOpenShortcut: () => invoke<string>("get_open_shortcut"),
   setOpenShortcut: (shortcut: string) => invoke<string>("set_open_shortcut", { shortcut }),
+  getSyncAccountState: () => invoke<SyncAccountState>("get_sync_account_state"),
+  loginSync: (serverBaseUrl: string, email: string, password: string) =>
+    invoke<SyncAccountState>("login_sync", { serverBaseUrl, email, password }),
 };

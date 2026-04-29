@@ -1,8 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use snapline_app_core::{AppCore, BootstrapState};
+use snapline_app_core::{AppCore, BootstrapState, SyncAccountState};
 use snapline_domain::{AssetRef, Note, NoteId, NoteSummary};
 use snapline_platform::AppPaths;
+use snapline_sync_client::{protocol::LoginRequest, HttpSyncApi, SyncApi};
 use std::sync::Mutex;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, Position, RunEvent, State, WindowEvent,
@@ -168,6 +169,48 @@ fn set_open_shortcut(
         .map_err(|err| err.to_string())?;
     register_open_shortcut(&app, &shortcut)?;
     Ok(shortcut)
+}
+
+#[tauri::command]
+fn get_sync_account_state(state: State<'_, AppState>) -> Result<SyncAccountState, String> {
+    state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .sync_account_state()
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn login_sync(
+    state: State<'_, AppState>,
+    server_base_url: String,
+    email: String,
+    password: String,
+) -> Result<SyncAccountState, String> {
+    let device_id = state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .sync_state()
+        .map_err(|err| err.to_string())?
+        .device_id;
+    let api = HttpSyncApi::new(&server_base_url);
+    let response = api
+        .login(LoginRequest {
+            email,
+            password,
+            device_id,
+            device_name: "Snapline Desktop".to_string(),
+        })
+        .await
+        .map_err(|err| err.to_string())?;
+    state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .save_sync_login(&server_base_url, &response.account_id, &response.access_token)
+        .map_err(|err| err.to_string())
 }
 
 fn parse_note_id(value: &str) -> Result<NoteId, String> {
@@ -355,7 +398,9 @@ fn main() {
             save_png_asset,
             resolve_asset_url,
             get_open_shortcut,
-            set_open_shortcut
+            set_open_shortcut,
+            get_sync_account_state,
+            login_sync
         ])
         .build(tauri::generate_context!())
         .expect("error while building Snapline")

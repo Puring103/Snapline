@@ -8,6 +8,10 @@ export interface Note {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  server_version?: number;
+  last_modified_by_device?: string | null;
+  is_conflict_copy?: boolean;
+  source_note_id?: string | null;
 }
 
 export interface NoteSummary {
@@ -17,6 +21,8 @@ export interface NoteSummary {
   preview_md?: string;
   pinned?: boolean;
   updated_at: string;
+  is_conflict_copy?: boolean;
+  source_note_id?: string | null;
 }
 
 export interface BootstrapState {
@@ -42,4 +48,11 @@ export interface SavedAsset {
 export interface DraftParts {
   title: string;
   body_md: string;
+}
+
+export interface SyncAccountState {
+  account_id: string | null;
+  device_id: string;
+  server_base_url: string | null;
+  is_logged_in: boolean;
 }
