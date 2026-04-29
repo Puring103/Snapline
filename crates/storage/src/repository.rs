@@ -1,7 +1,11 @@
+use crate::sync;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
-use snapline_domain::{derive_preview, derive_preview_markdown, derive_title, Note, NoteId, NoteSummary};
+use snapline_domain::{
+    derive_preview, derive_preview_markdown, derive_title, Note, NoteId, NoteSummary,
+    SyncOpType, SyncPayload,
+};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -34,7 +38,11 @@ impl NoteRepository {
               pinned INTEGER NOT NULL DEFAULT 0,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL,
-              deleted_at TEXT
+              deleted_at TEXT,
+              server_version INTEGER NOT NULL DEFAULT 0,
+              last_modified_by_device TEXT,
+              is_conflict_copy INTEGER NOT NULL DEFAULT 0,
+              source_note_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_notes_deleted_pinned_updated
             ON notes (deleted_at, pinned DESC, updated_at DESC);
@@ -45,6 +53,11 @@ impl NoteRepository {
             ",
         )?;
         self.ensure_column("notes", "pinned", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column("notes", "server_version", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column("notes", "last_modified_by_device", "TEXT")?;
+        self.ensure_column("notes", "is_conflict_copy", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column("notes", "source_note_id", "TEXT")?;
+        sync::migrate_sync_tables(&self.conn)?;
         Ok(())
     }
 
@@ -125,7 +138,11 @@ impl NoteRepository {
     fn find_note(&self, id: &NoteId) -> Result<Option<Note>> {
         self.conn
             .query_row(
-                "SELECT id, title, content_md, pinned, created_at, updated_at, deleted_at FROM notes WHERE id = ?1",
+                "
+                SELECT id, title, content_md, pinned, created_at, updated_at, deleted_at,
+                       server_version, last_modified_by_device, is_conflict_copy, source_note_id
+                FROM notes WHERE id = ?1
+                ",
                 params![id.to_string()],
                 row_to_note,
             )
@@ -135,12 +152,13 @@ impl NoteRepository {
 
     pub fn list_recent(&self, limit: usize) -> Result<Vec<NoteSummary>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, title, pinned, updated_at, content_md FROM notes
+            "SELECT id, title, pinned, updated_at, content_md, is_conflict_copy, source_note_id FROM notes
              WHERE deleted_at IS NULL
              ORDER BY pinned DESC, updated_at DESC
              LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
+            let source_note_id: Option<String> = row.get(6)?;
             Ok(NoteSummary {
                 id: NoteId(parse_uuid(row.get::<_, String>(0)?)?),
                 title: row.get(1)?,
@@ -148,6 +166,10 @@ impl NoteRepository {
                 updated_at: parse_time(row.get::<_, String>(3)?)?,
                 preview: derive_preview(&row.get::<_, String>(4)?),
                 preview_md: derive_preview_markdown(&row.get::<_, String>(4)?),
+                is_conflict_copy: row.get::<_, i64>(5)? != 0,
+                source_note_id: source_note_id
+                    .map(|value| parse_uuid(value).map(NoteId))
+                    .transpose()?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
@@ -187,6 +209,43 @@ impl NoteRepository {
         Ok(())
     }
 
+    pub fn enqueue_change(
+        &self,
+        note_id: &NoteId,
+        op_type: SyncOpType,
+        base_version: i64,
+        payload: &SyncPayload,
+        queued_at: DateTime<Utc>,
+    ) -> Result<String> {
+        sync::enqueue_change(
+            &self.conn,
+            note_id,
+            op_type,
+            base_version,
+            payload,
+            queued_at,
+        )
+    }
+
+    pub fn list_pending_changes(&self, limit: usize) -> Result<Vec<sync::ChangeQueueItem>> {
+        sync::list_pending_changes(&self.conn, limit)
+    }
+
+    pub fn delete_change(&self, id: &str) -> Result<()> {
+        sync::delete_change(&self.conn, id)
+    }
+
+    pub fn mark_change_failed(&self, id: &str, error: &str) -> Result<()> {
+        sync::mark_change_failed(&self.conn, id, error)
+    }
+
+    pub fn get_or_create_sync_state(&self) -> Result<sync::SyncState> {
+        sync::get_or_create_sync_state(&self.conn)
+    }
+
+    pub fn save_sync_state(&self, state: &sync::SyncState) -> Result<()> {
+        sync::save_sync_state(&self.conn, state)
+    }
     fn ensure_column(&self, table: &str, column: &str, definition: &str) -> Result<()> {
         let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
         let has_column = stmt.query_map([], |row| row.get::<_, String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?
@@ -204,6 +263,7 @@ impl NoteRepository {
 
 fn row_to_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     let deleted: Option<String> = row.get(6)?;
+    let source_note_id: Option<String> = row.get(10)?;
     Ok(Note {
         id: NoteId(parse_uuid(row.get::<_, String>(0)?)?),
         title: row.get(1)?,
@@ -212,6 +272,12 @@ fn row_to_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         created_at: parse_time(row.get::<_, String>(4)?)?,
         updated_at: parse_time(row.get::<_, String>(5)?)?,
         deleted_at: deleted.map(parse_time).transpose()?,
+        server_version: row.get(7)?,
+        last_modified_by_device: row.get(8)?,
+        is_conflict_copy: row.get::<_, i64>(9)? != 0,
+        source_note_id: source_note_id
+            .map(|value| parse_uuid(value).map(NoteId))
+            .transpose()?,
     })
 }
 
@@ -234,6 +300,10 @@ fn draft_note_with_id(id: &NoteId, now: DateTime<Utc>) -> Note {
         created_at: now,
         updated_at: now,
         deleted_at: None,
+        server_version: 0,
+        last_modified_by_device: None,
+        is_conflict_copy: false,
+        source_note_id: None,
     }
 }
 

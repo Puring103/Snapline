@@ -8,6 +8,8 @@ license.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 snapline-domain = { path = "../domain" }
 uuid.workspace = true
 

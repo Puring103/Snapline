@@ -3272,6 +3272,8 @@ dependencies = [
  "anyhow",
  "chrono",
  "rusqlite",
+ "serde",
+ "serde_json",
  "snapline-domain",
  "tempfile",
  "uuid",
