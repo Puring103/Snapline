@@ -12,6 +12,7 @@ tauri-build = { version = "=2.5.6", features = [] }
 snapline-app-core = { path = "../../../crates/app-core" }
 snapline-domain = { path = "../../../crates/domain" }
 snapline-platform = { path = "../../../crates/platform" }
+snapline-sync-client = { path = "../../../crates/sync-client" }
 time = "=0.3.36"
 tauri-plugin-autostart = "2"
 tauri-plugin-global-shortcut = "2"

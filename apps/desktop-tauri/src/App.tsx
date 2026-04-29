@@ -13,8 +13,9 @@ import {
   type ActiveSession,
 } from "./session";
 import { startupLog } from "./startupLog";
-import type { Note, NoteSummary, SavedAsset } from "./types";
-import { openListWindow, openNoteWindow, readAppRoute } from "./window";
+import { SyncSettings } from "./SyncSettings";
+import type { Note, NoteSummary, SavedAsset, SyncAccountState } from "./types";
+import { openListWindow, openNoteWindow, readAppRoute, shouldDeferInitialNoteLoad } from "./window";
 
 const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
 const FOCUS_EDITOR_EVENT = "snapline-focus-editor";
@@ -63,6 +64,8 @@ function NotesListWindow() {
   const [status, setStatus] = useState("Loading");
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [syncSettingsOpen, setSyncSettingsOpen] = useState(false);
+  const [syncAccount, setSyncAccount] = useState<SyncAccountState | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
@@ -105,6 +108,7 @@ function NotesListWindow() {
     void isEnabled()
       .then(setAutostartEnabled)
       .catch(() => setAutostartEnabled(false));
+    void api.getSyncAccountState().then(setSyncAccount).catch(() => setSyncAccount(null));
   }, [refreshNotes]);
 
   useEffect(() => {
@@ -212,12 +216,16 @@ function NotesListWindow() {
           </div>
         </div>
         <div className="listHeaderActions">
+          <button className="syncButton" onClick={() => setSyncSettingsOpen((value) => !value)} type="button">
+            {syncAccount?.is_logged_in ? "Synced" : "Sync"}
+          </button>
           <IconButton label="New note" onClick={() => void handleNewNote()}><PlusIcon /></IconButton>
           <IconButton label="Settings" onClick={() => setSettingsOpen(true)}><SettingsIcon /></IconButton>
         </div>
       </header>
 
       {error ? <div className="errorBanner">{error}</div> : null}
+      {syncSettingsOpen ? <SyncSettings initial={syncAccount} onSaved={setSyncAccount} /> : null}
 
       <section className="listPanel" aria-label="Note list">
         {visibleNotes.length === 0 ? (
@@ -259,7 +267,7 @@ function NotesListWindow() {
                     ) : (
                       <>
                         <IconButton active={pinned} label={pinned ? "Unpin" : "Pin"} onClick={() => void handleTogglePinned(note.id)}>
-                          <StarIcon />
+                          <PinIcon />
                         </IconButton>
                         <IconButton danger label="Delete" onClick={() => setConfirmingDeleteId((current) => deleteConfirmationFor(current, note.id))}>
                           <TrashIcon />
@@ -294,6 +302,7 @@ function NotesListWindow() {
 }
 
 function NoteEditorWindow({ noteId }: { noteId: string | null }) {
+  const windowLabel = useMemo(() => getCurrentWindow().label, []);
   const [session, setSession] = useState<ActiveSession>(() => createDraftSession());
   const [pinned, setPinned] = useState(false);
   const [status, setStatus] = useState("Loading");
@@ -325,7 +334,13 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       .launchedInBackground()
       .then((isBackgroundLaunch) => {
         if (cancelled) return;
-        if (isBackgroundLaunch) {
+        if (
+          shouldDeferInitialNoteLoad({
+            launchedInBackground: isBackgroundLaunch,
+            windowLabel,
+            noteId,
+          })
+        ) {
           setStatus("Ready");
           return;
         }
@@ -340,7 +355,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     return () => {
       cancelled = true;
     };
-  }, [noteId]);
+  }, [noteId, windowLabel]);
 
   useEffect(() => {
     if (!noteLoadArmed) return;
@@ -390,9 +405,16 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       }
 
       clearSaveTimer();
-      setDeleted(true);
-      setStatus("Deleted");
-      setError("This note was deleted from the list. This window is now read-only.");
+      void getCurrentWindow().close().finally(() => {
+        if (windowLabel === "main") {
+          setSession(createDraftSession());
+          setPinned(false);
+          setDeleted(false);
+          setNoteLoadArmed(false);
+          setStatus("Ready");
+          setError(null);
+        }
+      });
     }).then((nextUnlisten) => {
       unlisten = nextUnlisten;
     });
@@ -400,7 +422,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     return () => {
       unlisten?.();
     };
-  }, [session.id]);
+  }, [session.id, windowLabel]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -426,6 +448,11 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
 
     if (!isSessionDirty(session)) {
       setStatus(session.kind === "draft" ? "Draft" : "Saved");
+      return;
+    }
+
+    if (hasTransientImageSource(session.bodyMd)) {
+      setStatus("Uploading image");
       return;
     }
 
@@ -594,11 +621,12 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
           <IconButton label="New window" onClick={handleCreateNoteWindow}><PlusIcon /></IconButton>
         </header>
 
+        <div className="noteMeta">
+          <span>{status}</span>
+          <span>{session.kind === "draft" ? "Draft" : "Saved note"}</span>
+        </div>
+
         <section className="noteSurface">
-          <div className="noteMeta">
-            <span>{status}</span>
-            <span>{session.kind === "draft" ? "Draft" : "Saved note"}</span>
-          </div>
           {error ? (
             <div className="errorBanner">
               <span>{error}</span>
@@ -812,13 +840,10 @@ function IconButton({
 function LogoIcon() {
   return (
     <svg className="logoMark" viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M8 5h12l6 6v16H8z" />
-      <path d="M20 5v6h6" />
-      <path d="M12 14h9" />
-      <path d="M10 19h11" />
-      <path d="M12 24h7" />
-      <path d="M7 15h3" />
-      <path d="M5 20h5" />
+      <path d="M9 5.5h11l5 5v16H9z" />
+      <path d="M20 5.5v5h5" />
+      <path d="M13 15h8M11 20h10M13 24h6" />
+      <path d="M6 16h3M5 21h4" />
     </svg>
   );
 }
@@ -828,19 +853,20 @@ function PlusIcon() {
 }
 
 function SettingsIcon() {
-  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" /><path d="M4 12h2M18 12h2M12 4v2M12 18v2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M17.7 6.3l-1.4 1.4M7.7 16.3l-1.4 1.4" /></svg>;
+  return (
+    <svg className="gearIcon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M10.6 3.5h2.8l.45 2.15c.45.16.88.34 1.28.58l1.86-1.18 1.98 1.98-1.18 1.86c.24.4.42.83.58 1.28l2.15.45v2.8l-2.15.45c-.16.45-.34.88-.58 1.28l1.18 1.86-1.98 1.98-1.86-1.18c-.4.24-.83.42-1.28.58l-.45 2.15h-2.8l-.45-2.15a6.7 6.7 0 0 1-1.28-.58l-1.86 1.18-1.98-1.98 1.18-1.86a6.7 6.7 0 0 1-.58-1.28l-2.15-.45v-2.8l2.15-.45c.16-.45.34-.88.58-1.28L5.05 7.03l1.98-1.98 1.86 1.18c.4-.24.83-.42 1.28-.58l.43-2.15z" />
+      <path d="M9.3 12a2.7 2.7 0 1 0 5.4 0 2.7 2.7 0 0 0-5.4 0z" />
+    </svg>
+  );
 }
 
 function ListIcon() {
-  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h11M8 12h11M8 17h11" /><path d="M4.5 7h.1M4.5 12h.1M4.5 17h.1" /></svg>;
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6.5h10" /><path d="M7 12h10" /><path d="M7 17.5h10" /><path d="M4 6.5h.1M4 12h.1M4 17.5h.1" /></svg>;
 }
 
 function PinIcon() {
-  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4l6 6-3 1-4 4v5l-2 2-2-7-7-2 2-2h5l4-4 1-3z" /></svg>;
-}
-
-function StarIcon() {
-  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.8l2.5 5.1 5.6.8-4.1 4 1 5.6-5-2.6-5 2.6 1-5.6-4.1-4 5.6-.8L12 3.8z" /></svg>;
+  return <svg className="pinIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.2 4.5h5.6" /><path d="M10 4.5v5.1L6.9 14h10.2L14 9.6V4.5" /><path d="M12 14v6" /></svg>;
 }
 
 function CheckIcon() {
