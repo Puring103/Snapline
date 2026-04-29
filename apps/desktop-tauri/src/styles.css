@@ -1,16 +1,17 @@
 :root {
   color-scheme: light;
-  --bg: #f3efe8;
-  --panel: #fcfaf6;
-  --panel-strong: #ffffff;
-  --line: #ded4c6;
-  --line-strong: #c8b9a5;
-  --text: #22201d;
-  --muted: #6c6359;
-  --accent: #3d4f5b;
-  --accent-soft: #dbe3e8;
-  --danger: #8f4f3d;
-  --shadow: 0 18px 40px rgba(45, 31, 20, 0.08);
+  --bg: #eef2f5;
+  --canvas: #fff8d8;
+  --surface: #ffffff;
+  --surface-soft: #f6f8fa;
+  --line: #d6dde4;
+  --line-strong: #c0c9d2;
+  --text: #1f2328;
+  --muted: #66707b;
+  --accent: #2f6f8f;
+  --accent-soft: #d7ebf6;
+  --danger: #b14a3d;
+  --shadow: 0 16px 40px rgba(31, 35, 40, 0.12);
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 
@@ -22,10 +23,13 @@ body,
 }
 
 body {
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.5), transparent 36%),
-    linear-gradient(180deg, #f8f4ee 0%, #efe7dd 100%);
+  overflow: hidden;
+  background: linear-gradient(180deg, #f5f7fa 0%, #e9eef2 100%);
   color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
 }
 
 button,
@@ -33,160 +37,364 @@ input {
   font: inherit;
 }
 
+button {
+  color: inherit;
+}
+
 .appShell {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  position: relative;
   height: 100%;
+  overflow: hidden;
 }
 
-.sidebar {
-  border-right: 1px solid var(--line);
-  background: rgba(252, 250, 246, 0.92);
-  backdrop-filter: blur(12px);
-}
-
-.sidebarHeader,
-.workspaceHeader {
-  height: 56px;
-  padding: 0 14px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--line);
-}
-
-.brand {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0;
-}
-
-.brandSub {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 2px;
-}
-
-.iconButton,
-.ghostButton {
-  border: 1px solid var(--line-strong);
-  background: var(--panel-strong);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 7px 11px;
-  cursor: pointer;
-}
-
-.iconButton {
-  width: 36px;
-  height: 36px;
-  padding: 0;
-}
-
-.ghostButton:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.noteList {
+.shellFrame {
+  position: relative;
+  height: 100%;
+  max-width: 420px;
+  margin: 0 auto;
   padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.noteItem {
-  border: 1px solid transparent;
-  background: transparent;
-  text-align: left;
-  border-radius: 8px;
-  padding: 10px 12px;
-  cursor: pointer;
-  display: grid;
-  gap: 3px;
+.listShell {
+  max-width: 360px;
+  padding: 8px;
+  gap: 6px;
 }
 
-.noteItem:hover,
-.noteItem.active {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: var(--line);
+.editorShellRoot {
+  max-width: 420px;
+}
+
+.editorShellFrame {
+  max-width: 420px;
+}
+
+.chromeBar {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.iconButton {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  border-color: var(--line-strong);
   box-shadow: var(--shadow);
 }
 
-.noteTitle {
-  font-size: 14px;
-  font-weight: 600;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.iconButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
-.noteTime {
+.iconButtonActive {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.iconButton.danger {
+  color: var(--danger);
+}
+
+.titleInput {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  outline: none;
+}
+
+.titleInput:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47, 111, 143, 0.14);
+}
+
+.noteSurface {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--canvas);
+  border: 1px solid #eadfa6;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.noteMeta {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.errorBanner {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(177, 74, 61, 0.18);
+  background: rgba(177, 74, 61, 0.08);
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.editorShell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.editorSurface {
+  padding: 10px 12px 14px;
+}
+
+.editorSurface .ProseMirror {
+  min-height: calc(100vh - 132px);
+  outline: none;
+  font-size: 14px;
+  line-height: 1.42;
+  color: var(--text);
+}
+
+.editorSurface .ProseMirror > * {
+  margin: 0 0 0.28em;
+}
+
+.editorSurface .ProseMirror > *:first-child {
+  margin-top: 0;
+}
+
+.editorSurface .ProseMirror p {
+  margin: 0 0 0.28em;
+}
+
+.editorSurface .ProseMirror h1,
+.editorSurface .ProseMirror h2,
+.editorSurface .ProseMirror h3 {
+  line-height: 1.2;
+  margin: 0.6em 0 0.24em;
+}
+
+.editorSurface .ProseMirror img {
+  display: block;
+  max-width: 100%;
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+
+.editorSurface .ProseMirror ul,
+.editorSurface .ProseMirror ol {
+  padding-left: 1.5em;
+  margin: 0 0 0.28em;
+}
+
+.editorSurface .ProseMirror li > p {
+  margin: 0;
+}
+
+.editorSurface .ProseMirror li + li {
+  margin-top: 0.2em;
+}
+
+.editorState,
+.emptyList {
+  padding: 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.listHeader {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 2px 0;
+}
+
+.listTitle {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.listSub {
+  margin-top: 1px;
   font-size: 11px;
   color: var(--muted);
 }
 
-.workspace {
-  min-width: 0;
-  display: grid;
-  grid-template-rows: 56px minmax(0, 1fr);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.35));
+.listHeaderActions {
+  display: flex;
+  gap: 4px;
 }
 
-.status {
+.listPanel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0 4px;
+}
+
+.noteRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 8px 8px 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.noteRow.pinned {
+  background: #fffef5;
+  border-color: rgba(47, 111, 143, 0.16);
+}
+
+.noteRowMain {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.noteRowTop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.noteRowTitle {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.noteRowFlag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.noteRowPreview {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.32;
+  min-height: 1.32em;
+}
+
+.noteRowTime {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.noteRowActions {
+  display: flex;
+  gap: 4px;
+}
+
+.listFooter {
+  padding: 4px 2px 0;
+}
+
+.shortcutRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editorHint {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--muted);
+  font-size: 11px;
+  box-shadow: var(--shadow);
+}
+
+.shortcutField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   font-size: 12px;
   color: var(--muted);
 }
 
-.errorBanner {
-  padding: 12px 16px;
-  color: var(--danger);
-  background: rgba(143, 79, 61, 0.08);
-  border-bottom: 1px solid rgba(143, 79, 61, 0.2);
-}
-
-.editorShell {
-  min-width: 0;
-  overflow: auto;
-}
-
-.editor {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 28px 40px 52px;
-}
-
-.editor .ProseMirror {
-  min-height: calc(100vh - 140px);
-  outline: none;
-  font-size: 16px;
-  line-height: 1.72;
+.shortcutInput {
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: var(--surface);
   color: var(--text);
+  outline: none;
 }
 
-.editor .ProseMirror p {
-  margin: 0 0 0.9em;
+.shortcutInput:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47, 111, 143, 0.12);
 }
 
-.editor .ProseMirror h1,
-.editor .ProseMirror h2,
-.editor .ProseMirror h3 {
-  line-height: 1.2;
-  margin: 1.2em 0 0.45em;
+.drawerAction {
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
 }
 
-.editor .ProseMirror img {
-  max-width: 100%;
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-}
-
-.editor .ProseMirror ul,
-.editor .ProseMirror ol {
-  padding-left: 1.5em;
-}
-
-.emptyState {
-  padding: 22px 16px;
-  color: var(--muted);
+.drawerAction:hover {
+  border-color: var(--line-strong);
 }

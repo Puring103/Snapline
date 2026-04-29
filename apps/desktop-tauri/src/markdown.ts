@@ -6,18 +6,44 @@ export function imageMarkdown(path: string): string {
   return `![](${path})`;
 }
 
+export function markdownTextFromClipboard(clipboardData: { getData: (type: string) => string }): string {
+  const markdown = clipboardData.getData("text/markdown").trim();
+  if (markdown.length > 0) {
+    return markdown;
+  }
+
+  const plainText = clipboardData.getData("text/plain").trim();
+  return plainText;
+}
+
 export function titleFromMarkdown(markdown: string): string {
-  const firstVisibleLine = normalizeMarkdown(markdown)
+  const firstHeading = normalizeMarkdown(markdown)
     .split("\n")
     .map((line) => line.trim())
-    .find((line) => line.length > 0);
+    .find((line) => line.startsWith("# "));
 
-  if (!firstVisibleLine) {
+  if (!firstHeading) {
     return "Untitled";
   }
 
-  const strippedHeading = firstVisibleLine.replace(/^#+\s*/, "").trim();
+  const strippedHeading = firstHeading.replace(/^#\s+/, "").trim();
   return strippedHeading.length > 0 ? strippedHeading : "Untitled";
+}
+
+export function previewFromMarkdown(markdown: string): string {
+  const firstBodyLine = normalizeMarkdown(markdown)
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !line.startsWith("# "));
+
+  if (!firstBodyLine) {
+    return "";
+  }
+
+  return firstBodyLine
+    .replace(/^(-|\*|\d+\.)\s+/, "")
+    .trim()
+    .slice(0, 80);
 }
 
 export function replaceMarkdownImageSource(
@@ -25,13 +51,106 @@ export function replaceMarkdownImageSource(
   currentSource: string,
   nextSource: string,
 ): string {
-  const imagePattern = new RegExp(
-    `(!\\[[^\\]]*\\]\\()${escapeRegExp(currentSource)}(\\))`,
-    "g",
+  return rewriteMarkdownImageSources(markdown, (source) =>
+    source === currentSource ? nextSource : source,
   );
-  return markdown.replace(imagePattern, `$1${nextSource}$2`);
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function hydrateMarkdownForEditor(markdown: string) {
+  const sourceMap = new Map<string, string>();
+  const imageSources = Array.from(markdown.matchAll(/!\[[^\]]*]\(([^)]+)\)/g))
+    .map((match) => match[1])
+    .filter((source) => source.startsWith("assets/"));
+
+  let hydrated = markdown;
+  for (const markdownPath of new Set(imageSources)) {
+    const editorSource = assetUrlFromMarkdownPath(markdownPath);
+    hydrated = replaceMarkdownImageSource(hydrated, markdownPath, editorSource);
+    sourceMap.set(editorSource, markdownPath);
+  }
+
+  return { markdown: hydrated, sourceMap };
+}
+
+export function restoreMarkdownForStorage(
+  markdown: string,
+  sourceMap: Map<string, string>,
+) {
+  let restored = markdown;
+  for (const [editorSource, markdownPath] of sourceMap) {
+    restored = replaceMarkdownImageSource(restored, editorSource, markdownPath);
+  }
+  return restored;
+}
+
+export function rewriteMarkdownImageSources(
+  markdown: string,
+  transform: (source: string) => string,
+): string {
+  const imagePattern = /(!\[[^\]]*]\()([^)]+)(\))/g;
+  return markdown.replace(imagePattern, (_match, prefix, source, suffix) => {
+    return `${prefix}${transform(source)}${suffix}`;
+  });
+}
+
+export function assetUrlFromMarkdownPath(markdownPath: string): string {
+  return `asset://localhost/${markdownPath}`;
+}
+
+export function markdownPathFromAssetUrl(assetUrl: string): string {
+  const prefix = "asset://localhost/";
+  return assetUrl.startsWith(prefix) ? assetUrl.slice(prefix.length) : assetUrl;
+}
+
+export function hasTransientImageSource(markdown: string): boolean {
+  return /!\[[^\]]*]\((blob:|data:)/.test(markdown);
+}
+
+export function stripTransientImageSources(markdown: string): string {
+  return markdown.replace(/!\[[^\]]*]\((blob:|data:)[^)]+\)/g, "");
+}
+
+export function composeDraftMarkdown(title: string, bodyMd: string): string {
+  const safeTitle = normalizeTitle(title);
+  const normalizedBody = normalizeMarkdown(bodyMd);
+
+  if (normalizedBody.length === 0) {
+    return `# ${safeTitle}`;
+  }
+
+  return [`# ${safeTitle}`, "", normalizedBody].join("\n");
+}
+
+export function splitDraftMarkdown(markdown: string): { title: string; body_md: string } {
+  const normalized = normalizeMarkdown(markdown);
+  const lines = normalized.split("\n");
+  const firstVisibleLineIndex = lines.findIndex((line) => line.trim().length > 0);
+
+  if (firstVisibleLineIndex === -1) {
+    return { title: "Untitled", body_md: "" };
+  }
+
+  const title = normalizeTitle(lines[firstVisibleLineIndex]);
+  const bodyLines = [
+    ...lines.slice(0, firstVisibleLineIndex),
+    ...lines.slice(firstVisibleLineIndex + 1),
+  ];
+
+  if (bodyLines[0]?.trim().length === 0) {
+    bodyLines.shift();
+  }
+
+  return {
+    title,
+    body_md: normalizeMarkdown(bodyLines.join("\n")),
+  };
+}
+
+function normalizeTitle(title: string): string {
+  const trimmed = normalizeMarkdown(title).trim();
+  if (trimmed.length === 0) {
+    return "Untitled";
+  }
+
+  return trimmed.replace(/^#+\s*/, "").trim() || "Untitled";
 }

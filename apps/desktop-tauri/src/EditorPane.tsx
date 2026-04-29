@@ -5,20 +5,28 @@ import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { useEffect, useRef } from "react";
-import { api } from "./api";
-import { normalizeMarkdown, replaceMarkdownImageSource } from "./markdown";
-import type { Note } from "./types";
+import {
+  assetUrlFromMarkdownPath,
+  hasTransientImageSource,
+  markdownPathFromAssetUrl,
+  markdownTextFromClipboard,
+  normalizeMarkdown,
+  rewriteMarkdownImageSources,
+} from "./markdown";
+import type { SavedAsset } from "./types";
 
 interface EditorPaneProps {
-  note: Note;
-  onAssetResolved: (markdownPath: string) => Promise<string>;
-  onSaved: (note: Note) => void;
-  setStatus: (status: string) => void;
+  bodyMarkdown: string;
+  onBodyChange: (bodyMarkdown: string) => void;
+  onRequestImageSave: (bytes: number[]) => Promise<SavedAsset | null>;
 }
 
-export function EditorPane({ note, onAssetResolved, onSaved, setStatus }: EditorPaneProps) {
-  const timer = useRef<number | null>(null);
-  const pendingMarkdown = useRef(note.content_md);
+export function EditorPane({
+  bodyMarkdown,
+  onBodyChange,
+  onRequestImageSave,
+}: EditorPaneProps) {
+  const suppressNextUpdate = useRef(false);
 
   const editor = useEditor({
     extensions: [
@@ -30,7 +38,7 @@ export function EditorPane({ note, onAssetResolved, onSaved, setStatus }: Editor
         placeholder: "Write before the thought fades...",
       }),
     ],
-    content: note.content_md,
+    content: rewriteMarkdownImageSources(bodyMarkdown, assetUrlFromMarkdownPath),
     contentType: "markdown",
     editorProps: {
       handlePaste: (view, event) => {
@@ -38,6 +46,7 @@ export function EditorPane({ note, onAssetResolved, onSaved, setStatus }: Editor
         const imageItem = clipboardItems.find(
           (item) => item.kind === "file" && item.type.startsWith("image/"),
         );
+
         if (!imageItem) return false;
 
         const file = imageItem.getAsFile();
@@ -45,6 +54,7 @@ export function EditorPane({ note, onAssetResolved, onSaved, setStatus }: Editor
 
         event.preventDefault();
         const placeholderSrc = URL.createObjectURL(file);
+
         view.dispatch(
           view.state.tr.replaceSelectionWith(
             view.state.schema.nodes.image.create({ src: placeholderSrc }),
@@ -52,102 +62,111 @@ export function EditorPane({ note, onAssetResolved, onSaved, setStatus }: Editor
         );
 
         void file.arrayBuffer().then(async (buffer) => {
-          const bytes = Array.from(new Uint8Array(buffer));
-          const asset = await api.savePngAsset(note.id, bytes);
-          const resolved = await onAssetResolved(asset.markdown_path);
-          const currentMarkdown = editor?.getMarkdown() ?? "";
-
-          editor?.commands.command(({ tr, state, dispatch }) => {
-            const imageType = state.schema.nodes.image;
-            let updated = false;
-
-            state.doc.descendants((node, pos) => {
-              if (node.type === imageType && node.attrs.src === placeholderSrc) {
-                tr.setNodeMarkup(pos, undefined, {
-                  ...node.attrs,
-                  src: resolved,
-                });
-                updated = true;
-                return false;
-              }
-              return true;
-            });
-
-            if (updated && dispatch) {
-              dispatch(tr);
+          try {
+            const asset = await onRequestImageSave(Array.from(new Uint8Array(buffer)));
+            if (!asset || !editor) {
+              return;
             }
-            return updated;
-          });
 
-          scheduleSave(
-            replaceMarkdownImageSource(
-              replaceMarkdownImageSource(currentMarkdown, placeholderSrc, asset.markdown_path),
-              resolved,
-              asset.markdown_path,
-            ),
-          );
-          URL.revokeObjectURL(placeholderSrc);
+            const assetUrl = asset.asset_url;
+
+            editor.commands.command(({ tr, state, dispatch }) => {
+              const imageType = state.schema.nodes.image;
+              let updated = false;
+
+              state.doc.descendants((node, pos) => {
+                if (node.type === imageType && node.attrs.src === placeholderSrc) {
+                  tr.setNodeMarkup(pos, undefined, {
+                    ...node.attrs,
+                    src: assetUrl,
+                  });
+                  updated = true;
+                  return false;
+                }
+                return true;
+              });
+
+              if (updated && dispatch) {
+                dispatch(tr);
+              }
+
+              return updated;
+            });
+          } finally {
+            URL.revokeObjectURL(placeholderSrc);
+          }
         });
 
         return true;
       },
+      handleDOMEvents: {
+        paste: (_view, event) => {
+          const clipboardData = event.clipboardData;
+          if (!clipboardData) {
+            return false;
+          }
+
+          const clipboardItems = Array.from(clipboardData.items ?? []);
+          const imageItem = clipboardItems.find(
+            (item) => item.kind === "file" && item.type.startsWith("image/"),
+          );
+          if (imageItem) {
+            return false;
+          }
+
+          const markdownText = markdownTextFromClipboard(clipboardData);
+          if (!markdownText) {
+            return false;
+          }
+
+          event.preventDefault();
+          editor?.commands.insertContent(markdownText, { contentType: "markdown" });
+          return true;
+        },
+      },
     },
     onUpdate: ({ editor }) => {
-      scheduleSave(editor.getMarkdown());
+      if (suppressNextUpdate.current) return;
+
+      const nextMarkdown = rewriteMarkdownImageSources(
+        normalizeMarkdown(editor.getMarkdown() ?? ""),
+        markdownPathFromAssetUrl,
+      );
+      onBodyChange(nextMarkdown);
     },
   });
 
   useEffect(() => {
-    return () => {
-      if (timer.current !== null) {
-        window.clearTimeout(timer.current);
-        timer.current = null;
-        void saveNow(pendingMarkdown.current, false, false);
-      }
-    };
-  }, []);
+    if (!editor) return;
 
-  async function saveNow(
-    contentMd: string,
-    notifySaved = true,
-    notifyStatus = true,
-  ) {
-    try {
-      const saved = await api.saveNote(note.id, normalizeMarkdown(contentMd));
-      pendingMarkdown.current = saved.content_md;
-      if (notifySaved) {
-        onSaved(saved);
-      }
-      if (notifyStatus) {
-        setStatus("Saved");
-      }
-    } catch (err) {
-      console.error(err);
-      if (notifyStatus) {
-        setStatus("Error");
-      }
-    }
-  }
+    const nextDisplayMarkdown = rewriteMarkdownImageSources(
+      bodyMarkdown,
+      assetUrlFromMarkdownPath,
+    );
+    const currentMarkdown = normalizeMarkdown(editor.getMarkdown() ?? "");
+    const nextMarkdown = normalizeMarkdown(nextDisplayMarkdown);
 
-  function scheduleSave(contentMd: string) {
-    pendingMarkdown.current = contentMd;
-    if (timer.current !== null) {
-      window.clearTimeout(timer.current);
+    if (currentMarkdown === nextMarkdown) {
+      return;
     }
-    setStatus("Saving");
-    timer.current = window.setTimeout(async () => {
-      timer.current = null;
-      await saveNow(contentMd);
-    }, 600);
-  }
+
+    suppressNextUpdate.current = true;
+    editor.commands.setContent(nextDisplayMarkdown);
+    queueMicrotask(() => {
+      suppressNextUpdate.current = false;
+    });
+  }, [bodyMarkdown, editor]);
 
   if (!editor) {
-    return <div className="emptyState">Loading editor</div>;
+    return <div className="editorState">Loading editor</div>;
   }
 
   return (
     <div className="editorShell">
-      <EditorContent editor={editor} className="editor" />
+      <EditorContent editor={editor} className="editorSurface" />
+      {hasTransientImageSource(bodyMarkdown) ? (
+        <div className="editorHint">Uploading image...</div>
+      ) : null}
     </div>
   );
 }

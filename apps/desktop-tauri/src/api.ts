@@ -5,9 +5,12 @@ export const api = {
   bootstrap: () => invoke<BootstrapState>("bootstrap"),
   createNote: () => invoke<Note>("create_note"),
   getNote: (id: string) => invoke<Note>("get_note", { id }),
-  saveNote: (id: string, contentMd: string) =>
-    invoke<Note>("save_note", { id, content_md: contentMd }),
+  saveNote: (id: string, title: string, contentMd: string, pinned: boolean) =>
+    invoke<Note>("save_note", { id, title, contentMd, pinned }),
+  setNotePinned: (id: string, pinned: boolean) => invoke<Note>("set_note_pinned", { id, pinned }),
   deleteNote: (id: string) => invoke<NoteSummary[]>("delete_note", { id }),
   savePngAsset: (noteId: string, bytes: number[]) =>
-    invoke<AssetRef>("save_png_asset", { note_id: noteId, bytes }),
+    invoke<AssetRef>("save_png_asset", { noteId, bytes }),
+  getOpenShortcut: () => invoke<string>("get_open_shortcut"),
+  setOpenShortcut: (shortcut: string) => invoke<string>("set_open_shortcut", { shortcut }),
 };
