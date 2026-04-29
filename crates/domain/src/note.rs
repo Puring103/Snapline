@@ -62,17 +62,21 @@ pub fn derive_title(content_md: &str) -> String {
 }
 
 pub fn derive_preview(content_md: &str) -> String {
-    let body_line = content_md
+    let preview = content_md
         .lines()
         .map(str::trim)
-        .skip_while(|line| line.is_empty() || line.starts_with("# "))
-        .find(|line| !line.is_empty())
-        .unwrap_or("");
+        .filter(|line| !line.is_empty() && !line.starts_with("# "))
+        .map(strip_markdown_markup)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    strip_markdown_markup(body_line)
+    preview
         .chars()
-        .take(80)
+        .take(500)
         .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 fn strip_markdown_markup(line: &str) -> String {
@@ -105,6 +109,6 @@ mod tests {
 
     #[test]
     fn derives_preview_from_first_body_line() {
-        assert_eq!(derive_preview("# Daily note\n\n- First item\nSecond"), "First item");
+        assert_eq!(derive_preview("# Daily note\n\n- First item\nSecond"), "First item\nSecond");
     }
 }

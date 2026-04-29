@@ -19,12 +19,14 @@ interface EditorPaneProps {
   bodyMarkdown: string;
   onBodyChange: (bodyMarkdown: string) => void;
   onRequestImageSave: (bytes: number[]) => Promise<SavedAsset | null>;
+  readOnly?: boolean;
 }
 
 export function EditorPane({
   bodyMarkdown,
   onBodyChange,
   onRequestImageSave,
+  readOnly = false,
 }: EditorPaneProps) {
   const suppressNextUpdate = useRef(false);
 
@@ -40,8 +42,11 @@ export function EditorPane({
     ],
     content: rewriteMarkdownImageSources(bodyMarkdown, assetUrlFromMarkdownPath),
     contentType: "markdown",
+    editable: !readOnly,
     editorProps: {
       handlePaste: (view, event) => {
+        if (readOnly) return false;
+
         const clipboardItems = Array.from(event.clipboardData?.items ?? []);
         const imageItem = clipboardItems.find(
           (item) => item.kind === "file" && item.type.startsWith("image/"),
@@ -101,6 +106,8 @@ export function EditorPane({
       },
       handleDOMEvents: {
         paste: (_view, event) => {
+          if (readOnly) return false;
+
           const clipboardData = event.clipboardData;
           if (!clipboardData) {
             return false;
@@ -135,6 +142,11 @@ export function EditorPane({
       onBodyChange(nextMarkdown);
     },
   });
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.setEditable(!readOnly);
+  }, [editor, readOnly]);
 
   useEffect(() => {
     if (!editor) return;

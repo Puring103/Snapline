@@ -325,7 +325,7 @@ mod tests {
         repo.save_note(&note.id, "Title", "# Title\n\nPreview line\nMore", false, t1).unwrap();
 
         let notes = repo.list_recent(10).unwrap();
-        assert_eq!(notes[0].preview, "Preview line");
+        assert_eq!(notes[0].preview, "Preview line\nMore");
     }
 
     #[test]

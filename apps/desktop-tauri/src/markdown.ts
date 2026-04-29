@@ -31,19 +31,15 @@ export function titleFromMarkdown(markdown: string): string {
 }
 
 export function previewFromMarkdown(markdown: string): string {
-  const firstBodyLine = normalizeMarkdown(markdown)
+  return normalizeMarkdown(markdown)
     .split("\n")
     .map((line) => line.trim())
-    .find((line) => line.length > 0 && !line.startsWith("# "));
-
-  if (!firstBodyLine) {
-    return "";
-  }
-
-  return firstBodyLine
-    .replace(/^(-|\*|\d+\.)\s+/, "")
-    .trim()
-    .slice(0, 80);
+    .filter((line) => line.length > 0 && !line.startsWith("# "))
+    .map((line) => line.replace(/^(-|\*|\d+\.)\s+/, "").trim())
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 500)
+    .trim();
 }
 
 export function replaceMarkdownImageSource(

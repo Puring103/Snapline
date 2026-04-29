@@ -15,6 +15,22 @@
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #16191c;
+  --canvas: #272219;
+  --surface: #20252a;
+  --surface-soft: #262c31;
+  --line: #394149;
+  --line-strong: #4a5661;
+  --text: #eceff1;
+  --muted: #a7b0b8;
+  --accent: #79b7cf;
+  --accent-soft: #1e3b47;
+  --danger: #e28a7c;
+  --shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
+}
+
 html,
 body,
 #root {
@@ -24,7 +40,9 @@ body,
 
 body {
   overflow: hidden;
-  background: linear-gradient(180deg, #f5f7fa 0%, #e9eef2 100%);
+  background:
+    radial-gradient(circle at 20% 0%, rgba(47, 111, 143, 0.12), transparent 26%),
+    linear-gradient(180deg, var(--surface-soft) 0%, var(--bg) 100%);
   color: var(--text);
 }
 
@@ -89,6 +107,7 @@ button {
   border-radius: 6px;
   background: var(--surface);
   cursor: pointer;
+  flex: none;
 }
 
 .iconButton:hover {
@@ -109,6 +128,34 @@ button {
 
 .iconButton.danger {
   color: var(--danger);
+}
+
+.flatIcon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.logoMark {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.brandBlock {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .titleInput {
@@ -160,6 +207,10 @@ button {
   background: rgba(177, 74, 61, 0.08);
   color: var(--danger);
   font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .editorShell {
@@ -259,16 +310,18 @@ button {
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   padding: 2px 0 4px;
 }
 
 .noteRow {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: start;
-  padding: 8px 8px 7px;
+  min-height: 92px;
+  padding: 12px 10px 10px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: var(--surface-soft);
@@ -288,7 +341,7 @@ button {
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
 }
 
 .noteRowTop {
@@ -319,14 +372,50 @@ button {
 }
 
 .noteRowPreview {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: block;
+  white-space: pre-wrap;
   color: var(--muted);
   font-size: 12px;
-  line-height: 1.32;
-  min-height: 1.32em;
+  line-height: 1.4;
+  min-height: 3.2em;
+}
+
+.noteRowBody {
+  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.pinnedCorner {
+  position: absolute;
+  left: 7px;
+  top: 7px;
+  width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 5px;
+}
+
+.pinnedCorner .flatIcon {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2;
+}
+
+.noteRow.pinned .noteRowTitle {
+  padding-left: 18px;
 }
 
 .noteRowTime {
@@ -347,6 +436,89 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.settingsBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 10px;
+  background: rgba(31, 35, 40, 0.18);
+}
+
+.settingsPanel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.settingsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.settingsTitle {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.settingsSub {
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settingsField {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.segmentedControl {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.segment {
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-transform: capitalize;
+}
+
+.segment.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.linkButton {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-weight: 700;
 }
 
 .editorHint {
