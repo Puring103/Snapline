@@ -12,6 +12,11 @@ import {
   normalizeMarkdown,
   rewriteMarkdownImageSources,
 } from "./markdown";
+import {
+  bytesFromPastedImageFile,
+  bytesFromTransientImageSource,
+  pastedImageFileFromClipboard,
+} from "./pasteImage";
 import { insertClipboardMarkdown } from "./pasteMarkdown";
 import { startupLog } from "./startupLog";
 import type { SavedAsset } from "./types";
@@ -67,18 +72,12 @@ export function EditorPane({
             return false;
           }
 
-          const clipboardItems = Array.from(clipboardData.items ?? []);
-          const imageItem = clipboardItems.find(
-            (item) => item.kind === "file" && item.type.startsWith("image/"),
-          );
-          if (imageItem) {
-            const file = imageItem.getAsFile();
-            if (!file) {
-              return false;
-            }
-
+          const file = pastedImageFileFromClipboard(clipboardData);
+          if (file) {
             event.preventDefault();
             const placeholderSrc = URL.createObjectURL(file);
+            const bytesPromise = bytesFromPastedImageFile(file);
+            uploadingImageSources.current.add(placeholderSrc);
 
             view.dispatch(
               view.state.tr.replaceSelectionWith(
@@ -86,7 +85,7 @@ export function EditorPane({
               ),
             );
 
-            void uploadTransientImageSource(placeholderSrc);
+            void uploadTransientImageSource(placeholderSrc, bytesPromise);
 
             return true;
           }
@@ -188,11 +187,11 @@ export function EditorPane({
     }
   }
 
-  async function uploadTransientImageSource(source: string) {
+  async function uploadTransientImageSource(source: string, bytesPromise?: Promise<number[]>) {
     uploadingImageSources.current.add(source);
 
     try {
-      const bytes = await bytesFromImageSource(source);
+      const bytes = await (bytesPromise ?? bytesFromTransientImageSource(source));
       const asset = await onRequestImageSave(bytes);
       const activeEditor = editorRef.current;
 
@@ -222,15 +221,6 @@ export function EditorPane({
 
 function isTransientImageSource(source: unknown): source is string {
   return typeof source === "string" && (source.startsWith("blob:") || source.startsWith("data:"));
-}
-
-async function bytesFromImageSource(source: string): Promise<number[]> {
-  const response = await fetch(source);
-  if (!response.ok) {
-    throw new Error(`Unable to read pasted image: ${response.status}`);
-  }
-
-  return Array.from(new Uint8Array(await response.arrayBuffer()));
 }
 
 function removeImageSource(editor: Editor, source: string) {
