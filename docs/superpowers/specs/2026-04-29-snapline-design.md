@@ -59,9 +59,11 @@ Snapline 的核心体验应该是“想到就能记”。用户打开应用后�
 
 ## 技术方向
 
-V1 采用以 Rust 为核心的桌面应用架构，并配合轻量、接近原生体验的 UI。
+V1 采用以 Rust 为核心的桌面应用架构，并配合 Tauri 承载 Web 编辑器界面。
 
-- UI：`Slint`
+- 桌面壳：`Tauri`
+- UI：`React + TypeScript`
+- 编辑器：`Tiptap`
 - 客户端语言：`Rust`
 - 本地数据库：`SQLite`
 - 后台异步任务：`tokio`
@@ -76,6 +78,8 @@ V1 采用以 Rust 为核心的桌面应用架构，并配合轻量、接近原�
 - 强调极快启动
 - 第一阶段以桌面端为主
 - 当前没有立即支持 iOS 的需求
+- V1 需要可编辑的渲染态 Markdown，而不是原始 Markdown 文本框
+- V1 需要图片粘贴、撤销重做、列表、标题、粗体等成熟编辑行为
 
 ## 系统架构
 
@@ -84,8 +88,11 @@ V1 采用以 Rust 为核心的桌面应用架构，并配合轻量、接近原�
 ```text
 snapline/
   Cargo.toml
+  apps/
+    desktop-tauri/
+      src/
+      src-tauri/
   crates/
-    app-desktop/
     app-core/
     domain/
     storage/
@@ -96,7 +103,8 @@ snapline/
 
 职责划分：
 
-- `app-desktop`：Slint 界面、窗口生命周期、用户交互事件
+- `apps/desktop-tauri/src`：React 界面、Tiptap 编辑器、用户交互事件
+- `apps/desktop-tauri/src-tauri`：Tauri 命令、窗口生命周期、前后端 IPC
 - `app-core`：应用用例与业务编排
 - `domain`：核心模型和业务规则
 - `storage`：SQLite 访问和持久化逻辑
@@ -112,9 +120,9 @@ snapline/
 
 1. 加载配置和数据路径
 2. 打开 SQLite
-3. 创建主窗口
-4. 读取最近便签
-5. 进入可编辑状态
+3. 创建 Tauri 主窗口并加载前端 bundle
+4. 读取最近便签和当前便签
+5. 初始化 Tiptap 编辑器并进入可编辑状态
 6. 在后台初始化搜索维护
 7. 在后台初始化同步任务
 
@@ -127,6 +135,14 @@ snapline/
 - 远端配置加载
 
 面向用户的目标不是“所有模块已完成初始化”，而是“打开后立刻可以开始输入”。
+
+M1 的性能目标：
+
+- 冷启动到可输入：目标 `< 1.5s`，理想 `< 800ms`
+- 输入延迟：不可感知，编辑器更新不等待 SQLite
+- 自动保存：默认 `600ms` debounce，保存任务在后台执行
+- 图片粘贴：先在编辑器中立即显示，再异步落盘并替换为本地资源引用
+- 前端 bundle：只包含编辑器和必要 UI，避免重型组件库
 
 ## 本地数据模型
 
@@ -148,6 +164,24 @@ V1 使用四张核心表。
 - `last_modified_by_device`
 - `is_conflict_copy`
 - `source_note_id`
+
+M1 可以先只实现 `notes` 表：
+
+```sql
+CREATE TABLE notes (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT '',
+  content_md TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT
+);
+
+CREATE INDEX idx_notes_deleted_updated
+ON notes (deleted_at, updated_at DESC);
+```
+
+其中 `content_md` 是持久化格式。编辑器内部可以使用 Tiptap/ProseMirror 文档模型，但保存时必须序列化为 Markdown。
 
 ### `change_queue`
 
@@ -178,6 +212,55 @@ V1 使用四张核心表。
 ### `notes_fts`
 
 使用 SQLite `FTS5` 建立标题和正文的全文搜索索引。
+
+## 编辑器模型
+
+V1 的编辑器不是原始 Markdown 源码编辑器，也不是左右分栏预览界面。
+
+目标体验：
+
+- 用户直接编辑渲染后的内容
+- 标题、段落、列表、粗体、链接、图片在编辑区中以接近最终形态显示
+- 底层仍保存 Markdown，便于同步、导出、搜索和长期维护
+- 不提供单独的预览面板
+
+M1 建议使用 `Tiptap` 作为编辑器内核。Tiptap 可以在 WebView 中处理复杂光标行为、撤销重做、粘贴、快捷键、列表缩进和图片节点。Rust 侧不实现富文本编辑器，只提供本地存储、文件系统和应用用例。
+
+编辑保存流程：
+
+1. 启动时 Rust 读取 `content_md`
+2. 前端把 Markdown 解析为 Tiptap 文档
+3. 用户在渲染态编辑器中修改内容
+4. 前端 debounce 后把文档序列化为 Markdown
+5. Tauri command 调用 `app-core` 保存 Markdown 到 SQLite
+6. 保存成功后 UI 显示 `Saved`
+
+## 图片粘贴
+
+M1 支持从剪贴板粘贴图片。
+
+图片保存位置：
+
+```text
+data/
+  snapline.db
+  assets/
+    notes/
+      <note_id>/
+        <image_id>.png
+```
+
+粘贴流程：
+
+1. 编辑器拦截 paste 事件
+2. 如果剪贴板包含图片，前端先创建临时预览并插入图片节点
+3. 前端通过 Tauri command 把图片字节交给 Rust
+4. Rust 生成 `image_id`，写入当前 note 的 assets 目录
+5. Rust 返回本地资源引用
+6. 前端把临时图片节点替换为正式引用
+7. 自动保存时 Markdown 中写入 `![](assets/notes/<note_id>/<image_id>.png)`
+
+M1 不做附件管理界面，也不做跨 note 图片去重。软删除便签时先保留图片文件，后续可以增加清理任务。
 
 ## 同步模型
 
@@ -251,14 +334,18 @@ Snapline 应该给人稳定、安静、可信赖的感觉。
 
 界面应保持简洁，不把 V1 做成厚重的笔记本或工作台产品。
 
+编辑体验上，用户不应主要面对 Markdown 标记文本。Markdown 是存储和互操作格式，而不是 M1 的主要编辑界面。
+
 ## 开发里程碑
 
 ### M1：本地 MVP
 
-- Slint 桌面壳
+- Tauri 桌面壳
+- React + Tiptap 渲染态 Markdown 编辑器
 - 新建、编辑、删除便签
 - SQLite 持久化
 - 自动保存
+- 图片粘贴到本地 assets 目录
 
 ### M2：搜索与便签流转
 
@@ -294,7 +381,10 @@ Snapline 应该给人稳定、安静、可信赖的感觉。
 
 ## 风险与约束
 
-- Slint 很适合桌面优先的 V1，但如果未来把 iOS 重新列为高优先级，需要重新评估路线。
+- Tauri + Web 编辑器的冷启动通常会比纯 Rust/Slint UI 更重，因此 M1 必须尽早加入启动耗时测量。
+- Web 编辑器显著降低富文本 Markdown 编辑、图片粘贴和撤销重做的实现风险。
+- Tiptap Markdown 能力需要在 M1 做 round-trip 测试，因为 Markdown 解析和序列化如果丢失节点，会直接影响本地存储可靠性。
+- 如果未来把 iOS 重新列为高优先级，需要重新评估桌面技术路线与移动端复用策略。
 - 为了保证交付速度，V1 的同步逻辑应保持简单。
 - 如果未来把“全局快捷键快速记录”变成硬需求，应用可能需要一个可选的登录时辅助进程。
 
@@ -304,7 +394,7 @@ Snapline 应该给人稳定、安静、可信赖的感觉。
 
 - 名称：`Snapline`
 - 平台：桌面优先
-- UI：`Slint`
+- UI：`Tauri + React + Tiptap`
 - 核心实现：`Rust`
 - 存储：`SQLite`
 - 同步模型：离线优先、push/pull、基于版本的冲突处理
