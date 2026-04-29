@@ -2,3 +2,5 @@
 target/
 apps/desktop-tauri/node_modules/
 apps/desktop-tauri/dist/
+.env
+server-data/
