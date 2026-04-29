@@ -26,6 +26,10 @@ pub struct Note {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
+    pub server_version: i64,
+    pub last_modified_by_device: Option<String>,
+    pub is_conflict_copy: bool,
+    pub source_note_id: Option<NoteId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +40,8 @@ pub struct NoteSummary {
     pub preview_md: String,
     pub pinned: bool,
     pub updated_at: DateTime<Utc>,
+    pub is_conflict_copy: bool,
+    pub source_note_id: Option<NoteId>,
 }
 
 impl Note {
@@ -48,6 +54,10 @@ impl Note {
             created_at: now,
             updated_at: now,
             deleted_at: None,
+            server_version: 0,
+            last_modified_by_device: None,
+            is_conflict_copy: false,
+            source_note_id: None,
         }
     }
 }
