@@ -3223,6 +3223,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "serde",
+ "sha2",
  "snapline-domain",
  "snapline-platform",
  "snapline-storage",
