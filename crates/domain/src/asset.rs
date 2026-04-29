@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -7,6 +8,10 @@ pub struct AssetId(pub Uuid);
 impl AssetId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
+    }
+
+    pub fn parse(value: &str) -> Result<Self, uuid::Error> {
+        Uuid::parse_str(value).map(Self)
     }
 }
 
@@ -21,4 +26,16 @@ pub struct AssetRef {
     pub markdown_path: String,
     pub filesystem_path: String,
     pub asset_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetMetadata {
+    pub id: AssetId,
+    pub note_id: crate::NoteId,
+    pub content_type: String,
+    pub byte_size: i64,
+    pub sha256: String,
+    pub storage_key: String,
+    pub created_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }
