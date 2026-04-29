@@ -25,11 +25,15 @@ impl AppPaths {
     }
 
     pub fn note_asset_dir(&self, note_id: &NoteId) -> PathBuf {
-        self.data_dir.join("assets").join("notes").join(note_id.to_string())
+        self.data_dir
+            .join("assets")
+            .join("notes")
+            .join(note_id.to_string())
     }
 
     pub fn note_asset_path(&self, note_id: &NoteId, asset_id: &AssetId, ext: &str) -> PathBuf {
-        self.note_asset_dir(note_id).join(format!("{}.{}", asset_id, ext))
+        self.note_asset_dir(note_id)
+            .join(format!("{}.{}", asset_id, ext))
     }
 
     pub fn markdown_asset_path(&self, note_id: &NoteId, asset_id: &AssetId, ext: &str) -> String {
@@ -41,7 +45,10 @@ impl AppPaths {
     }
 
     pub fn markdown_asset_url(&self, markdown_path: &str) -> String {
-        format!("asset://localhost/{}", markdown_path.trim_start_matches('/'))
+        format!(
+            "asset://localhost/{}",
+            markdown_path.trim_start_matches('/')
+        )
     }
 }
 
@@ -57,7 +64,10 @@ mod tests {
         let asset_id = AssetId::new();
 
         let expected_dir = format!("C:/snapline-data/assets/notes/{}", note_id);
-        assert_eq!(paths.note_asset_dir(&note_id), std::path::PathBuf::from(expected_dir));
+        assert_eq!(
+            paths.note_asset_dir(&note_id),
+            std::path::PathBuf::from(expected_dir)
+        );
         assert_eq!(
             paths.markdown_asset_path(&note_id, &asset_id, "png"),
             format!("assets/notes/{}/{}.png", note_id, asset_id)
