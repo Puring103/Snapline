@@ -1,3 +1,4 @@
+mod assets;
 mod auth;
 mod config;
 mod db;
@@ -18,7 +19,12 @@ async fn main() -> Result<()> {
     let config = Config::from_env()?;
     let pool = db::connect(&config.database_url).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
-    let state = Arc::new(AppState { pool, config });
+    let asset_store = assets::LocalFsAssetStore::new(&config.asset_data_dir);
+    let state = Arc::new(AppState {
+        pool,
+        config,
+        asset_store,
+    });
 
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -27,6 +33,11 @@ async fn main() -> Result<()> {
         .route("/sync/push", post(routes::push))
         .route("/sync/pull", get(routes::pull))
         .route("/sync/snapshot", get(routes::snapshot))
+        .route("/sync/assets/upload", post(routes::upload_asset))
+        .route(
+            "/sync/assets/:asset_id/download",
+            get(routes::download_asset),
+        )
         .with_state(state);
     let addr: SocketAddr = "0.0.0.0:8080".parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;

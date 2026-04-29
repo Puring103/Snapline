@@ -1,9 +1,15 @@
-use crate::{auth, config::Config, sync_service};
+use crate::{
+    assets::{AssetStore, LocalFsAssetStore},
+    auth,
+    config::Config,
+    sync_service,
+};
 use axum::{
-    extract::{Json, Query, State},
+    extract::{Json, Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
+use snapline_domain::AssetUploadPayload;
 use serde::{Deserialize, Serialize};
 use snapline_sync_client::protocol::{PullResponse, PushRequest, PushResponse, SnapshotResponse};
 use sqlx::{PgPool, Row};
@@ -14,6 +20,7 @@ use uuid::Uuid;
 pub struct AppState {
     pub pool: PgPool,
     pub config: Config,
+    pub asset_store: LocalFsAssetStore,
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,6 +134,94 @@ pub async fn snapshot(
         notes,
         assets: Vec::new(),
     }))
+}
+
+pub async fn upload_asset(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let account_id = auth_account_id(&headers, &state)?;
+    let mut payload: Option<AssetUploadPayload> = None;
+    let mut file_bytes: Option<bytes::Bytes> = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(internal_error)? {
+        match field.name() {
+            Some("metadata") => {
+                let text = field.text().await.map_err(internal_error)?;
+                payload = Some(serde_json::from_str(&text).map_err(internal_error)?);
+            }
+            Some("file") => {
+                file_bytes = Some(field.bytes().await.map_err(internal_error)?);
+            }
+            _ => {}
+        }
+    }
+
+    let payload = payload.ok_or((StatusCode::BAD_REQUEST, "missing metadata".to_string()))?;
+    let file_bytes = file_bytes.ok_or((StatusCode::BAD_REQUEST, "missing file".to_string()))?;
+    if file_bytes.len() as i64 != payload.byte_size {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "asset byte size mismatch".to_string(),
+        ));
+    }
+    let storage_key = format!(
+        "accounts/{}/notes/{}/{}.png",
+        account_id, payload.note_id, payload.asset_id
+    );
+    state
+        .asset_store
+        .put(&storage_key, file_bytes)
+        .await
+        .map_err(internal_error)?;
+    sqlx::query(
+        "INSERT INTO assets (id, account_id, note_id, content_type, byte_size, sha256, storage_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT(account_id, id) DO UPDATE SET
+           note_id = excluded.note_id,
+           content_type = excluded.content_type,
+           byte_size = excluded.byte_size,
+           sha256 = excluded.sha256,
+           storage_key = excluded.storage_key",
+    )
+    .bind(payload.asset_id.to_string())
+    .bind(&account_id)
+    .bind(payload.note_id.to_string())
+    .bind(payload.content_type)
+    .bind(payload.byte_size)
+    .bind(payload.sha256)
+    .bind(storage_key)
+    .execute(&state.pool)
+    .await
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn download_asset(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(asset_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let account_id = auth_account_id(&headers, &state)?;
+    let row = sqlx::query(
+        "SELECT content_type, storage_key FROM assets
+         WHERE account_id = $1 AND id = $2 AND deleted_at IS NULL",
+    )
+    .bind(account_id)
+    .bind(asset_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(internal_error)?
+    .ok_or((StatusCode::NOT_FOUND, "asset not found".to_string()))?;
+    let content_type: String = row.get("content_type");
+    let storage_key: String = row.get("storage_key");
+    let bytes = state
+        .asset_store
+        .get(&storage_key)
+        .await
+        .map_err(internal_error)?;
+    Ok(([(axum::http::header::CONTENT_TYPE, content_type)], bytes))
 }
 
 async fn create_account_and_device(
