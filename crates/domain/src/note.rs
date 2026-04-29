@@ -91,22 +91,23 @@ pub fn derive_preview(content_md: &str) -> String {
 }
 
 pub fn derive_preview_markdown(content_md: &str) -> String {
+    let title_line_index = content_md
+        .lines()
+        .position(|line| line.trim().starts_with("# "));
+
     content_md
         .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with("# "))
+        .enumerate()
+        .filter(|(index, _line)| Some(*index) != title_line_index)
+        .map(|(_index, line)| line)
         .collect::<Vec<_>>()
         .join("\n")
-        .chars()
-        .take(500)
-        .collect::<String>()
         .trim()
         .to_string()
 }
 
 fn strip_markdown_markup(line: &str) -> String {
-    line
-        .trim_start_matches("- ")
+    line.trim_start_matches("- ")
         .trim_start_matches("* ")
         .trim_start_matches("1. ")
         .trim_start_matches("2. ")
@@ -134,7 +135,10 @@ mod tests {
 
     #[test]
     fn derives_preview_from_first_body_line() {
-        assert_eq!(derive_preview("# Daily note\n\n- First item\nSecond"), "First item\nSecond");
+        assert_eq!(
+            derive_preview("# Daily note\n\n- First item\nSecond"),
+            "First item\nSecond"
+        );
     }
 
     #[test]
@@ -143,5 +147,21 @@ mod tests {
             derive_preview_markdown("# Daily note\n\n- **First** item\nSecond"),
             "- **First** item\nSecond"
         );
+    }
+
+    #[test]
+    fn derives_full_markdown_preview_without_truncating() {
+        let long_body = format!(
+            "# Daily note\n\n{}\n\n{}\n\n{}",
+            "- Parent\n  - Child",
+            "```ts\n  const value = 1;\n```",
+            "x".repeat(620)
+        );
+
+        let preview = derive_preview_markdown(&long_body);
+        assert!(!preview.contains("# Daily note"));
+        assert!(preview.contains("  - Child"));
+        assert!(preview.contains("  const value = 1;"));
+        assert!(preview.len() > 500);
     }
 }

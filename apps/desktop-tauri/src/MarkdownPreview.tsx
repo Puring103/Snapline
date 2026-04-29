@@ -30,5 +30,5 @@ export function MarkdownPreview({ markdown }: MarkdownPreviewProps) {
     return <div className="noteRowPreview">Loading preview...</div>;
   }
 
-  return <EditorContent editor={editor} className="noteRowPreview" />;
+  return <EditorContent editor={editor} className="noteRowPreview markdownSurface" />;
 }

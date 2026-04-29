@@ -43,13 +43,13 @@ export function previewFromMarkdown(markdown: string): string {
 }
 
 export function previewMarkdownFromMarkdown(markdown: string): string {
-  return normalizeMarkdown(markdown)
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("# "))
-    .join("\n")
-    .slice(0, 500)
-    .trim();
+  const lines = normalizeMarkdown(markdown).split("\n");
+  const titleLineIndex = lines.findIndex((line) => line.trim().startsWith("# "));
+  const previewLines = titleLineIndex === -1
+    ? lines
+    : lines.filter((_line, index) => index !== titleLineIndex);
+
+  return previewLines.join("\n").trim();
 }
 
 export function replaceMarkdownImageSource(
@@ -100,6 +100,10 @@ export function rewriteMarkdownImageSources(
 }
 
 export function assetUrlFromMarkdownPath(markdownPath: string): string {
+  if (!markdownPath.startsWith("assets/")) {
+    return markdownPath;
+  }
+
   return `asset://localhost/${markdownPath}`;
 }
 
