@@ -1,5 +1,8 @@
 import { EditorContent, useEditor } from "@tiptap/react";
+import type { Editor } from "@tiptap/core";
 import { useEffect, useRef } from "react";
+import { copySelectedMarkdown } from "./copyMarkdown";
+import { shouldApplyEditorMarkdownUpdate } from "./editorSync";
 import { createMarkdownExtensions, setMarkdownContent } from "./editorExtensions";
 import {
   assetUrlFromMarkdownPath,
@@ -9,6 +12,7 @@ import {
   normalizeMarkdown,
   rewriteMarkdownImageSources,
 } from "./markdown";
+import { insertClipboardMarkdown } from "./pasteMarkdown";
 import { startupLog } from "./startupLog";
 import type { SavedAsset } from "./types";
 
@@ -28,6 +32,8 @@ export function EditorPane({
   readOnly = false,
 }: EditorPaneProps) {
   const suppressNextUpdate = useRef(false);
+  const editorRef = useRef<Editor | null>(null);
+  const uploadingImageSources = useRef(new Set<string>());
 
   const editor = useEditor({
     extensions: createMarkdownExtensions("Write before the thought fades..."),
@@ -35,68 +41,25 @@ export function EditorPane({
     contentType: "markdown",
     editable: !readOnly,
     editorProps: {
-      handlePaste: (view, event) => {
-        if (readOnly) return false;
-
-        const clipboardItems = Array.from(event.clipboardData?.items ?? []);
-        const imageItem = clipboardItems.find(
-          (item) => item.kind === "file" && item.type.startsWith("image/"),
-        );
-
-        if (!imageItem) return false;
-
-        const file = imageItem.getAsFile();
-        if (!file) return false;
-
-        event.preventDefault();
-        const placeholderSrc = URL.createObjectURL(file);
-
-        view.dispatch(
-          view.state.tr.replaceSelectionWith(
-            view.state.schema.nodes.image.create({ src: placeholderSrc }),
-          ),
-        );
-
-        void file.arrayBuffer().then(async (buffer) => {
-          try {
-            const asset = await onRequestImageSave(Array.from(new Uint8Array(buffer)));
-            if (!asset || !editor) {
-              return;
-            }
-
-            const assetUrl = asset.asset_url;
-
-            editor.commands.command(({ tr, state, dispatch }) => {
-              const imageType = state.schema.nodes.image;
-              let updated = false;
-
-              state.doc.descendants((node, pos) => {
-                if (node.type === imageType && node.attrs.src === placeholderSrc) {
-                  tr.setNodeMarkup(pos, undefined, {
-                    ...node.attrs,
-                    src: assetUrl,
-                  });
-                  updated = true;
-                  return false;
-                }
-                return true;
-              });
-
-              if (updated && dispatch) {
-                dispatch(tr);
-              }
-
-              return updated;
-            });
-          } finally {
-            URL.revokeObjectURL(placeholderSrc);
-          }
-        });
-
-        return true;
-      },
       handleDOMEvents: {
-        paste: (_view, event) => {
+        contextmenu: (_view, event) => {
+          event.preventDefault();
+          return true;
+        },
+        copy: (_view, event) => {
+          const activeEditor = editorRef.current;
+          if (!activeEditor) {
+            return false;
+          }
+
+          if (!copySelectedMarkdown(activeEditor, event.clipboardData)) {
+            return false;
+          }
+
+          event.preventDefault();
+          return true;
+        },
+        paste: (view, event) => {
           if (readOnly) return false;
 
           const clipboardData = event.clipboardData;
@@ -109,7 +72,23 @@ export function EditorPane({
             (item) => item.kind === "file" && item.type.startsWith("image/"),
           );
           if (imageItem) {
-            return false;
+            const file = imageItem.getAsFile();
+            if (!file) {
+              return false;
+            }
+
+            event.preventDefault();
+            const placeholderSrc = URL.createObjectURL(file);
+
+            view.dispatch(
+              view.state.tr.replaceSelectionWith(
+                view.state.schema.nodes.image.create({ src: placeholderSrc }),
+              ),
+            );
+
+            void uploadTransientImageSource(placeholderSrc);
+
+            return true;
           }
 
           const markdownText = markdownTextFromClipboard(clipboardData);
@@ -117,9 +96,13 @@ export function EditorPane({
             return false;
           }
 
+          const activeEditor = editorRef.current;
+          if (!activeEditor) {
+            return false;
+          }
+
           event.preventDefault();
-          editor?.commands.insertContent(markdownText, { contentType: "markdown" });
-          return true;
+          return insertClipboardMarkdown(activeEditor, markdownText);
         },
       },
     },
@@ -131,12 +114,16 @@ export function EditorPane({
         markdownPathFromAssetUrl,
       );
       onBodyChange(nextMarkdown);
+      void uploadTransientImages(editor);
     },
   });
+
+  editorRef.current = editor;
 
   useEffect(() => {
     if (!editor) return;
     startupLog("editor_ready");
+    void uploadTransientImages(editor);
   }, [editor]);
 
   useEffect(() => {
@@ -159,7 +146,7 @@ export function EditorPane({
     const currentMarkdown = normalizeMarkdown(editor.getMarkdown() ?? "");
     const nextMarkdown = normalizeMarkdown(nextDisplayMarkdown);
 
-    if (currentMarkdown === nextMarkdown) {
+    if (!shouldApplyEditorMarkdownUpdate(currentMarkdown, nextMarkdown)) {
       return;
     }
 
@@ -176,10 +163,103 @@ export function EditorPane({
 
   return (
     <div className="editorShell">
-      <EditorContent editor={editor} className="editorSurface" />
+      <EditorContent editor={editor} className="editorSurface markdownSurface" />
       {hasTransientImageSource(bodyMarkdown) ? (
         <div className="editorHint">Uploading image...</div>
       ) : null}
     </div>
   );
+
+  async function uploadTransientImages(activeEditor: Editor) {
+    const imageType = activeEditor.state.schema.nodes.image;
+    const sources: string[] = [];
+
+    activeEditor.state.doc.descendants((node) => {
+      if (node.type === imageType && isTransientImageSource(node.attrs.src)) {
+        sources.push(node.attrs.src);
+      }
+      return true;
+    });
+
+    for (const source of sources) {
+      if (!uploadingImageSources.current.has(source)) {
+        void uploadTransientImageSource(source);
+      }
+    }
+  }
+
+  async function uploadTransientImageSource(source: string) {
+    uploadingImageSources.current.add(source);
+
+    try {
+      const bytes = await bytesFromImageSource(source);
+      const asset = await onRequestImageSave(bytes);
+      const activeEditor = editorRef.current;
+
+      if (!activeEditor) {
+        return;
+      }
+
+      if (!asset) {
+        removeImageSource(activeEditor, source);
+        return;
+      }
+
+      updateImageSource(activeEditor, source, asset.asset_url);
+    } catch {
+      const activeEditor = editorRef.current;
+      if (activeEditor) {
+        removeImageSource(activeEditor, source);
+      }
+    } finally {
+      uploadingImageSources.current.delete(source);
+      if (source.startsWith("blob:")) {
+        URL.revokeObjectURL(source);
+      }
+    }
+  }
+}
+
+function isTransientImageSource(source: unknown): source is string {
+  return typeof source === "string" && (source.startsWith("blob:") || source.startsWith("data:"));
+}
+
+async function bytesFromImageSource(source: string): Promise<number[]> {
+  const response = await fetch(source);
+  if (!response.ok) {
+    throw new Error(`Unable to read pasted image: ${response.status}`);
+  }
+
+  return Array.from(new Uint8Array(await response.arrayBuffer()));
+}
+
+function removeImageSource(editor: Editor, source: string) {
+  updateImageSource(editor, source, null);
+}
+
+function updateImageSource(editor: Editor, source: string, nextSource: string | null) {
+  editor.commands.command(({ tr, state }) => {
+    const imageType = state.schema.nodes.image;
+    let updated = false;
+
+    state.doc.descendants((node, pos) => {
+      if (node.type !== imageType || node.attrs.src !== source) {
+        return true;
+      }
+
+      if (nextSource) {
+        tr.setNodeMarkup(pos, undefined, {
+          ...node.attrs,
+          src: nextSource,
+        });
+      } else {
+        tr.delete(pos, pos + node.nodeSize);
+      }
+
+      updated = true;
+      return false;
+    });
+
+    return updated;
+  });
 }
