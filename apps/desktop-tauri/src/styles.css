@@ -1,0 +1,192 @@
+:root {
+  color-scheme: light;
+  --bg: #f3efe8;
+  --panel: #fcfaf6;
+  --panel-strong: #ffffff;
+  --line: #ded4c6;
+  --line-strong: #c8b9a5;
+  --text: #22201d;
+  --muted: #6c6359;
+  --accent: #3d4f5b;
+  --accent-soft: #dbe3e8;
+  --danger: #8f4f3d;
+  --shadow: 0 18px 40px rgba(45, 31, 20, 0.08);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.5), transparent 36%),
+    linear-gradient(180deg, #f8f4ee 0%, #efe7dd 100%);
+  color: var(--text);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.appShell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  height: 100%;
+}
+
+.sidebar {
+  border-right: 1px solid var(--line);
+  background: rgba(252, 250, 246, 0.92);
+  backdrop-filter: blur(12px);
+}
+
+.sidebarHeader,
+.workspaceHeader {
+  height: 56px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.brandSub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.iconButton,
+.ghostButton {
+  border: 1px solid var(--line-strong);
+  background: var(--panel-strong);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 11px;
+  cursor: pointer;
+}
+
+.iconButton {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+}
+
+.ghostButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.noteList {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.noteItem {
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+}
+
+.noteItem:hover,
+.noteItem.active {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: var(--line);
+  box-shadow: var(--shadow);
+}
+
+.noteTitle {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.noteTime {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.workspace {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 56px minmax(0, 1fr);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.35));
+}
+
+.status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.errorBanner {
+  padding: 12px 16px;
+  color: var(--danger);
+  background: rgba(143, 79, 61, 0.08);
+  border-bottom: 1px solid rgba(143, 79, 61, 0.2);
+}
+
+.editorShell {
+  min-width: 0;
+  overflow: auto;
+}
+
+.editor {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 28px 40px 52px;
+}
+
+.editor .ProseMirror {
+  min-height: calc(100vh - 140px);
+  outline: none;
+  font-size: 16px;
+  line-height: 1.72;
+  color: var(--text);
+}
+
+.editor .ProseMirror p {
+  margin: 0 0 0.9em;
+}
+
+.editor .ProseMirror h1,
+.editor .ProseMirror h2,
+.editor .ProseMirror h3 {
+  line-height: 1.2;
+  margin: 1.2em 0 0.45em;
+}
+
+.editor .ProseMirror img {
+  max-width: 100%;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.editor .ProseMirror ul,
+.editor .ProseMirror ol {
+  padding-left: 1.5em;
+}
+
+.emptyState {
+  padding: 22px 16px;
+  color: var(--muted);
+}
