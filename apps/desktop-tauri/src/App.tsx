@@ -1,11 +1,8 @@
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { EditorContent, useEditor } from "@tiptap/react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
-import { createMarkdownExtensions, setMarkdownContent } from "./editorExtensions";
-import { EditorPane } from "./EditorPane";
-import { assetUrlFromMarkdownPath, rewriteMarkdownImageSources } from "./markdown";
+import { assetUrlFromMarkdownPath, hasTransientImageSource } from "./markdown";
 import {
   createDraftSession,
   deleteConfirmationFor,
@@ -14,17 +11,39 @@ import {
   upsertNote,
   type ActiveSession,
 } from "./session";
+import { startupLog } from "./startupLog";
 import type { Note, NoteSummary, SavedAsset } from "./types";
 import { openListWindow, openNoteWindow, readAppRoute } from "./window";
 
 const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
 const THEME_STORAGE_KEY = "snapline.theme";
+const LazyEditorPane = lazy(() => {
+  startupLog("editor_chunk_requested");
+  return import("./EditorPane").then((module) => {
+    startupLog("editor_chunk_loaded");
+    return { default: module.EditorPane };
+  });
+});
+const LazyMarkdownPreview = lazy(() => {
+  startupLog("preview_chunk_requested");
+  return import("./MarkdownPreview").then((module) => {
+    startupLog("preview_chunk_loaded");
+    return { default: module.MarkdownPreview };
+  });
+});
 
 type ThemeMode = "system" | "light" | "dark";
 
 export function App() {
   const route = useMemo(readAppRoute, []);
   useThemeSync();
+
+  useEffect(() => {
+    startupLog("route_mounted", {
+      mode: route.mode,
+      has_note_id: route.noteId !== null,
+    });
+  }, [route.mode, route.noteId]);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -48,11 +67,17 @@ function NotesListWindow() {
 
   const refreshNotes = useCallback(async (quiet = false) => {
     try {
+      const startedAt = performance.now();
       setError(null);
       if (!quiet) {
         setStatus("Loading");
       }
       const state = await api.bootstrap();
+      startupLog("list_bootstrap_done", {
+        quiet,
+        notes: state.notes.length,
+        duration_ms: Math.round(performance.now() - startedAt),
+      });
       setNotes(state.notes);
       setConfirmingDeleteId((current) =>
         current && state.notes.some((note) => note.id === current) ? current : null,
@@ -229,7 +254,9 @@ function NotesListWindow() {
                     )}
                   </div>
                 </div>
-                <MarkdownPreview markdown={note.preview_md || note.preview || "No preview"} />
+                <Suspense fallback={<div className="noteRowPreview">{note.preview || "No preview"}</div>}>
+                  <LazyMarkdownPreview markdown={note.preview_md || note.preview || "No preview"} />
+                </Suspense>
               </article>
             );
           })
@@ -248,26 +275,6 @@ function NotesListWindow() {
       ) : null}
     </main>
   );
-}
-
-function MarkdownPreview({ markdown }: { markdown: string }) {
-  const editor = useEditor({
-    extensions: createMarkdownExtensions(),
-    content: rewriteMarkdownImageSources(markdown, assetUrlFromMarkdownPath),
-    contentType: "markdown",
-    editable: false,
-  });
-
-  useEffect(() => {
-    if (!editor) return;
-    setMarkdownContent(editor, rewriteMarkdownImageSources(markdown, assetUrlFromMarkdownPath));
-  }, [editor, markdown]);
-
-  if (!editor) {
-    return <div className="noteRowPreview">Loading preview...</div>;
-  }
-
-  return <EditorContent editor={editor} className="noteRowPreview" />;
 }
 
 function NoteEditorWindow({ noteId }: { noteId: string | null }) {
@@ -291,9 +298,14 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
 
     async function loadNote() {
       try {
+        const startedAt = performance.now();
         setError(null);
 
         const next = noteId ? await api.getNote(noteId) : await api.createNote();
+        startupLog("note_data_loaded", {
+          existing_note: noteId !== null,
+          duration_ms: Math.round(performance.now() - startedAt),
+        });
         if (cancelled) {
           return;
         }
@@ -532,15 +544,33 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
               ) : null}
             </div>
           ) : null}
-          <EditorPane
-            bodyMarkdown={session.bodyMd}
-            onBodyChange={handleBodyChange}
-            onRequestImageSave={handleRequestImageSave}
-            readOnly={deleted}
-          />
+          <Suspense fallback={<EditorLoadingState bodyMarkdown={session.bodyMd} />}>
+            <LazyEditorPane
+              bodyMarkdown={session.bodyMd}
+              onBodyChange={handleBodyChange}
+              onRequestImageSave={handleRequestImageSave}
+              readOnly={deleted}
+            />
+          </Suspense>
         </section>
       </section>
     </main>
+  );
+}
+
+function EditorLoadingState({ bodyMarkdown }: { bodyMarkdown: string }) {
+  return (
+    <div className="editorShell">
+      <textarea
+        aria-label="Note body loading"
+        className="editorSurface editorLoadingSurface"
+        readOnly
+        value={bodyMarkdown}
+      />
+      {hasTransientImageSource(bodyMarkdown) ? (
+        <div className="editorHint">Uploading image...</div>
+      ) : null}
+    </div>
   );
 }
 
@@ -703,10 +733,13 @@ function IconButton({
 function LogoIcon() {
   return (
     <svg className="logoMark" viewBox="0 0 32 32" aria-hidden="true">
-      <rect x="5" y="4" width="18" height="22" rx="4" />
-      <path d="M11 11h9M11 16h7M11 21h5" />
-      <path d="M20 6l7 7" />
-      <path d="M23 5l4 4-12 12-5 1 1-5 12-12z" />
+      <path d="M8 5h12l6 6v16H8z" />
+      <path d="M20 5v6h6" />
+      <path d="M12 14h9" />
+      <path d="M10 19h11" />
+      <path d="M12 24h7" />
+      <path d="M7 15h3" />
+      <path d="M5 20h5" />
     </svg>
   );
 }

@@ -259,6 +259,20 @@ button {
   padding: 10px 12px 14px;
 }
 
+.editorLoadingSurface {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: calc(100vh - 132px);
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.42;
+}
+
 .editorSurface .ProseMirror {
   min-height: calc(100vh - 132px);
   outline: none;

@@ -9,6 +9,7 @@ import {
   normalizeMarkdown,
   rewriteMarkdownImageSources,
 } from "./markdown";
+import { startupLog } from "./startupLog";
 import type { SavedAsset } from "./types";
 
 interface EditorPaneProps {
@@ -130,6 +131,11 @@ export function EditorPane({
       onBodyChange(nextMarkdown);
     },
   });
+
+  useEffect(() => {
+    if (!editor) return;
+    startupLog("editor_ready");
+  }, [editor]);
 
   useEffect(() => {
     if (!editor) return;

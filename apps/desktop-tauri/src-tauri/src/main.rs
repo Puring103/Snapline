@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use snapline_app_core::{AppCore, BootstrapState};
 use snapline_domain::{AssetRef, Note, NoteId, NoteSummary};
 use snapline_platform::AppPaths;
@@ -7,6 +9,14 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 struct AppState {
     core: Mutex<AppCore>,
+    startup_logging_enabled: bool,
+}
+
+#[tauri::command]
+fn log_startup(state: State<'_, AppState>, message: String) {
+    if state.startup_logging_enabled {
+        eprintln!("{message}");
+    }
 }
 
 #[tauri::command]
@@ -180,22 +190,68 @@ fn show_main_window(app: &tauri::AppHandle) {
 }
 
 fn main() {
+    let app_started = std::time::Instant::now();
+    let startup_logging_enabled = std::env::var("SNAPLINE_STARTUP_LOG").ok().as_deref() == Some("1");
+    if startup_logging_enabled {
+        eprintln!("snapline.startup event=rust_main");
+    }
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .build(),
         )
-        .setup(|app| {
+        .setup(move |app| {
+            let setup_started = std::time::Instant::now();
+            if startup_logging_enabled {
+                eprintln!(
+                    "snapline.startup event=setup_started elapsed_ms={}",
+                    app_started.elapsed().as_millis()
+                );
+            }
             let paths = AppPaths::resolve().unwrap_or_else(|_| AppPaths::from_data_dir(std::env::temp_dir().join("Snapline")));
             let core = AppCore::open(paths).expect("open app core");
-            let shortcut = core.get_open_shortcut().unwrap_or_else(|_| "Ctrl+Shift+Space".to_string());
             app.manage(AppState {
                 core: Mutex::new(core),
+                startup_logging_enabled,
             });
-            register_open_shortcut(&app.handle(), &shortcut).expect("register open shortcut");
+            if startup_logging_enabled {
+                eprintln!(
+                    "snapline.startup event=app_core_opened elapsed_ms={} duration_ms={}",
+                    app_started.elapsed().as_millis(),
+                    setup_started.elapsed().as_millis()
+                );
+            }
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let shortcut_started = std::time::Instant::now();
+                let shortcut = app_handle
+                    .state::<AppState>()
+                    .core
+                    .lock()
+                    .map_err(|_| "app state lock poisoned".to_string())
+                    .and_then(|core| core.get_open_shortcut().map_err(|err| err.to_string()))
+                    .unwrap_or_else(|_| "Ctrl+Shift+Space".to_string());
+                if let Err(err) = register_open_shortcut(&app_handle, &shortcut) {
+                    eprintln!("snapline.register_open_shortcut_error={err}");
+                }
+                if startup_logging_enabled {
+                    eprintln!(
+                        "snapline.startup event=shortcut_registered duration_ms={}",
+                        shortcut_started.elapsed().as_millis()
+                    );
+                }
+            });
+            if startup_logging_enabled {
+                eprintln!(
+                    "snapline.startup event=setup_finished elapsed_ms={} duration_ms={}",
+                    app_started.elapsed().as_millis(),
+                    setup_started.elapsed().as_millis()
+                );
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            log_startup,
             bootstrap,
             create_note,
             get_note,
