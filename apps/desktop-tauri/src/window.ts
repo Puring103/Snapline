@@ -16,6 +16,18 @@ export function readAppRoute(): AppRoute {
   };
 }
 
+export function shouldDeferInitialNoteLoad({
+  launchedInBackground,
+  windowLabel,
+  noteId,
+}: {
+  launchedInBackground: boolean;
+  windowLabel: string;
+  noteId: string | null;
+}): boolean {
+  return launchedInBackground && windowLabel === "main" && noteId === null;
+}
+
 export function openListWindow() {
   return WebviewWindow.getByLabel("list").then((existing) => {
     if (existing) {
