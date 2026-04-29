@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/windows-schema.json",
   "identifier": "main",
   "description": "Main Snapline window.",
-  "windows": ["main", "note-*", "list-*"],
+  "windows": ["main", "note-*", "list", "list-*"],
   "permissions": [
     "core:default",
     "core:webview:allow-create-webview-window",

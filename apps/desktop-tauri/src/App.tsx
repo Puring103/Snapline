@@ -1,9 +1,11 @@
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { EditorContent, useEditor } from "@tiptap/react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
+import { createMarkdownExtensions } from "./editorExtensions";
 import { EditorPane } from "./EditorPane";
-import { assetUrlFromMarkdownPath } from "./markdown";
+import { assetUrlFromMarkdownPath, rewriteMarkdownImageSources } from "./markdown";
 import { createDraftSession, isSessionDirty, sortNotes, upsertNote, type ActiveSession } from "./session";
 import type { Note, NoteSummary, SavedAsset } from "./types";
 import { openListWindow, openNoteWindow, readAppRoute } from "./window";
@@ -38,6 +40,21 @@ function NotesListWindow() {
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [themeMode, setThemeMode] = useThemeMode();
 
+  const refreshNotes = useCallback(async (quiet = false) => {
+    try {
+      setError(null);
+      if (!quiet) {
+        setStatus("Loading");
+      }
+      const state = await api.bootstrap();
+      setNotes(state.notes);
+      setStatus("Ready");
+    } catch (err) {
+      setError(String(err));
+      setStatus("Error");
+    }
+  }, []);
+
   useEffect(() => {
     void refreshNotes();
     void api
@@ -48,21 +65,39 @@ function NotesListWindow() {
       .catch(() => {
         setShortcut(DEFAULT_SHORTCUT);
       });
-  }, []);
+  }, [refreshNotes]);
+
+  useEffect(() => {
+    let unlistenSaved: (() => void) | null = null;
+    let unlistenDeleted: (() => void) | null = null;
+    const refreshQuietly = () => void refreshNotes(true);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        refreshQuietly();
+      }
+    };
+
+    void listen("note-saved", refreshQuietly).then((unlisten) => {
+      unlistenSaved = unlisten;
+    });
+    void listen("note-deleted", refreshQuietly).then((unlisten) => {
+      unlistenDeleted = unlisten;
+    });
+
+    window.addEventListener("focus", refreshQuietly);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    const intervalId = window.setInterval(refreshWhenVisible, 2000);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshQuietly);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      unlistenSaved?.();
+      unlistenDeleted?.();
+    };
+  }, [refreshNotes]);
 
   const visibleNotes = useMemo(() => sortNotes(notes), [notes]);
-
-  async function refreshNotes() {
-    try {
-      setError(null);
-      const state = await api.bootstrap();
-      setNotes(state.notes);
-      setStatus("Ready");
-    } catch (err) {
-      setError(String(err));
-      setStatus("Error");
-    }
-  }
 
   function persistShortcut(nextShortcut: string) {
     void api
@@ -71,8 +106,14 @@ function NotesListWindow() {
       .catch((err) => setError(String(err)));
   }
 
-  function handleNewNote() {
-    void openNoteWindow();
+  async function handleNewNote() {
+    try {
+      setError(null);
+      await openNoteWindow();
+    } catch (err) {
+      setError(String(err));
+      setStatus("Error");
+    }
   }
 
   async function handleSelectNote(noteId: string) {
@@ -144,7 +185,7 @@ function NotesListWindow() {
           </div>
         </div>
         <div className="listHeaderActions">
-          <IconButton label="New note" onClick={handleNewNote}><PlusIcon /></IconButton>
+          <IconButton label="New note" onClick={() => void handleNewNote()}><PlusIcon /></IconButton>
           <IconButton label="Refresh" onClick={() => void refreshNotes()}><RefreshIcon /></IconButton>
           <IconButton label="Settings" onClick={() => setSettingsOpen(true)}><SettingsIcon /></IconButton>
         </div>
@@ -171,7 +212,7 @@ function NotesListWindow() {
                   <div className="noteRowPreview">{note.preview || "No preview"}</div>
                   {expanded ? (
                     <div className="noteRowBody">
-                      {loaded ? loaded.content_md || "Empty note" : "Loading note..."}
+                      {loaded ? <ReadOnlyMarkdown markdown={loaded.content_md || "Empty note"} /> : "Loading note..."}
                     </div>
                   ) : null}
                   <div className="noteRowTime">
@@ -341,6 +382,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       });
       setPinned(saved.pinned ?? false);
       setStatus("Saved");
+      await emit("note-saved", { id: saved.id });
       return saved;
     } catch (err) {
       setError(String(err));
@@ -409,6 +451,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
         persistedTitle: saved.title,
         persistedBodyMd: saved.content_md,
       }));
+      await emit("note-saved", { id: saved.id });
       await getCurrentWindow().setAlwaysOnTop(nextPinned);
       setStatus("Saved");
     } catch (err) {
@@ -477,6 +520,26 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       </section>
     </main>
   );
+}
+
+function ReadOnlyMarkdown({ markdown }: { markdown: string }) {
+  const editor = useEditor({
+    extensions: createMarkdownExtensions(),
+    content: rewriteMarkdownImageSources(markdown, assetUrlFromMarkdownPath),
+    contentType: "markdown",
+    editable: false,
+  });
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.commands.setContent(rewriteMarkdownImageSources(markdown, assetUrlFromMarkdownPath));
+  }, [editor, markdown]);
+
+  if (!editor) {
+    return <div className="readonlyMarkdown">Loading note...</div>;
+  }
+
+  return <EditorContent editor={editor} className="readonlyMarkdown" />;
 }
 
 function SettingsPanel({

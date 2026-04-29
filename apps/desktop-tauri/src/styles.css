@@ -11,6 +11,11 @@
   --accent: #2f6f8f;
   --accent-soft: #d7ebf6;
   --danger: #b14a3d;
+  --code-bg: #172026;
+  --code-text: #e7edf2;
+  --code-muted: #91a4b3;
+  --code-accent: #7cc7a4;
+  --scroll-thumb: rgba(31, 35, 40, 0.18);
   --shadow: 0 16px 40px rgba(31, 35, 40, 0.12);
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
@@ -28,6 +33,11 @@ html[data-theme="dark"] {
   --accent: #79b7cf;
   --accent-soft: #1e3b47;
   --danger: #e28a7c;
+  --code-bg: #11161a;
+  --code-text: #dce5ec;
+  --code-muted: #7f93a3;
+  --code-accent: #8ed6b3;
+  --scroll-thumb: rgba(236, 239, 241, 0.2);
   --shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
 }
 
@@ -65,6 +75,27 @@ button {
   overflow: hidden;
 }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
 .shellFrame {
   position: relative;
   height: 100%;
@@ -77,6 +108,8 @@ button {
 }
 
 .listShell {
+  display: flex;
+  flex-direction: column;
   max-width: 360px;
   padding: 8px;
   gap: 6px;
@@ -108,11 +141,13 @@ button {
   background: var(--surface);
   cursor: pointer;
   flex: none;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .iconButton:hover {
   border-color: var(--line-strong);
   box-shadow: var(--shadow);
+  transform: translateY(-1px);
 }
 
 .iconButton:disabled {
@@ -258,6 +293,60 @@ button {
   box-shadow: var(--shadow);
 }
 
+.editorSurface .ProseMirror pre,
+.readonlyMarkdown .ProseMirror pre {
+  margin: 0.55em 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 7px;
+  background: var(--code-bg);
+  color: var(--code-text);
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  tab-size: 2;
+}
+
+.editorSurface .ProseMirror code,
+.readonlyMarkdown .ProseMirror code {
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+.editorSurface .ProseMirror :not(pre) > code,
+.readonlyMarkdown .ProseMirror :not(pre) > code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(47, 111, 143, 0.12);
+  color: var(--text);
+  font-size: 0.92em;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--code-muted);
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-subst {
+  color: #83b7ff;
+}
+
+.hljs-string,
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-type {
+  color: var(--code-accent);
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet {
+  color: #f0c674;
+}
+
 .editorSurface .ProseMirror ul,
 .editorSurface .ProseMirror ol {
   padding-left: 1.5em;
@@ -280,7 +369,8 @@ button {
 }
 
 .listHeader {
-  min-height: 34px;
+  flex: none;
+  min-height: 36px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -311,7 +401,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 2px 0 4px;
+  padding: 2px 2px 6px;
 }
 
 .noteRow {
@@ -323,8 +413,14 @@ button {
   min-height: 92px;
   padding: 12px 10px 10px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--surface-soft);
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.noteRow:hover {
+  border-color: var(--line);
+  background: var(--surface);
 }
 
 .noteRow.pinned {
@@ -391,7 +487,36 @@ button {
   line-height: 1.45;
   max-height: 240px;
   overflow: auto;
-  white-space: pre-wrap;
+}
+
+.readonlyMarkdown .ProseMirror {
+  outline: none;
+}
+
+.readonlyMarkdown .ProseMirror > * {
+  margin: 0 0 0.35em;
+}
+
+.readonlyMarkdown .ProseMirror > *:last-child {
+  margin-bottom: 0;
+}
+
+.readonlyMarkdown .ProseMirror h1,
+.readonlyMarkdown .ProseMirror h2,
+.readonlyMarkdown .ProseMirror h3 {
+  line-height: 1.2;
+  margin: 0.5em 0 0.25em;
+}
+
+.readonlyMarkdown .ProseMirror ul,
+.readonlyMarkdown .ProseMirror ol {
+  padding-left: 1.35em;
+  margin: 0 0 0.35em;
+}
+
+.readonlyMarkdown .ProseMirror img {
+  max-width: 100%;
+  border-radius: 6px;
 }
 
 .pinnedCorner {

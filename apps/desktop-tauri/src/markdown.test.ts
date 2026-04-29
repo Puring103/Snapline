@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assetUrlFromMarkdownPath,
+  codeBlockLanguageClass,
   composeDraftMarkdown,
   markdownTextFromClipboard,
   imageMarkdown,
@@ -96,5 +97,11 @@ describe("markdown helpers", () => {
         },
       }),
     ).toBe("## Plain");
+  });
+
+  it("normalizes code block language classes for highlighting", () => {
+    expect(codeBlockLanguageClass("TypeScript")).toBe("language-typescript");
+    expect(codeBlockLanguageClass("c++")).toBe("language-c");
+    expect(codeBlockLanguageClass("")).toBe(null);
   });
 });

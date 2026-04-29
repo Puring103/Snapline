@@ -1,10 +1,6 @@
-import Image from "@tiptap/extension-image";
-import Link from "@tiptap/extension-link";
-import Placeholder from "@tiptap/extension-placeholder";
-import StarterKit from "@tiptap/starter-kit";
-import { Markdown } from "@tiptap/markdown";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { useEffect, useRef } from "react";
+import { createMarkdownExtensions } from "./editorExtensions";
 import {
   assetUrlFromMarkdownPath,
   hasTransientImageSource,
@@ -31,15 +27,7 @@ export function EditorPane({
   const suppressNextUpdate = useRef(false);
 
   const editor = useEditor({
-    extensions: [
-      StarterKit,
-      Link,
-      Image.configure({ inline: false }),
-      Markdown,
-      Placeholder.configure({
-        placeholder: "Write before the thought fades...",
-      }),
-    ],
+    extensions: createMarkdownExtensions("Write before the thought fades..."),
     content: rewriteMarkdownImageSources(bodyMarkdown, assetUrlFromMarkdownPath),
     contentType: "markdown",
     editable: !readOnly,

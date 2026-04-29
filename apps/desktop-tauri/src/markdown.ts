@@ -98,6 +98,16 @@ export function markdownPathFromAssetUrl(assetUrl: string): string {
   return assetUrl.startsWith(prefix) ? assetUrl.slice(prefix.length) : assetUrl;
 }
 
+export function codeBlockLanguageClass(language: string | null | undefined): string | null {
+  const normalized = (language ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized.length > 0 ? `language-${normalized}` : null;
+}
+
 export function hasTransientImageSource(markdown: string): boolean {
   return /!\[[^\]]*]\((blob:|data:)/.test(markdown);
 }

@@ -11,12 +11,14 @@
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "@tiptap/core": "^3.0.0",
+    "@tiptap/extension-code-block-lowlight": "^3.22.5",
     "@tiptap/extension-image": "^3.0.0",
     "@tiptap/extension-link": "^3.0.0",
     "@tiptap/extension-placeholder": "^3.0.0",
     "@tiptap/markdown": "^3.0.0",
     "@tiptap/react": "^3.0.0",
     "@tiptap/starter-kit": "^3.0.0",
+    "lowlight": "^3.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
