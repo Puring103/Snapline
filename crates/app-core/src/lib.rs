@@ -1,7 +1,11 @@
 use anyhow::{bail, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use snapline_domain::{AssetId, AssetRef, Note, NoteId, NoteSummary};
+use sha2::{Digest, Sha256};
+use snapline_domain::{
+    AssetId, AssetRef, AssetUploadPayload, Note, NoteChangePayload, NoteId, NoteSummary,
+    SyncOpType, SyncPayload,
+};
 use snapline_platform::AppPaths;
 use snapline_storage::NoteRepository;
 use std::fs;
@@ -50,8 +54,18 @@ impl AppCore {
         self.repo.get_note(id)
     }
 
-    pub fn save_note(&self, id: &NoteId, title: &str, content_md: &str, pinned: bool) -> Result<Note> {
-        self.repo.save_note(id, title, content_md, pinned, Utc::now())
+    pub fn save_note(
+        &self,
+        id: &NoteId,
+        title: &str,
+        content_md: &str,
+        pinned: bool,
+    ) -> Result<Note> {
+        let note = self
+            .repo
+            .save_note(id, title, content_md, pinned, Utc::now())?;
+        self.enqueue_note_change(&note, SyncOpType::UpsertNote, note.server_version)?;
+        Ok(note)
     }
 
     pub fn set_note_title(&self, id: &NoteId, title: &str) -> Result<Note> {
@@ -59,11 +73,16 @@ impl AppCore {
     }
 
     pub fn set_note_pinned(&self, id: &NoteId, pinned: bool) -> Result<Note> {
-        self.repo.set_pinned(id, pinned, Utc::now())
+        let note = self.repo.set_pinned(id, pinned, Utc::now())?;
+        self.enqueue_note_change(&note, SyncOpType::UpsertNote, note.server_version)?;
+        Ok(note)
     }
 
     pub fn delete_note(&self, id: &NoteId) -> Result<Vec<NoteSummary>> {
+        let existing = self.repo.get_note(id)?;
         self.repo.soft_delete(id, Utc::now())?;
+        let deleted = self.repo.get_note(id)?;
+        self.enqueue_note_change(&deleted, SyncOpType::DeleteNote, existing.server_version)?;
         self.repo.list_recent(50)
     }
 
@@ -77,6 +96,19 @@ impl AppCore {
         let path = self.paths.note_asset_path(note_id, &asset_id, "png");
         fs::write(path, png_bytes)?;
         let markdown_path = self.paths.markdown_asset_path(note_id, &asset_id, "png");
+        let mut hasher = Sha256::new();
+        hasher.update(png_bytes);
+        let sha256 = format!("{:x}", hasher.finalize());
+        let payload = SyncPayload::Asset(AssetUploadPayload {
+            asset_id: asset_id.clone(),
+            note_id: note_id.clone(),
+            content_type: "image/png".to_string(),
+            byte_size: png_bytes.len() as i64,
+            sha256,
+            markdown_path: markdown_path.clone(),
+        });
+        self.repo
+            .enqueue_change(note_id, SyncOpType::AssetUpload, 0, &payload, Utc::now())?;
         Ok(AssetRef {
             markdown_path: markdown_path.clone(),
             filesystem_path: self
@@ -101,6 +133,26 @@ impl AppCore {
 
     pub fn set_open_shortcut(&self, shortcut: &str) -> Result<()> {
         self.repo.set_setting(OPEN_SHORTCUT_KEY, Some(shortcut))
+    }
+
+    pub fn pending_sync_changes(&self) -> Result<Vec<snapline_storage::ChangeQueueItem>> {
+        self.repo.list_pending_changes(100)
+    }
+
+    pub fn sync_state(&self) -> Result<snapline_storage::SyncState> {
+        self.repo.get_or_create_sync_state()
+    }
+
+    fn enqueue_note_change(
+        &self,
+        note: &Note,
+        op_type: SyncOpType,
+        base_version: i64,
+    ) -> Result<()> {
+        let payload = SyncPayload::Note(NoteChangePayload::from_note(note));
+        self.repo
+            .enqueue_change(&note.id, op_type, base_version, &payload, Utc::now())?;
+        Ok(())
     }
 }
 
@@ -159,7 +211,9 @@ mod tests {
 
         let asset = core.save_png_asset(&note.id, &[137, 80, 78, 71]).unwrap();
 
-        assert!(asset.markdown_path.starts_with(&format!("assets/notes/{}/", note.id)));
+        assert!(asset
+            .markdown_path
+            .starts_with(&format!("assets/notes/{}/", note.id)));
         assert!(dir.path().join(&asset.markdown_path).exists());
         assert!(asset.asset_url.starts_with("asset://localhost/"));
     }
@@ -174,5 +228,35 @@ mod tests {
         let resolved = core.resolve_asset_url("assets/notes/example/image.png");
         assert!(resolved.starts_with("asset://localhost/"));
         assert!(resolved.ends_with("image.png"));
+    }
+
+    #[test]
+    fn save_note_enqueues_upsert_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_data_dir(dir.path());
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let core = AppCore::with_repo(paths, repo);
+        let note = core.create_note().unwrap();
+
+        core.save_note(&note.id, "Title", "# Title", false).unwrap();
+
+        let changes = core.pending_sync_changes().unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].op_type, snapline_domain::SyncOpType::UpsertNote);
+    }
+
+    #[test]
+    fn save_png_asset_enqueues_asset_upload() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_data_dir(dir.path());
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let core = AppCore::with_repo(paths, repo);
+        let note = core.create_note().unwrap();
+
+        core.save_png_asset(&note.id, &[137, 80, 78, 71]).unwrap();
+
+        let changes = core.pending_sync_changes().unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].op_type, snapline_domain::SyncOpType::AssetUpload);
     }
 }
