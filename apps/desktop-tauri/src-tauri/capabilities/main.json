@@ -9,6 +9,7 @@
     "core:window:allow-close",
     "core:window:allow-create",
     "core:window:allow-set-always-on-top",
+    "autostart:default",
     "global-shortcut:allow-register",
     "global-shortcut:allow-register-all",
     "global-shortcut:allow-unregister",

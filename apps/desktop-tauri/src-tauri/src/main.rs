@@ -4,11 +4,18 @@ use snapline_app_core::{AppCore, BootstrapState};
 use snapline_domain::{AssetRef, Note, NoteId, NoteSummary};
 use snapline_platform::AppPaths;
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, State};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, Position, RunEvent, State, WindowEvent,
+};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+const AUTOSTART_BACKGROUND_ARG: &str = "--background";
+const FOCUS_EDITOR_EVENT: &str = "snapline-focus-editor";
+const CURSOR_OFFSET: i32 = 12;
 
 struct AppState {
     core: Mutex<AppCore>,
+    launched_in_background: bool,
     startup_logging_enabled: bool,
 }
 
@@ -17,6 +24,11 @@ fn log_startup(state: State<'_, AppState>, message: String) {
     if state.startup_logging_enabled {
         eprintln!("{message}");
     }
+}
+
+#[tauri::command]
+fn launched_in_background(state: State<'_, AppState>) -> bool {
+    state.launched_in_background
 }
 
 #[tauri::command]
@@ -85,11 +97,7 @@ fn set_note_title(state: State<'_, AppState>, id: String, title: String) -> Resu
 }
 
 #[tauri::command]
-fn set_note_pinned(
-    state: State<'_, AppState>,
-    id: String,
-    pinned: bool,
-) -> Result<Note, String> {
+fn set_note_pinned(state: State<'_, AppState>, id: String, pinned: bool) -> Result<Note, String> {
     let id = parse_note_id(&id)?;
     let note = state
         .core
@@ -181,25 +189,104 @@ fn register_open_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String>
         .map_err(|err| err.to_string())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CursorPoint {
+    x: i32,
+    y: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WindowPoint {
+    x: i32,
+    y: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WindowSize {
+    width: i32,
+    height: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WorkArea {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+fn position_near_cursor(cursor: CursorPoint, size: WindowSize, work_area: WorkArea) -> WindowPoint {
+    let max_x = work_area.x + (work_area.width - size.width).max(0);
+    let max_y = work_area.y + (work_area.height - size.height).max(0);
+    WindowPoint {
+        x: (cursor.x + CURSOR_OFFSET).clamp(work_area.x, max_x),
+        y: (cursor.y + CURSOR_OFFSET).clamp(work_area.y, max_y),
+    }
+}
+
+fn hide_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        if let Ok(cursor) = app.cursor_position() {
+            if let Ok(Some(monitor)) = app.monitor_from_point(cursor.x, cursor.y) {
+                let work_area = monitor.work_area();
+                let size = window
+                    .outer_size()
+                    .map(|size| WindowSize {
+                        width: size.width as i32,
+                        height: size.height as i32,
+                    })
+                    .unwrap_or(WindowSize {
+                        width: 420,
+                        height: 560,
+                    });
+                let next_position = position_near_cursor(
+                    CursorPoint {
+                        x: cursor.x.round() as i32,
+                        y: cursor.y.round() as i32,
+                    },
+                    size,
+                    WorkArea {
+                        x: work_area.position.x,
+                        y: work_area.position.y,
+                        width: work_area.size.width as i32,
+                        height: work_area.size.height as i32,
+                    },
+                );
+                let _ = window.set_position(Position::Physical(PhysicalPosition {
+                    x: next_position.x,
+                    y: next_position.y,
+                }));
+            }
+        }
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        let _ = window.emit(FOCUS_EDITOR_EVENT, ());
     }
 }
 
 fn main() {
     let app_started = std::time::Instant::now();
-    let startup_logging_enabled = std::env::var("SNAPLINE_STARTUP_LOG").ok().as_deref() == Some("1");
+    let startup_logging_enabled =
+        std::env::var("SNAPLINE_STARTUP_LOG").ok().as_deref() == Some("1");
+    let should_launch_in_background = std::env::args().any(|arg| arg == AUTOSTART_BACKGROUND_ARG);
     if startup_logging_enabled {
         eprintln!("snapline.startup event=rust_main");
     }
     tauri::Builder::default()
         .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
+            tauri_plugin_autostart::Builder::new()
+                .args([AUTOSTART_BACKGROUND_ARG])
+                .app_name("Snapline")
                 .build(),
         )
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(move |app| {
             let setup_started = std::time::Instant::now();
             if startup_logging_enabled {
@@ -208,10 +295,12 @@ fn main() {
                     app_started.elapsed().as_millis()
                 );
             }
-            let paths = AppPaths::resolve().unwrap_or_else(|_| AppPaths::from_data_dir(std::env::temp_dir().join("Snapline")));
+            let paths = AppPaths::resolve()
+                .unwrap_or_else(|_| AppPaths::from_data_dir(std::env::temp_dir().join("Snapline")));
             let core = AppCore::open(paths).expect("open app core");
             app.manage(AppState {
                 core: Mutex::new(core),
+                launched_in_background: should_launch_in_background,
                 startup_logging_enabled,
             });
             if startup_logging_enabled {
@@ -248,10 +337,14 @@ fn main() {
                     setup_started.elapsed().as_millis()
                 );
             }
+            if should_launch_in_background {
+                hide_main_window(app.handle());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             log_startup,
+            launched_in_background,
             bootstrap,
             create_note,
             get_note,
@@ -264,8 +357,22 @@ fn main() {
             get_open_shortcut,
             set_open_shortcut
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Snapline");
+        .build(tauri::generate_context!())
+        .expect("error while building Snapline")
+        .run(move |app, event| match event {
+            RunEvent::Ready if should_launch_in_background => hide_main_window(app),
+            RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::CloseRequested { api, .. },
+                ..
+            } => {
+                if label == "main" {
+                    api.prevent_close();
+                    hide_main_window(app);
+                }
+            }
+            _ => {}
+        });
 }
 
 #[cfg(test)]
@@ -293,12 +400,37 @@ mod tests {
 
         let asset = core.save_png_asset(&note.id, &[137, 80, 78, 71]).unwrap();
 
-        assert!(asset.markdown_path.starts_with(&format!("assets/notes/{}/", note.id)));
+        assert!(asset
+            .markdown_path
+            .starts_with(&format!("assets/notes/{}/", note.id)));
         assert!(dir.path().join(&asset.markdown_path).exists());
         assert!(asset.asset_url.starts_with("asset://localhost/"));
         assert_eq!(
             fs::read(dir.path().join(&asset.markdown_path)).unwrap(),
             vec![137, 80, 78, 71]
+        );
+    }
+
+    #[test]
+    fn places_opened_window_near_cursor_within_monitor_bounds() {
+        let monitor = WorkArea {
+            x: 100,
+            y: 50,
+            width: 900,
+            height: 700,
+        };
+        let size = WindowSize {
+            width: 360,
+            height: 480,
+        };
+
+        assert_eq!(
+            position_near_cursor(CursorPoint { x: 240, y: 180 }, size, monitor),
+            WindowPoint { x: 252, y: 192 }
+        );
+        assert_eq!(
+            position_near_cursor(CursorPoint { x: 990, y: 740 }, size, monitor),
+            WindowPoint { x: 640, y: 270 }
         );
     }
 }

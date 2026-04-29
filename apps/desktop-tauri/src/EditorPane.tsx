@@ -14,6 +14,7 @@ import type { SavedAsset } from "./types";
 
 interface EditorPaneProps {
   bodyMarkdown: string;
+  focusRequestId?: number;
   onBodyChange: (bodyMarkdown: string) => void;
   onRequestImageSave: (bytes: number[]) => Promise<SavedAsset | null>;
   readOnly?: boolean;
@@ -21,6 +22,7 @@ interface EditorPaneProps {
 
 export function EditorPane({
   bodyMarkdown,
+  focusRequestId = 0,
   onBodyChange,
   onRequestImageSave,
   readOnly = false,
@@ -141,6 +143,11 @@ export function EditorPane({
     if (!editor) return;
     editor.setEditable(!readOnly);
   }, [editor, readOnly]);
+
+  useEffect(() => {
+    if (!editor || readOnly || focusRequestId === 0) return;
+    editor.commands.focus("end");
+  }, [editor, focusRequestId, readOnly]);
 
   useEffect(() => {
     if (!editor) return;

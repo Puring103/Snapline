@@ -1,4 +1,5 @@
 import { emit, listen } from "@tauri-apps/api/event";
+import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
@@ -16,6 +17,7 @@ import type { Note, NoteSummary, SavedAsset } from "./types";
 import { openListWindow, openNoteWindow, readAppRoute } from "./window";
 
 const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
+const FOCUS_EDITOR_EVENT = "snapline-focus-editor";
 const THEME_STORAGE_KEY = "snapline.theme";
 const LazyEditorPane = lazy(() => {
   startupLog("editor_chunk_requested");
@@ -63,6 +65,7 @@ function NotesListWindow() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
+  const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [themeMode, setThemeMode] = useThemeMode();
 
   const refreshNotes = useCallback(async (quiet = false) => {
@@ -99,6 +102,9 @@ function NotesListWindow() {
       .catch(() => {
         setShortcut(DEFAULT_SHORTCUT);
       });
+    void isEnabled()
+      .then(setAutostartEnabled)
+      .catch(() => setAutostartEnabled(false));
   }, [refreshNotes]);
 
   useEffect(() => {
@@ -138,6 +144,14 @@ function NotesListWindow() {
       .setOpenShortcut(nextShortcut)
       .then(() => setShortcut(nextShortcut))
       .catch((err) => setError(String(err)));
+  }
+
+  function persistAutostart(nextEnabled: boolean) {
+    setAutostartEnabled(nextEnabled);
+    void (nextEnabled ? enable() : disable()).catch((err) => {
+      setAutostartEnabled(!nextEnabled);
+      setError(String(err));
+    });
   }
 
   async function handleNewNote() {
@@ -269,6 +283,8 @@ function NotesListWindow() {
           shortcut={shortcut}
           onShortcutChange={setShortcut}
           onShortcutSave={persistShortcut}
+          autostartEnabled={autostartEnabled}
+          onAutostartChange={persistAutostart}
           themeMode={themeMode}
           onThemeModeChange={setThemeMode}
         />
@@ -283,6 +299,8 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   const [status, setStatus] = useState("Loading");
   const [error, setError] = useState<string | null>(null);
   const [deleted, setDeleted] = useState(false);
+  const [focusRequestId, setFocusRequestId] = useState(0);
+  const [noteLoadArmed, setNoteLoadArmed] = useState(noteId !== null);
 
   const sessionRef = useRef(session);
   const pinnedRef = useRef(pinned);
@@ -294,6 +312,39 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   deletedRef.current = deleted;
 
   useEffect(() => {
+    let cancelled = false;
+
+    if (noteId !== null) {
+      setNoteLoadArmed(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void api
+      .launchedInBackground()
+      .then((isBackgroundLaunch) => {
+        if (cancelled) return;
+        if (isBackgroundLaunch) {
+          setStatus("Ready");
+          return;
+        }
+        setNoteLoadArmed(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNoteLoadArmed(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [noteId]);
+
+  useEffect(() => {
+    if (!noteLoadArmed) return;
+
     let cancelled = false;
 
     async function loadNote() {
@@ -326,7 +377,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       cancelled = true;
       clearSaveTimer();
     };
-  }, [noteId]);
+  }, [noteId, noteLoadArmed]);
 
   useEffect(() => {
     const currentId = session.id;
@@ -350,6 +401,20 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       unlisten?.();
     };
   }, [session.id]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void listen(FOCUS_EDITOR_EVENT, () => {
+      setNoteLoadArmed(true);
+      setFocusRequestId((current) => current + 1);
+    }).then((nextUnlisten) => {
+      unlisten = nextUnlisten;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     clearSaveTimer();
@@ -547,6 +612,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
           <Suspense fallback={<EditorLoadingState bodyMarkdown={session.bodyMd} />}>
             <LazyEditorPane
               bodyMarkdown={session.bodyMd}
+              focusRequestId={focusRequestId}
               onBodyChange={handleBodyChange}
               onRequestImageSave={handleRequestImageSave}
               readOnly={deleted}
@@ -579,6 +645,8 @@ function SettingsPanel({
   shortcut,
   onShortcutChange,
   onShortcutSave,
+  autostartEnabled,
+  onAutostartChange,
   themeMode,
   onThemeModeChange,
 }: {
@@ -586,6 +654,8 @@ function SettingsPanel({
   shortcut: string;
   onShortcutChange: (value: string) => void;
   onShortcutSave: (value: string) => void;
+  autostartEnabled: boolean;
+  onAutostartChange: (value: boolean) => void;
   themeMode: ThemeMode;
   onThemeModeChange: (value: ThemeMode) => void;
 }) {
@@ -619,6 +689,15 @@ function SettingsPanel({
               Save
             </button>
           </div>
+        </label>
+
+        <label className="settingsToggle">
+          <span>Start at login</span>
+          <input
+            checked={autostartEnabled}
+            onChange={(event) => onAutostartChange(event.target.checked)}
+            type="checkbox"
+          />
         </label>
 
         <div className="settingsField">
