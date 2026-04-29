@@ -3,7 +3,10 @@
 use snapline_app_core::{AppCore, BootstrapState, SyncAccountState};
 use snapline_domain::{AssetRef, Note, NoteId, NoteSummary};
 use snapline_platform::AppPaths;
-use snapline_sync_client::{protocol::LoginRequest, HttpSyncApi, SyncApi};
+use snapline_sync_client::{
+    protocol::{LoginRequest, PushChange, PushChangeResult, PushRequest},
+    HttpSyncApi, SyncApi,
+};
 use std::sync::Mutex;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, Position, RunEvent, State, WindowEvent,
@@ -213,6 +216,67 @@ async fn login_sync(
         .map_err(|err| err.to_string())
 }
 
+#[tauri::command]
+async fn sync_now(state: State<'_, AppState>) -> Result<String, String> {
+    let (base_url, token, device_id, pending) = {
+        let core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        let (base_url, token, device_id) = core
+            .sync_credentials()
+            .map_err(|err| err.to_string())?
+            .ok_or_else(|| "not logged in".to_string())?;
+        let pending = core.pending_sync_changes().map_err(|err| err.to_string())?;
+        (base_url, token, device_id, pending)
+    };
+    if pending.is_empty() {
+        return Ok("accepted=0, conflicts=0, failed=0".to_string());
+    }
+    let api = HttpSyncApi::new(base_url);
+    let response = api
+        .push(
+            &token,
+            PushRequest {
+                device_id,
+                changes: pending
+                    .iter()
+                    .map(|item| PushChange {
+                        queue_id: item.id.clone(),
+                        note_id: item.note_id.clone(),
+                        base_version: item.base_version,
+                        payload: item.payload.clone(),
+                    })
+                    .collect(),
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    let mut accepted = 0;
+    let mut conflicts = 0;
+    {
+        let core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        for result in response.results {
+            match result {
+                PushChangeResult::Accepted { queue_id, .. } => {
+                    core.delete_sync_change(&queue_id)
+                        .map_err(|err| err.to_string())?;
+                    accepted += 1;
+                }
+                PushChangeResult::Conflict { queue_id, .. } => {
+                    core.mark_sync_change_failed(&queue_id, "version conflict")
+                        .map_err(|err| err.to_string())?;
+                    conflicts += 1;
+                }
+            }
+        }
+    }
+    Ok(format!("accepted={accepted}, conflicts={conflicts}, failed=0"))
+}
+
 fn parse_note_id(value: &str) -> Result<NoteId, String> {
     uuid::Uuid::parse_str(value)
         .map(NoteId)
@@ -400,7 +464,8 @@ fn main() {
             get_open_shortcut,
             set_open_shortcut,
             get_sync_account_state,
-            login_sync
+            login_sync,
+            sync_now
         ])
         .build(tauri::generate_context!())
         .expect("error while building Snapline")

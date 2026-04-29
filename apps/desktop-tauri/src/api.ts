@@ -17,4 +17,5 @@ export const api = {
   getSyncAccountState: () => invoke<SyncAccountState>("get_sync_account_state"),
   loginSync: (serverBaseUrl: string, email: string, password: string) =>
     invoke<SyncAccountState>("login_sync", { serverBaseUrl, email, password }),
+  syncNow: () => invoke<string>("sync_now"),
 };
