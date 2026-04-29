@@ -1,4 +1,5 @@
 pub mod mock;
+pub mod processor;
 pub mod protocol;
 
 use anyhow::Result;

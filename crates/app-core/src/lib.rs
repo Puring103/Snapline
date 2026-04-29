@@ -175,6 +175,22 @@ impl AppCore {
         self.repo.get_or_create_sync_state()
     }
 
+    pub fn sync_credentials(&self) -> Result<Option<(String, String, String)>> {
+        let state = self.repo.get_or_create_sync_state()?;
+        match (state.server_base_url, state.access_token) {
+            (Some(base_url), Some(token)) => Ok(Some((base_url, token, state.device_id))),
+            _ => Ok(None),
+        }
+    }
+
+    pub fn delete_sync_change(&self, queue_id: &str) -> Result<()> {
+        self.repo.delete_change(queue_id)
+    }
+
+    pub fn mark_sync_change_failed(&self, queue_id: &str, error: &str) -> Result<()> {
+        self.repo.mark_change_failed(queue_id, error)
+    }
+
     fn enqueue_note_change(
         &self,
         note: &Note,
