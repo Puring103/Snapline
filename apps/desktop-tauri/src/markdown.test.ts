@@ -8,6 +8,7 @@ import {
   hasTransientImageSource,
   normalizeMarkdown,
   markdownPathFromAssetUrl,
+  previewMarkdownFromMarkdown,
   replaceMarkdownImageSource,
   rewriteMarkdownImageSources,
   splitDraftMarkdown,
@@ -51,6 +52,13 @@ describe("markdown helpers", () => {
     expect(
       rewriteMarkdownImageSources("![](assets/notes/note/image.png)", assetUrlFromMarkdownPath),
     ).toBe("![](asset://localhost/assets/notes/note/image.png)");
+  });
+
+  it("leaves remote and transient image sources unchanged when hydrating editor markdown", () => {
+    expect(assetUrlFromMarkdownPath("https://example.com/image.png")).toBe(
+      "https://example.com/image.png",
+    );
+    expect(assetUrlFromMarkdownPath("blob:temporary-image")).toBe("blob:temporary-image");
   });
 
   it("round-trips asset urls back to markdown paths", () => {
@@ -97,6 +105,32 @@ describe("markdown helpers", () => {
         },
       }),
     ).toBe("## Plain");
+  });
+
+  it("keeps full markdown previews for rich note rows", () => {
+    const source = [
+      "# Title",
+      "",
+      "- Parent",
+      "  - Child",
+      "",
+      "```ts",
+      "  const value = 1;",
+      "```",
+      "",
+      "| A | B |",
+      "| --- | --- |",
+      "| 1 | 2 |",
+      "",
+      "x".repeat(620),
+    ].join("\n");
+
+    const preview = previewMarkdownFromMarkdown(source);
+    expect(preview).not.toContain("# Title");
+    expect(preview).toContain("  - Child");
+    expect(preview).toContain("  const value = 1;");
+    expect(preview).toContain("| A | B |");
+    expect(preview.length).toBeGreaterThan(500);
   });
 
   it("normalizes code block language classes for highlighting", () => {

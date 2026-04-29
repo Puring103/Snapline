@@ -111,12 +111,16 @@ impl NoteRepository {
     }
 
     pub fn set_pinned(&self, id: &NoteId, pinned: bool, now: DateTime<Utc>) -> Result<Note> {
-        let note = self.find_note(id)?.unwrap_or_else(|| draft_note_with_id(id, now));
+        let note = self
+            .find_note(id)?
+            .unwrap_or_else(|| draft_note_with_id(id, now));
         self.save_note(id, &note.title, &note.content_md, pinned, now)
     }
 
     pub fn update_note_title(&self, id: &NoteId, title: &str, now: DateTime<Utc>) -> Result<Note> {
-        let note = self.find_note(id)?.unwrap_or_else(|| draft_note_with_id(id, now));
+        let note = self
+            .find_note(id)?
+            .unwrap_or_else(|| draft_note_with_id(id, now));
         self.save_note(id, title, &note.content_md, note.pinned, now)
     }
 
@@ -126,7 +130,9 @@ impl NoteRepository {
         content_md: &str,
         now: DateTime<Utc>,
     ) -> Result<Note> {
-        let note = self.find_note(id)?.unwrap_or_else(|| draft_note_with_id(id, now));
+        let note = self
+            .find_note(id)?
+            .unwrap_or_else(|| draft_note_with_id(id, now));
         self.save_note(id, &note.title, content_md, note.pinned, now)
     }
 
@@ -172,7 +178,8 @@ impl NoteRepository {
                     .transpose()?,
             })
         })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     pub fn soft_delete(&self, id: &NoteId, now: DateTime<Utc>) -> Result<()> {
@@ -184,7 +191,9 @@ impl NoteRepository {
     }
 
     pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
-        let mut stmt = self.conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM settings WHERE key = ?1")?;
         let value = stmt.query_row(params![key], |row| row.get::<_, String>(0));
         match value {
             Ok(value) => Ok(Some(value)),
@@ -203,7 +212,8 @@ impl NoteRepository {
                 )?;
             }
             None => {
-                self.conn.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+                self.conn
+                    .execute("DELETE FROM settings WHERE key = ?1", params![key])?;
             }
         }
         Ok(())
@@ -246,9 +256,12 @@ impl NoteRepository {
     pub fn save_sync_state(&self, state: &sync::SyncState) -> Result<()> {
         sync::save_sync_state(&self.conn, state)
     }
+
     fn ensure_column(&self, table: &str, column: &str, definition: &str) -> Result<()> {
         let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
-        let has_column = stmt.query_map([], |row| row.get::<_, String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?
+        let has_column = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
             .into_iter()
             .any(|name| name == column);
         if !has_column {
@@ -368,7 +381,9 @@ mod tests {
 
         let note = repo.create_note(t1).unwrap();
         repo.update_note_title(&note.id, "Daily note", t1).unwrap();
-        let updated = repo.update_note_content(&note.id, "# Heading\nBody", t2).unwrap();
+        let updated = repo
+            .update_note_content(&note.id, "# Heading\nBody", t2)
+            .unwrap();
 
         assert_eq!(updated.title, "Daily note");
         assert_eq!(updated.content_md, "# Heading\nBody");
@@ -393,7 +408,14 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2026, 4, 29, 4, 3, 0).unwrap();
 
         let note = repo.create_note(t1).unwrap();
-        repo.save_note(&note.id, "Title", "# Title\n\nPreview line\nMore", false, t1).unwrap();
+        repo.save_note(
+            &note.id,
+            "Title",
+            "# Title\n\nPreview line\nMore",
+            false,
+            t1,
+        )
+        .unwrap();
 
         let notes = repo.list_recent(10).unwrap();
         assert_eq!(notes[0].preview, "Preview line\nMore");
@@ -405,7 +427,14 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2026, 4, 29, 4, 4, 0).unwrap();
 
         let note = repo.create_note(t1).unwrap();
-        repo.save_note(&note.id, "Title", "# Title\n\n- **Preview** line", false, t1).unwrap();
+        repo.save_note(
+            &note.id,
+            "Title",
+            "# Title\n\n- **Preview** line",
+            false,
+            t1,
+        )
+        .unwrap();
 
         let notes = repo.list_recent(10).unwrap();
         assert_eq!(notes[0].preview, "**Preview** line");
@@ -420,7 +449,8 @@ mod tests {
         let note_id = {
             let repo = NoteRepository::open(&db_path).unwrap();
             let note = repo.create_note(t1).unwrap();
-            repo.save_note(&note.id, "Persistent", "Persistent", false, t1).unwrap();
+            repo.save_note(&note.id, "Persistent", "Persistent", false, t1)
+                .unwrap();
             note.id
         };
 
@@ -433,7 +463,10 @@ mod tests {
         let repo = NoteRepository::open_in_memory().unwrap();
 
         repo.set_setting("shortcut", Some("Ctrl+Alt+S")).unwrap();
-        assert_eq!(repo.get_setting("shortcut").unwrap().as_deref(), Some("Ctrl+Alt+S"));
+        assert_eq!(
+            repo.get_setting("shortcut").unwrap().as_deref(),
+            Some("Ctrl+Alt+S")
+        );
 
         repo.set_setting("shortcut", None).unwrap();
         assert!(repo.get_setting("shortcut").unwrap().is_none());
