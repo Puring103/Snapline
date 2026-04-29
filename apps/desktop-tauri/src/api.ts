@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AssetRef, BootstrapState, Note, NoteSummary } from "./types";
 
 export const api = {
+  launchedInBackground: () => invoke<boolean>("launched_in_background"),
   bootstrap: () => invoke<BootstrapState>("bootstrap"),
   createNote: () => invoke<Note>("create_note"),
   getNote: (id: string) => invoke<Note>("get_note", { id }),
