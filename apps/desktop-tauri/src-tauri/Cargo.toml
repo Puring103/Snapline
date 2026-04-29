@@ -6,13 +6,14 @@ license.workspace = true
 build = "build.rs"
 
 [build-dependencies]
-tauri-build = "=2.5.6"
+tauri-build = { version = "=2.5.6", features = [] }
 
 [dependencies]
 snapline-app-core = { path = "../../../crates/app-core" }
 snapline-domain = { path = "../../../crates/domain" }
 snapline-platform = { path = "../../../crates/platform" }
 time = "=0.3.36"
+tauri-plugin-global-shortcut = "2"
 tauri = { version = "2.10.3", features = ["protocol-asset"] }
 uuid.workspace = true
 

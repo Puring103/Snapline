@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/windows-schema.json",
+  "identifier": "main",
+  "description": "Main Snapline window.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-register-all",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-unregister-all"
+  ]
+}
