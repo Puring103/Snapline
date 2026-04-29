@@ -1,10 +1,10 @@
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import Image from "@tiptap/extension-image";
-import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
 import { all, createLowlight } from "lowlight";
+import type { Editor } from "@tiptap/core";
 import { codeBlockLanguageClass } from "./markdown";
 
 const lowlight = createLowlight(all);
@@ -14,7 +14,6 @@ export function createMarkdownExtensions(placeholder?: string) {
     StarterKit.configure({
       codeBlock: false,
     }),
-    Link,
     Image.configure({ inline: false }),
     CodeBlockLowlight.configure({
       lowlight,
@@ -38,4 +37,8 @@ export function createMarkdownExtensions(placeholder?: string) {
       placeholder: placeholder ?? "",
     }),
   ];
+}
+
+export function setMarkdownContent(editor: Editor, markdown: string) {
+  editor.commands.setContent(markdown, { contentType: "markdown" });
 }

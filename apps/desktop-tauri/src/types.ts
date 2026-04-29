@@ -14,6 +14,7 @@ export interface NoteSummary {
   id: NoteId;
   title: string;
   preview: string;
+  preview_md?: string;
   pinned?: boolean;
   updated_at: string;
 }

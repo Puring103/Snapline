@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
-use snapline_domain::{derive_preview, derive_title, Note, NoteId, NoteSummary};
+use snapline_domain::{derive_preview, derive_preview_markdown, derive_title, Note, NoteId, NoteSummary};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -147,6 +147,7 @@ impl NoteRepository {
                 pinned: row.get::<_, i64>(2)? != 0,
                 updated_at: parse_time(row.get::<_, String>(3)?)?,
                 preview: derive_preview(&row.get::<_, String>(4)?),
+                preview_md: derive_preview_markdown(&row.get::<_, String>(4)?),
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
@@ -326,6 +327,19 @@ mod tests {
 
         let notes = repo.list_recent(10).unwrap();
         assert_eq!(notes[0].preview, "Preview line\nMore");
+    }
+
+    #[test]
+    fn list_recent_includes_markdown_preview() {
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 4, 29, 4, 4, 0).unwrap();
+
+        let note = repo.create_note(t1).unwrap();
+        repo.save_note(&note.id, "Title", "# Title\n\n- **Preview** line", false, t1).unwrap();
+
+        let notes = repo.list_recent(10).unwrap();
+        assert_eq!(notes[0].preview, "**Preview** line");
+        assert_eq!(notes[0].preview_md, "- **Preview** line");
     }
 
     #[test]

@@ -3,7 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
-import { createMarkdownExtensions } from "./editorExtensions";
+import { createMarkdownExtensions, setMarkdownContent } from "./editorExtensions";
 import { EditorPane } from "./EditorPane";
 import { assetUrlFromMarkdownPath, rewriteMarkdownImageSources } from "./markdown";
 import {
@@ -174,7 +174,6 @@ function NotesListWindow() {
         </div>
         <div className="listHeaderActions">
           <IconButton label="New note" onClick={() => void handleNewNote()}><PlusIcon /></IconButton>
-          <IconButton label="Refresh" onClick={() => void refreshNotes()}><RefreshIcon /></IconButton>
           <IconButton label="Settings" onClick={() => setSettingsOpen(true)}><SettingsIcon /></IconButton>
         </div>
       </header>
@@ -230,7 +229,7 @@ function NotesListWindow() {
                     )}
                   </div>
                 </div>
-                <MarkdownPreview markdown={note.preview || "No preview"} />
+                <MarkdownPreview markdown={note.preview_md || note.preview || "No preview"} />
               </article>
             );
           })
@@ -261,7 +260,7 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
 
   useEffect(() => {
     if (!editor) return;
-    editor.commands.setContent(rewriteMarkdownImageSources(markdown, assetUrlFromMarkdownPath));
+    setMarkdownContent(editor, rewriteMarkdownImageSources(markdown, assetUrlFromMarkdownPath));
   }, [editor, markdown]);
 
   if (!editor) {
@@ -714,10 +713,6 @@ function LogoIcon() {
 
 function PlusIcon() {
   return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>;
-}
-
-function RefreshIcon() {
-  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a7 7 0 0 0-12-2l-2 2M5 4v4h4M5 16a7 7 0 0 0 12 2l2-2M19 20v-4h-4" /></svg>;
 }
 
 function SettingsIcon() {

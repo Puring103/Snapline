@@ -35,16 +35,17 @@ describe("session helpers", () => {
   it("upserts a note without duplicating it", () => {
     const notes = upsertNote(
       [
-        { id: "a", title: "Old", preview: "old", updated_at: "2024-01-01T00:00:00Z", pinned: false },
-        { id: "b", title: "Pinned", preview: "pinned", updated_at: "2024-01-02T00:00:00Z", pinned: true },
+        { id: "a", title: "Old", preview: "old", preview_md: "old", updated_at: "2024-01-01T00:00:00Z", pinned: false },
+        { id: "b", title: "Pinned", preview: "pinned", preview_md: "pinned", updated_at: "2024-01-02T00:00:00Z", pinned: true },
       ],
-      { id: "a", title: "New", content_md: "# New\nBody", updated_at: "2024-01-03T00:00:00Z", pinned: true } as never,
+      { id: "a", title: "New", content_md: "# New\n- **Body**", updated_at: "2024-01-03T00:00:00Z", pinned: true } as never,
     );
 
     expect(notes.map((note) => note.id)).toEqual(["a", "b"]);
     expect(notes[0].title).toBe("New");
     expect(notes[0].pinned).toBe(true);
-    expect(notes[0].preview).toBe("Body");
+    expect(notes[0].preview).toBe("**Body**");
+    expect(notes[0].preview_md).toBe("- **Body**");
   });
 
   it("matches configurable shortcuts", () => {

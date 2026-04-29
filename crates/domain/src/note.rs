@@ -33,6 +33,7 @@ pub struct NoteSummary {
     pub id: NoteId,
     pub title: String,
     pub preview: String,
+    pub preview_md: String,
     pub pinned: bool,
     pub updated_at: DateTime<Utc>,
 }
@@ -79,6 +80,20 @@ pub fn derive_preview(content_md: &str) -> String {
         .to_string()
 }
 
+pub fn derive_preview_markdown(content_md: &str) -> String {
+    content_md
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("# "))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .chars()
+        .take(500)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 fn strip_markdown_markup(line: &str) -> String {
     line
         .trim_start_matches("- ")
@@ -94,7 +109,7 @@ fn strip_markdown_markup(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_preview, derive_title};
+    use super::{derive_preview, derive_preview_markdown, derive_title};
 
     #[test]
     fn derives_title_from_first_non_empty_heading() {
@@ -110,5 +125,13 @@ mod tests {
     #[test]
     fn derives_preview_from_first_body_line() {
         assert_eq!(derive_preview("# Daily note\n\n- First item\nSecond"), "First item\nSecond");
+    }
+
+    #[test]
+    fn derives_markdown_preview_without_stripping_markup() {
+        assert_eq!(
+            derive_preview_markdown("# Daily note\n\n- **First** item\nSecond"),
+            "- **First** item\nSecond"
+        );
     }
 }

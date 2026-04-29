@@ -1,5 +1,5 @@
 import type { Note, NoteSummary } from "./types";
-import { previewFromMarkdown } from "./markdown";
+import { previewFromMarkdown, previewMarkdownFromMarkdown } from "./markdown";
 
 export interface ActiveSession {
   kind: "draft" | "existing";
@@ -49,6 +49,7 @@ export function upsertNote(notes: NoteSummary[], note: Note): NoteSummary[] {
       id: note.id,
       title: note.title,
       preview: previewFromMarkdown((note as Partial<Note>).content_md ?? ""),
+      preview_md: previewMarkdownFromMarkdown((note as Partial<Note>).content_md ?? ""),
       updated_at: note.updated_at,
       pinned: note.pinned,
     },

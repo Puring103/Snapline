@@ -42,6 +42,16 @@ export function previewFromMarkdown(markdown: string): string {
     .trim();
 }
 
+export function previewMarkdownFromMarkdown(markdown: string): string {
+  return normalizeMarkdown(markdown)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("# "))
+    .join("\n")
+    .slice(0, 500)
+    .trim();
+}
+
 export function replaceMarkdownImageSource(
   markdown: string,
   currentSource: string,

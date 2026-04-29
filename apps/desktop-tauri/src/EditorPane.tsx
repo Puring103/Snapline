@@ -1,6 +1,6 @@
 import { EditorContent, useEditor } from "@tiptap/react";
 import { useEffect, useRef } from "react";
-import { createMarkdownExtensions } from "./editorExtensions";
+import { createMarkdownExtensions, setMarkdownContent } from "./editorExtensions";
 import {
   assetUrlFromMarkdownPath,
   hasTransientImageSource,
@@ -151,7 +151,7 @@ export function EditorPane({
     }
 
     suppressNextUpdate.current = true;
-    editor.commands.setContent(nextDisplayMarkdown);
+    setMarkdownContent(editor, nextDisplayMarkdown);
     queueMicrotask(() => {
       suppressNextUpdate.current = false;
     });
