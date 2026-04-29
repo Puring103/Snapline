@@ -83,4 +83,5 @@ describe("session helpers", () => {
     expect(deleteConfirmationFor("a", "a")).toBe(null);
     expect(deleteConfirmationFor("a", "b")).toBe("b");
   });
+
 });
