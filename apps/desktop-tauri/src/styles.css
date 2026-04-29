@@ -293,8 +293,7 @@ button {
   box-shadow: var(--shadow);
 }
 
-.editorSurface .ProseMirror pre,
-.readonlyMarkdown .ProseMirror pre {
+.editorSurface .ProseMirror pre {
   margin: 0.55em 0;
   padding: 10px 12px;
   overflow: auto;
@@ -307,13 +306,11 @@ button {
   tab-size: 2;
 }
 
-.editorSurface .ProseMirror code,
-.readonlyMarkdown .ProseMirror code {
+.editorSurface .ProseMirror code {
   font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
 }
 
-.editorSurface .ProseMirror :not(pre) > code,
-.readonlyMarkdown .ProseMirror :not(pre) > code {
+.editorSurface .ProseMirror :not(pre) > code {
   padding: 1px 4px;
   border-radius: 4px;
   background: rgba(47, 111, 143, 0.12);
@@ -406,15 +403,15 @@ button {
 
 .noteRow {
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: start;
-  min-height: 92px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
   padding: 12px 10px 10px;
   border: 1px solid transparent;
   border-radius: 7px;
   background: var(--surface-soft);
+  cursor: pointer;
   transition: background 160ms ease, border-color 160ms ease;
 }
 
@@ -423,134 +420,123 @@ button {
   background: var(--surface);
 }
 
+.noteRow:focus-visible {
+  outline: 3px solid rgba(47, 111, 143, 0.18);
+  outline-offset: 2px;
+}
+
 .noteRow.pinned {
   background: #fffef5;
   border-color: rgba(47, 111, 143, 0.16);
 }
 
-.noteRowMain {
+.noteRowHeader {
   min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
 }
 
-.noteRowTop {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.noteRowTitleBlock {
   min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .noteRowTitle {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
   font-size: 13px;
   font-weight: 600;
-}
-
-.noteRowFlag {
-  flex: none;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .noteRowPreview {
   display: block;
-  white-space: pre-wrap;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
-  min-height: 3.2em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
-.noteRowBody {
-  margin-top: 4px;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.45;
-  max-height: 240px;
-  overflow: auto;
-}
-
-.readonlyMarkdown .ProseMirror {
+.noteRowPreview .ProseMirror {
   outline: none;
 }
 
-.readonlyMarkdown .ProseMirror > * {
-  margin: 0 0 0.35em;
+.noteRowPreview .ProseMirror > * {
+  margin: 0 0 0.28em;
 }
 
-.readonlyMarkdown .ProseMirror > *:last-child {
+.noteRowPreview .ProseMirror > *:last-child {
   margin-bottom: 0;
 }
 
-.readonlyMarkdown .ProseMirror h1,
-.readonlyMarkdown .ProseMirror h2,
-.readonlyMarkdown .ProseMirror h3 {
-  line-height: 1.2;
-  margin: 0.5em 0 0.25em;
+.noteRowPreview .ProseMirror h1,
+.noteRowPreview .ProseMirror h2,
+.noteRowPreview .ProseMirror h3 {
+  color: var(--text);
+  font-size: 1em;
+  line-height: 1.25;
+  margin: 0 0 0.3em;
 }
 
-.readonlyMarkdown .ProseMirror ul,
-.readonlyMarkdown .ProseMirror ol {
-  padding-left: 1.35em;
-  margin: 0 0 0.35em;
+.noteRowPreview .ProseMirror ul,
+.noteRowPreview .ProseMirror ol {
+  margin: 0 0 0.28em;
+  padding-left: 1.25em;
 }
 
-.readonlyMarkdown .ProseMirror img {
+.noteRowPreview .ProseMirror li > p {
+  margin: 0;
+}
+
+.noteRowPreview .ProseMirror pre {
+  margin: 0.4em 0;
+  max-width: 100%;
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--code-bg);
+  color: var(--code-text);
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.noteRowPreview .ProseMirror code {
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+.noteRowPreview .ProseMirror :not(pre) > code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(47, 111, 143, 0.12);
+  color: var(--text);
+  font-size: 0.92em;
+}
+
+.noteRowPreview .ProseMirror img {
+  display: block;
   max-width: 100%;
   border-radius: 6px;
-}
-
-.pinnedCorner {
-  position: absolute;
-  left: 7px;
-  top: 7px;
-  width: 17px;
-  height: 17px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: 5px;
-}
-
-.pinnedCorner .flatIcon {
-  width: 12px;
-  height: 12px;
-  stroke-width: 2;
-}
-
-.noteRow.pinned .noteRowTitle {
-  padding-left: 18px;
 }
 
 .noteRowTime {
   font-size: 10px;
   color: var(--muted);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .noteRowActions {
   display: flex;
   gap: 4px;
+  flex: none;
 }
 
 .listFooter {

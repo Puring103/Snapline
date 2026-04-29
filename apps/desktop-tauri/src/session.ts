@@ -56,6 +56,10 @@ export function upsertNote(notes: NoteSummary[], note: Note): NoteSummary[] {
   ]);
 }
 
+export function deleteConfirmationFor(currentNoteId: string | null, targetNoteId: string): string | null {
+  return currentNoteId === targetNoteId ? null : targetNoteId;
+}
+
 export function matchesShortcut(event: KeyboardEvent, shortcut: string): boolean {
   const parts = shortcut.split("+").map((part) => part.trim()).filter(Boolean);
   if (parts.length === 0) return false;

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createDraftSession, isSessionDirty, matchesShortcut, sortNotes, upsertNote } from "./session";
+import {
+  createDraftSession,
+  deleteConfirmationFor,
+  isSessionDirty,
+  matchesShortcut,
+  sortNotes,
+  upsertNote,
+} from "./session";
 
 describe("session helpers", () => {
   it("treats a blank draft as clean", () => {
@@ -68,5 +75,11 @@ describe("session helpers", () => {
         "Ctrl+Shift+Space",
       ),
     ).toBe(false);
+  });
+
+  it("toggles inline delete confirmation for a note", () => {
+    expect(deleteConfirmationFor(null, "a")).toBe("a");
+    expect(deleteConfirmationFor("a", "a")).toBe(null);
+    expect(deleteConfirmationFor("a", "b")).toBe("b");
   });
 });

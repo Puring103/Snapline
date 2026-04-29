@@ -6,7 +6,14 @@ import { api } from "./api";
 import { createMarkdownExtensions } from "./editorExtensions";
 import { EditorPane } from "./EditorPane";
 import { assetUrlFromMarkdownPath, rewriteMarkdownImageSources } from "./markdown";
-import { createDraftSession, isSessionDirty, sortNotes, upsertNote, type ActiveSession } from "./session";
+import {
+  createDraftSession,
+  deleteConfirmationFor,
+  isSessionDirty,
+  sortNotes,
+  upsertNote,
+  type ActiveSession,
+} from "./session";
 import type { Note, NoteSummary, SavedAsset } from "./types";
 import { openListWindow, openNoteWindow, readAppRoute } from "./window";
 
@@ -32,11 +39,10 @@ export function App() {
 
 function NotesListWindow() {
   const [notes, setNotes] = useState<NoteSummary[]>([]);
-  const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
-  const [loadedNotes, setLoadedNotes] = useState<Record<string, Note>>({});
   const [status, setStatus] = useState("Loading");
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [themeMode, setThemeMode] = useThemeMode();
 
@@ -48,6 +54,9 @@ function NotesListWindow() {
       }
       const state = await api.bootstrap();
       setNotes(state.notes);
+      setConfirmingDeleteId((current) =>
+        current && state.notes.some((note) => note.id === current) ? current : null,
+      );
       setStatus("Ready");
     } catch (err) {
       setError(String(err));
@@ -117,42 +126,21 @@ function NotesListWindow() {
   }
 
   async function handleSelectNote(noteId: string) {
-    if (expandedNoteId === noteId) {
-      void openNoteWindow(noteId);
-      return;
-    }
-
-    setExpandedNoteId(noteId);
-    if (loadedNotes[noteId]) {
-      return;
-    }
-
     try {
       setError(null);
-      const note = await api.getNote(noteId);
-      setLoadedNotes((current) => ({ ...current, [noteId]: note }));
+      await openNoteWindow(noteId);
     } catch (err) {
       setError(String(err));
       setStatus("Error");
     }
   }
 
-  async function handleDeleteNote(id: string, title: string) {
-    const confirmed = window.confirm(`Delete "${title}"? Open editor windows for this note will become read-only.`);
-    if (!confirmed) {
-      return;
-    }
-
+  async function handleDeleteNote(id: string) {
     try {
       setError(null);
       const nextNotes = await api.deleteNote(id);
       setNotes(nextNotes);
-      setExpandedNoteId((current) => (current === id ? null : current));
-      setLoadedNotes((current) => {
-        const next = { ...current };
-        delete next[id];
-        return next;
-      });
+      setConfirmingDeleteId(null);
       await emit("note-deleted", { id });
     } catch (err) {
       setError(String(err));
@@ -199,35 +187,50 @@ function NotesListWindow() {
         ) : (
           visibleNotes.map((note) => {
             const pinned = note.pinned ?? false;
-            const expanded = expandedNoteId === note.id;
-            const loaded = loadedNotes[note.id];
+            const confirmingDelete = confirmingDeleteId === note.id;
 
             return (
-              <article className={pinned ? "noteRow pinned" : "noteRow"} key={note.id}>
-                {pinned ? <span className="pinnedCorner"><PinIcon /></span> : null}
-                <button className="noteRowMain" onClick={() => void handleSelectNote(note.id)} type="button">
-                  <div className="noteRowTop">
+              <article
+                className={pinned ? "noteRow pinned" : "noteRow"}
+                key={note.id}
+                onClick={() => void handleSelectNote(note.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    void handleSelectNote(note.id);
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+              >
+                <div className="noteRowHeader">
+                  <div className="noteRowTitleBlock">
                     <span className="noteRowTitle">{note.title}</span>
+                    <span className="noteRowTime">{new Date(note.updated_at).toLocaleString()}</span>
                   </div>
-                  <div className="noteRowPreview">{note.preview || "No preview"}</div>
-                  {expanded ? (
-                    <div className="noteRowBody">
-                      {loaded ? <ReadOnlyMarkdown markdown={loaded.content_md || "Empty note"} /> : "Loading note..."}
-                    </div>
-                  ) : null}
-                  <div className="noteRowTime">
-                    {new Date(note.updated_at).toLocaleString()}
-                    {expanded ? " / click again to edit" : ""}
+                  <div className="noteRowActions">
+                    {confirmingDelete ? (
+                      <>
+                        <IconButton danger label="Confirm delete" onClick={() => void handleDeleteNote(note.id)}>
+                          <CheckIcon />
+                        </IconButton>
+                        <IconButton label="Cancel delete" onClick={() => setConfirmingDeleteId(null)}>
+                          <CloseIcon />
+                        </IconButton>
+                      </>
+                    ) : (
+                      <>
+                        <IconButton active={pinned} label={pinned ? "Unpin" : "Pin"} onClick={() => void handleTogglePinned(note.id)}>
+                          <StarIcon />
+                        </IconButton>
+                        <IconButton danger label="Delete" onClick={() => setConfirmingDeleteId((current) => deleteConfirmationFor(current, note.id))}>
+                          <TrashIcon />
+                        </IconButton>
+                      </>
+                    )}
                   </div>
-                </button>
-                <div className="noteRowActions">
-                  <IconButton active={pinned} label={pinned ? "Unpin" : "Pin"} onClick={() => void handleTogglePinned(note.id)}>
-                    <PinIcon />
-                  </IconButton>
-                  <IconButton danger label="Delete" onClick={() => void handleDeleteNote(note.id, note.title)}>
-                    <TrashIcon />
-                  </IconButton>
                 </div>
+                <MarkdownPreview markdown={note.preview || "No preview"} />
               </article>
             );
           })
@@ -246,6 +249,26 @@ function NotesListWindow() {
       ) : null}
     </main>
   );
+}
+
+function MarkdownPreview({ markdown }: { markdown: string }) {
+  const editor = useEditor({
+    extensions: createMarkdownExtensions(),
+    content: rewriteMarkdownImageSources(markdown, assetUrlFromMarkdownPath),
+    contentType: "markdown",
+    editable: false,
+  });
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.commands.setContent(rewriteMarkdownImageSources(markdown, assetUrlFromMarkdownPath));
+  }, [editor, markdown]);
+
+  if (!editor) {
+    return <div className="noteRowPreview">Loading preview...</div>;
+  }
+
+  return <EditorContent editor={editor} className="noteRowPreview" />;
 }
 
 function NoteEditorWindow({ noteId }: { noteId: string | null }) {
@@ -522,26 +545,6 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   );
 }
 
-function ReadOnlyMarkdown({ markdown }: { markdown: string }) {
-  const editor = useEditor({
-    extensions: createMarkdownExtensions(),
-    content: rewriteMarkdownImageSources(markdown, assetUrlFromMarkdownPath),
-    contentType: "markdown",
-    editable: false,
-  });
-
-  useEffect(() => {
-    if (!editor) return;
-    editor.commands.setContent(rewriteMarkdownImageSources(markdown, assetUrlFromMarkdownPath));
-  }, [editor, markdown]);
-
-  if (!editor) {
-    return <div className="readonlyMarkdown">Loading note...</div>;
-  }
-
-  return <EditorContent editor={editor} className="readonlyMarkdown" />;
-}
-
 function SettingsPanel({
   onClose,
   shortcut,
@@ -727,6 +730,14 @@ function ListIcon() {
 
 function PinIcon() {
   return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4l6 6-3 1-4 4v5l-2 2-2-7-7-2 2-2h5l4-4 1-3z" /></svg>;
+}
+
+function StarIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.8l2.5 5.1 5.6.8-4.1 4 1 5.6-5-2.6-5 2.6 1-5.6-4.1-4 5.6-.8L12 3.8z" /></svg>;
+}
+
+function CheckIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 6.8" /></svg>;
 }
 
 function TrashIcon() {
