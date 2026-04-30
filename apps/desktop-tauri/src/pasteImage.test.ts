@@ -24,6 +24,16 @@ describe("paste image helpers", () => {
     }
   });
 
+  it("re-encodes non-png pasted image files through the png encoder", async () => {
+    const encoder = vi.fn(async () => [1, 2, 3, 4]);
+    const file = new File([new Uint8Array([255, 216, 255, 224])], "clip.jpg", {
+      type: "image/jpeg",
+    });
+
+    await expect(bytesFromPastedImageFile(file, encoder)).resolves.toEqual([1, 2, 3, 4]);
+    expect(encoder).toHaveBeenCalledWith(file);
+  });
+
   it("decodes transient data urls without using fetch", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(() => {
@@ -75,5 +85,36 @@ describe("paste image helpers", () => {
         ],
       }),
     ).toBe(file);
+  });
+
+  it("accepts image clipboard items even when the item kind is not file", () => {
+    const file = new File(["image"], "clip.png", { type: "image/png" });
+
+    expect(
+      pastedImageFileFromClipboard({
+        files: [],
+        items: [
+          {
+            kind: "string",
+            type: "image/png",
+            getAsFile: () => file,
+          },
+        ],
+      }),
+    ).toBe(file);
+  });
+
+  it("extracts pasted images from html data urls", () => {
+    const file = pastedImageFileFromClipboard({
+      getData: (type: string) => {
+        if (type === "text/html") {
+          return '<img src="data:image/png;base64,iVBORw==">';
+        }
+        return "";
+      },
+    });
+
+    expect(file).toBeInstanceOf(File);
+    expect(file?.type).toBe("image/png");
   });
 });
