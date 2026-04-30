@@ -34,6 +34,7 @@ export interface BootstrapState {
 export interface AssetRef {
   markdown_path: string;
   filesystem_path: string;
+  asset_url: string;
 }
 
 export interface ShortcutState {
@@ -42,6 +43,7 @@ export interface ShortcutState {
 
 export interface SavedAsset {
   markdown_path: string;
+  filesystem_path: string;
   asset_url: string;
 }
 

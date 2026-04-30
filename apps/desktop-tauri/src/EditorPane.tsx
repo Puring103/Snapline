@@ -1,11 +1,13 @@
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/core";
 import { useEffect, useRef } from "react";
-import { copySelectedMarkdown } from "./copyMarkdown";
+import { api } from "./api";
+import { blobUrlFromBytes } from "./assetDisplay";
+import { fileUrlFromMarkdownPath } from "./assetUrl";
+import { copySelectedMarkdown, cutSelectedMarkdown } from "./copyMarkdown";
 import { shouldApplyEditorMarkdownUpdate } from "./editorSync";
 import { createMarkdownExtensions, setMarkdownContent } from "./editorExtensions";
 import {
-  assetUrlFromMarkdownPath,
   hasTransientImageSource,
   markdownPathFromAssetUrl,
   markdownTextFromClipboard,
@@ -19,11 +21,14 @@ import {
 } from "./pasteImage";
 import { insertClipboardMarkdown } from "./pasteMarkdown";
 import { startupLog } from "./startupLog";
+import { type EditorMode } from "./editorMode";
 import type { SavedAsset } from "./types";
 
 interface EditorPaneProps {
   bodyMarkdown: string;
+  dataDir?: string | null;
   focusRequestId?: number;
+  mode: EditorMode;
   onBodyChange: (bodyMarkdown: string) => void;
   onRequestImageSave: (bytes: number[]) => Promise<SavedAsset | null>;
   readOnly?: boolean;
@@ -31,7 +36,9 @@ interface EditorPaneProps {
 
 export function EditorPane({
   bodyMarkdown,
+  dataDir = null,
   focusRequestId = 0,
+  mode,
   onBodyChange,
   onRequestImageSave,
   readOnly = false,
@@ -39,12 +46,15 @@ export function EditorPane({
   const suppressNextUpdate = useRef(false);
   const editorRef = useRef<Editor | null>(null);
   const uploadingImageSources = useRef(new Set<string>());
+  const uploadedImageSources = useRef(new Map<string, string>());
+  const hydratedImageSources = useRef(new Map<string, string>());
+  const assetBlobUrls = useRef(new Map<string, string>());
 
   const editor = useEditor({
     extensions: createMarkdownExtensions("Write before the thought fades..."),
-    content: rewriteMarkdownImageSources(bodyMarkdown, assetUrlFromMarkdownPath),
+    content: bodyMarkdown,
     contentType: "markdown",
-    editable: !readOnly,
+    editable: !readOnly && mode === "preview",
     editorProps: {
       handleDOMEvents: {
         contextmenu: (_view, event) => {
@@ -57,7 +67,22 @@ export function EditorPane({
             return false;
           }
 
-          if (!copySelectedMarkdown(activeEditor, event.clipboardData)) {
+          if (!copySelectedMarkdown(activeEditor, event.clipboardData, imageSourceForClipboard)) {
+            return false;
+          }
+
+          event.preventDefault();
+          return true;
+        },
+        cut: (_view, event) => {
+          if (readOnly) return false;
+
+          const activeEditor = editorRef.current;
+          if (!activeEditor) {
+            return false;
+          }
+
+          if (!cutSelectedMarkdown(activeEditor, event.clipboardData, imageSourceForClipboard)) {
             return false;
           }
 
@@ -103,6 +128,16 @@ export function EditorPane({
           event.preventDefault();
           return insertClipboardMarkdown(activeEditor, markdownText);
         },
+        click: (_view, event) => {
+          const link = linkElementFromEvent(event);
+          if (!link) {
+            return false;
+          }
+
+          event.preventDefault();
+          openLink(link);
+          return true;
+        },
       },
     },
     onUpdate: ({ editor }) => {
@@ -110,7 +145,7 @@ export function EditorPane({
 
       const nextMarkdown = rewriteMarkdownImageSources(
         normalizeMarkdown(editor.getMarkdown() ?? ""),
-        markdownPathFromAssetUrl,
+        restoreImageSourceForMarkdown,
       );
       onBodyChange(nextMarkdown);
       void uploadTransientImages(editor);
@@ -122,13 +157,27 @@ export function EditorPane({
   useEffect(() => {
     if (!editor) return;
     startupLog("editor_ready");
+    void hydrateEditorImageNodes(editor);
     void uploadTransientImages(editor);
-  }, [editor]);
+  }, [dataDir, editor]);
 
   useEffect(() => {
     if (!editor) return;
-    editor.setEditable(!readOnly);
-  }, [editor, readOnly]);
+    editor.setEditable(!readOnly && mode === "preview");
+  }, [editor, mode, readOnly]);
+
+  useEffect(() => {
+    return () => {
+      for (const source of uploadedImageSources.current.keys()) {
+        if (source.startsWith("blob:")) {
+          URL.revokeObjectURL(source);
+        }
+      }
+      for (const source of assetBlobUrls.current.values()) {
+        URL.revokeObjectURL(source);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!editor || readOnly || focusRequestId === 0) return;
@@ -138,32 +187,35 @@ export function EditorPane({
   useEffect(() => {
     if (!editor) return;
 
-    const nextDisplayMarkdown = rewriteMarkdownImageSources(
-      bodyMarkdown,
-      assetUrlFromMarkdownPath,
-    );
     const currentMarkdown = normalizeMarkdown(editor.getMarkdown() ?? "");
-    const nextMarkdown = normalizeMarkdown(nextDisplayMarkdown);
+    const currentStorageMarkdown = normalizeMarkdown(
+      rewriteMarkdownImageSources(currentMarkdown, restoreImageSourceForMarkdown),
+    );
+    const nextStorageMarkdown = normalizeMarkdown(bodyMarkdown);
 
-    if (!shouldApplyEditorMarkdownUpdate(currentMarkdown, nextMarkdown)) {
+    if (!shouldApplyEditorMarkdownUpdate(currentStorageMarkdown, nextStorageMarkdown)) {
       return;
     }
 
     suppressNextUpdate.current = true;
-    setMarkdownContent(editor, nextDisplayMarkdown);
+    setMarkdownContent(editor, bodyMarkdown);
     queueMicrotask(() => {
       suppressNextUpdate.current = false;
     });
-  }, [bodyMarkdown, editor]);
+    void hydrateEditorImageNodes(editor);
+  }, [bodyMarkdown, dataDir, editor]);
 
   if (!editor) {
-    return <div className="editorState">Loading editor</div>;
+    return mode === "source" ? renderSourceEditor() : <div className="editorState">Loading editor</div>;
   }
 
   return (
     <div className="editorShell">
-      <EditorContent editor={editor} className="editorSurface markdownSurface" />
-      {hasTransientImageSource(bodyMarkdown) ? (
+      <div className={mode === "preview" ? "editorPreviewLayer" : "editorPreviewLayer hidden"}>
+        <EditorContent editor={editor} className="editorSurface markdownSurface" />
+      </div>
+      {mode === "source" ? renderSourceEditor() : null}
+      {mode === "preview" && hasTransientImageSource(bodyMarkdown) ? (
         <div className="editorHint">Uploading image...</div>
       ) : null}
     </div>
@@ -175,6 +227,9 @@ export function EditorPane({
 
     activeEditor.state.doc.descendants((node) => {
       if (node.type === imageType && isTransientImageSource(node.attrs.src)) {
+        if (uploadedImageSources.current.has(node.attrs.src)) {
+          return true;
+        }
         sources.push(node.attrs.src);
       }
       return true;
@@ -204,7 +259,15 @@ export function EditorPane({
         return;
       }
 
-      updateImageSource(activeEditor, source, asset.asset_url);
+      uploadedImageSources.current.set(source, asset.markdown_path);
+      hydratedImageSources.current.set(source, asset.markdown_path);
+      assetBlobUrls.current.set(asset.markdown_path, source);
+      onBodyChange(
+        rewriteMarkdownImageSources(
+          normalizeMarkdown(activeEditor.getMarkdown() ?? ""),
+          restoreImageSourceForMarkdown,
+        ),
+      );
     } catch {
       const activeEditor = editorRef.current;
       if (activeEditor) {
@@ -212,10 +275,76 @@ export function EditorPane({
       }
     } finally {
       uploadingImageSources.current.delete(source);
-      if (source.startsWith("blob:")) {
-        URL.revokeObjectURL(source);
+    }
+  }
+
+  function renderSourceEditor() {
+    return (
+      <textarea
+        aria-label="Note body source"
+        className="editorSurface editorLoadingSurface editorSourceSurface"
+        onChange={(event) => onBodyChange(event.target.value)}
+        placeholder="Write before the thought fades..."
+        spellCheck={false}
+        value={bodyMarkdown}
+      />
+    );
+  }
+
+  function restoreImageSourceForMarkdown(source: string): string {
+    return (
+      uploadedImageSources.current.get(source)
+      ?? hydratedImageSources.current.get(source)
+      ?? markdownPathFromAssetUrl(source)
+    );
+  }
+
+  function imageSourceForClipboard(source: string): string {
+    const markdownPath = restoreImageSourceForMarkdown(source);
+    return dataDir ? fileUrlFromMarkdownPath(dataDir, markdownPath) : markdownPath;
+  }
+
+  async function hydrateEditorImageNodes(activeEditor: Editor) {
+    const imageType = activeEditor.state.schema.nodes.image;
+    const sources = new Set<string>();
+
+    activeEditor.state.doc.descendants((node) => {
+      if (node.type === imageType && typeof node.attrs.src === "string") {
+        sources.add(node.attrs.src);
+      }
+      return true;
+    });
+
+    for (const source of sources) {
+      const markdownPath = hydratedImageSources.current.get(source) ?? source;
+      if (!markdownPath.startsWith("assets/")) {
+        continue;
+      }
+
+      try {
+        const displaySource = await displaySourceForAsset(markdownPath);
+        hydratedImageSources.current.set(displaySource, markdownPath);
+        suppressNextUpdate.current = true;
+        updateImageSource(activeEditor, source, displaySource);
+        queueMicrotask(() => {
+          suppressNextUpdate.current = false;
+        });
+      } catch {
+        // Keep the storage path in place; a later refresh can retry hydration.
       }
     }
+  }
+
+  async function displaySourceForAsset(markdownPath: string): Promise<string> {
+    const cached = assetBlobUrls.current.get(markdownPath);
+    if (cached) {
+      return cached;
+    }
+
+    const bytes = await api.readAssetBytes(markdownPath);
+    const source = blobUrlFromBytes(bytes);
+    assetBlobUrls.current.set(markdownPath, source);
+    return source;
   }
 }
 
@@ -247,9 +376,32 @@ function updateImageSource(editor: Editor, source: string, nextSource: string | 
       }
 
       updated = true;
-      return false;
+      return true;
     });
 
     return updated;
+  });
+}
+
+function linkElementFromEvent(event: MouseEvent): HTMLAnchorElement | null {
+  const target = event.target;
+  if (!(target instanceof Element) && !(target instanceof Text)) {
+    return null;
+  }
+
+  const element = target instanceof Text ? target.parentElement : target;
+  const link = element?.closest("a[href]");
+  return link instanceof HTMLAnchorElement ? link : null;
+}
+
+function openLink(link: HTMLAnchorElement) {
+  const rawHref = link.getAttribute("href") ?? "";
+  if (rawHref.startsWith("#")) {
+    document.getElementById(rawHref.slice(1))?.scrollIntoView({ block: "center" });
+    return;
+  }
+
+  void api.openExternalUrl(link.href).catch(() => {
+    window.open(link.href, "_blank", "noopener,noreferrer");
   });
 }
