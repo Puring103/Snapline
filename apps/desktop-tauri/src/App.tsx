@@ -3,7 +3,9 @@ import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
-import { assetUrlFromMarkdownPath, hasTransientImageSource } from "./markdown";
+import { webviewAssetUrlFromFilesystemPath } from "./assetUrl";
+import { hasTransientImageSource } from "./markdown";
+import { DEFAULT_EDITOR_MODE, toggleEditorMode, type EditorMode } from "./editorMode";
 import {
   createDraftSession,
   deleteConfirmationFor,
@@ -66,6 +68,7 @@ function NotesListWindow() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [syncSettingsOpen, setSyncSettingsOpen] = useState(false);
   const [syncAccount, setSyncAccount] = useState<SyncAccountState | null>(null);
+  const [dataDir, setDataDir] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
@@ -79,6 +82,7 @@ function NotesListWindow() {
         setStatus("Loading");
       }
       const state = await api.bootstrap();
+      setDataDir(state.data_dir);
       startupLog("list_bootstrap_done", {
         quiet,
         notes: state.notes.length,
@@ -277,7 +281,7 @@ function NotesListWindow() {
                   </div>
                 </div>
                 <Suspense fallback={<div className="noteRowPreview">{note.preview || "No preview"}</div>}>
-                  <LazyMarkdownPreview markdown={note.preview_md || note.preview || "No preview"} />
+                  <LazyMarkdownPreview dataDir={dataDir} markdown={note.preview_md || note.preview || "No preview"} />
                 </Suspense>
               </article>
             );
@@ -310,6 +314,8 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   const [deleted, setDeleted] = useState(false);
   const [focusRequestId, setFocusRequestId] = useState(0);
   const [noteLoadArmed, setNoteLoadArmed] = useState(noteId !== null);
+  const [editorMode, setEditorMode] = useState<EditorMode>(DEFAULT_EDITOR_MODE);
+  const [dataDir, setDataDir] = useState<string | null>(null);
 
   const sessionRef = useRef(session);
   const pinnedRef = useRef(pinned);
@@ -367,7 +373,10 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
         const startedAt = performance.now();
         setError(null);
 
-        const next = noteId ? await api.getNote(noteId) : await api.createNote();
+        const [bootstrapState, next] = await Promise.all([
+          api.bootstrap(),
+          noteId ? api.getNote(noteId) : api.createNote(),
+        ]);
         startupLog("note_data_loaded", {
           existing_note: noteId !== null,
           duration_ms: Math.round(performance.now() - startedAt),
@@ -376,6 +385,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
           return;
         }
 
+        setDataDir(bootstrapState.data_dir);
         beginSessionFromNote(next);
         setStatus("Draft");
       } catch (err) {
@@ -509,6 +519,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       setPinned(saved.pinned ?? false);
       setStatus("Saved");
       await emit("note-saved", { id: saved.id });
+      void api.syncNow().catch(() => undefined);
       return saved;
     } catch (err) {
       setError(String(err));
@@ -553,7 +564,8 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       const asset = await api.savePngAsset(noteIdToUse, bytes);
       return {
         markdown_path: asset.markdown_path,
-        asset_url: assetUrlFromMarkdownPath(asset.markdown_path),
+        filesystem_path: asset.filesystem_path,
+        asset_url: webviewAssetUrlFromFilesystemPath(asset.filesystem_path),
       };
     } catch (err) {
       setError(String(err));
@@ -615,6 +627,12 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
             placeholder="Untitled"
             value={session.title}
           />
+          <IconButton
+            label={editorMode === "preview" ? "Switch to source mode" : "Switch to preview mode"}
+            onClick={() => setEditorMode((mode) => toggleEditorMode(mode))}
+          >
+            {editorMode === "preview" ? <SourceModeIcon /> : <PreviewModeIcon />}
+          </IconButton>
           <IconButton active={pinned} disabled={deleted} label={pinned ? "Unpin note" : "Pin note"} onClick={() => void handleTogglePinned()}>
             <PinIcon />
           </IconButton>
@@ -640,7 +658,9 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
           <Suspense fallback={<EditorLoadingState bodyMarkdown={session.bodyMd} />}>
             <LazyEditorPane
               bodyMarkdown={session.bodyMd}
+              dataDir={dataDir}
               focusRequestId={focusRequestId}
+              mode={editorMode}
               onBodyChange={handleBodyChange}
               onRequestImageSave={handleRequestImageSave}
               readOnly={deleted}
@@ -879,4 +899,12 @@ function TrashIcon() {
 
 function CloseIcon() {
   return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>;
+}
+
+function SourceModeIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7l-4 5 4 5" /><path d="M15 7l4 5-4 5" /><path d="M13 5l-2 14" /></svg>;
+}
+
+function PreviewModeIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12s3.5-6.5 8.5-6.5 8.5 6.5 8.5 6.5-3.5 6.5-8.5 6.5S3.5 12 3.5 12Z" /><path d="M12 9.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6Z" /></svg>;
 }

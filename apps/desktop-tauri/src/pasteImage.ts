@@ -5,21 +5,37 @@ interface ClipboardImageData {
     type: string;
     getAsFile: () => File | null;
   }>;
+  getData?: (type: string) => string;
 }
+
+type PngEncoder = (file: Blob) => Promise<number[]>;
 
 export function pastedImageFileFromClipboard(clipboardData: ClipboardImageData): File | null {
   const imageItem = Array.from(clipboardData.items ?? []).find(
-    (item) => item.kind === "file" && item.type.startsWith("image/"),
+    (item) => item.type.startsWith("image/") && typeof item.getAsFile === "function",
   );
   const itemFile = imageItem?.getAsFile();
   if (itemFile) {
     return itemFile;
   }
 
-  return Array.from(clipboardData.files ?? []).find((file) => file.type.startsWith("image/")) ?? null;
+  const file = Array.from(clipboardData.files ?? []).find((candidate) => candidate.type.startsWith("image/"));
+  if (file) {
+    return file;
+  }
+
+  const htmlImage = dataUrlFromHtml(clipboardData.getData?.("text/html") ?? "");
+  return htmlImage ? fileFromDataUrl(htmlImage, "clipboard-image.png") : null;
 }
 
-export async function bytesFromPastedImageFile(file: Blob): Promise<number[]> {
+export async function bytesFromPastedImageFile(
+  file: Blob,
+  pngEncoder: PngEncoder = bytesFromImageBlobAsPng,
+): Promise<number[]> {
+  if (!isPngImage(file)) {
+    return pngEncoder(file);
+  }
+
   return bytesFromArrayBuffer(await arrayBufferFromBlob(file));
 }
 
@@ -53,6 +69,81 @@ function bytesFromDataUrl(source: string): number[] {
 
 function bytesFromString(value: string): number[] {
   return Array.from(value, (character) => character.charCodeAt(0));
+}
+
+function dataUrlFromHtml(html: string): string | null {
+  const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+  if (!match) {
+    return null;
+  }
+
+  return match[1].startsWith("data:image/") ? match[1] : null;
+}
+
+function fileFromDataUrl(source: string, name: string): File | null {
+  const commaIndex = source.indexOf(",");
+  if (commaIndex === -1) {
+    return null;
+  }
+
+  const metadata = source.slice(0, commaIndex);
+  const payload = source.slice(commaIndex + 1);
+  const mimeType = metadata.slice(5, metadata.indexOf(";") === -1 ? undefined : metadata.indexOf(";"));
+  const bytes = metadata.includes(";base64")
+    ? Uint8Array.from(atob(payload), (character) => character.charCodeAt(0))
+    : Uint8Array.from(decodeURIComponent(payload), (character) => character.charCodeAt(0));
+
+  return new File([bytes], name, { type: mimeType || "image/png" });
+}
+
+function isPngImage(file: Blob): boolean {
+  return file.type.toLowerCase() === "image/png";
+}
+
+async function bytesFromImageBlobAsPng(file: Blob): Promise<number[]> {
+  const canvas = await canvasFromImageBlob(file);
+
+  const pngBlob = await new Promise<Blob>((resolve, reject) => {
+    if (!canvas.toBlob) {
+      reject(new Error("Unable to read pasted image"));
+      return;
+    }
+
+    canvas.toBlob((result) => {
+      if (result) {
+        resolve(result);
+        return;
+      }
+      reject(new Error("Unable to read pasted image"));
+    }, "image/png");
+  });
+
+  return bytesFromArrayBuffer(await arrayBufferFromBlob(pngBlob));
+}
+
+async function canvasFromImageBlob(blob: Blob): Promise<HTMLCanvasElement> {
+  const canvas = document.createElement("canvas");
+  const image = new Image();
+  const url = URL.createObjectURL(blob);
+
+  try {
+    const loaded = new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("Unable to read pasted image"));
+    });
+    image.src = url;
+    await loaded;
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Unable to read pasted image");
+    }
+    context.drawImage(image, 0, 0);
+    return canvas;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 function bytesFromArrayBuffer(buffer: ArrayBuffer): number[] {

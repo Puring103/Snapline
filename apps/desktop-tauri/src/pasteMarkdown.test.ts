@@ -70,6 +70,21 @@ describe("paste markdown", () => {
     expect(insertText).toHaveBeenCalledWith("$$\na^2 + b^2 = c^2\n$$");
   });
 
+  it("inserts footnote markdown through the markdown parser", () => {
+    const editor = {
+      commands: {
+        insertContent: vi.fn(() => true),
+        command: vi.fn(),
+      },
+    };
+
+    expect(insertClipboardMarkdown(editor, "A note[^1]\n\n[^1]: Footnote text")).toBe(true);
+    expect(editor.commands.insertContent).toHaveBeenCalledWith("A note[^1]\n\n[^1]: Footnote text", {
+      contentType: "markdown",
+    });
+    expect(editor.commands.command).not.toHaveBeenCalled();
+  });
+
 
   it("inserts supported table markdown as a table", () => {
     const editor = new Editor({

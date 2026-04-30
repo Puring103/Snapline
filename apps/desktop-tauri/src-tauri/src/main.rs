@@ -149,6 +149,74 @@ fn resolve_asset_url(state: State<'_, AppState>, markdown_path: String) -> Resul
 }
 
 #[tauri::command]
+fn read_asset_bytes(state: State<'_, AppState>, markdown_path: String) -> Result<Vec<u8>, String> {
+    if !is_allowed_markdown_asset_path(&markdown_path) {
+        return Err("unsupported asset path".to_string());
+    }
+
+    let path = state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .resolve_asset_path(&markdown_path);
+
+    std::fs::read(path).map_err(|err| err.to_string())
+}
+
+fn is_allowed_markdown_asset_path(markdown_path: &str) -> bool {
+    markdown_path.starts_with("assets/")
+        && !markdown_path.contains('\\')
+        && !markdown_path
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<String, String> {
+    if !is_allowed_external_url(&url) {
+        return Err("unsupported external URL".to_string());
+    }
+
+    open_url_with_system(&url)?;
+    Ok(url)
+}
+
+fn is_allowed_external_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    !url.chars().any(|character| character == '\r' || character == '\n')
+        && (lower.starts_with("http://")
+            || lower.starts_with("https://")
+            || lower.starts_with("mailto:"))
+}
+
+#[cfg(target_os = "windows")]
+fn open_url_with_system(url: &str) -> Result<(), String> {
+    std::process::Command::new("explorer.exe")
+        .arg(url)
+        .spawn()
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn open_url_with_system(url: &str) -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg(url)
+        .spawn()
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_url_with_system(url: &str) -> Result<(), String> {
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn get_open_shortcut(state: State<'_, AppState>) -> Result<String, String> {
     state
         .core
@@ -460,7 +528,9 @@ fn main() {
             set_note_pinned,
             delete_note,
             save_png_asset,
+            read_asset_bytes,
             resolve_asset_url,
+            open_external_url,
             get_open_shortcut,
             set_open_shortcut,
             get_sync_account_state,
@@ -519,6 +589,19 @@ mod tests {
             fs::read(dir.path().join(&asset.markdown_path)).unwrap(),
             vec![137, 80, 78, 71]
         );
+    }
+
+    #[test]
+    fn asset_reader_only_accepts_internal_asset_paths() {
+        assert!(is_allowed_markdown_asset_path(
+            "assets/notes/note-id/image-id.png"
+        ));
+        assert!(!is_allowed_markdown_asset_path("../snapline.db"));
+        assert!(!is_allowed_markdown_asset_path("assets/../snapline.db"));
+        assert!(!is_allowed_markdown_asset_path("C:/Users/wtl/image.png"));
+        assert!(!is_allowed_markdown_asset_path(
+            "assets\\notes\\note-id\\image-id.png"
+        ));
     }
 
     #[test]

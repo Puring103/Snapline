@@ -315,6 +315,15 @@ html[data-theme="dark"] .listShell {
   overflow: auto;
 }
 
+.editorPreviewLayer {
+  flex: 1;
+  min-height: 0;
+}
+
+.editorPreviewLayer.hidden {
+  display: none;
+}
+
 .editorSurface {
   padding: 14px 18px 22px;
 }
@@ -331,6 +340,12 @@ html[data-theme="dark"] .listShell {
   font: inherit;
   font-size: 15px;
   line-height: 1.34;
+}
+
+.editorSourceSurface {
+  width: 100%;
+  resize: none;
+  white-space: pre-wrap;
 }
 
 .markdownSurface .ProseMirror {
