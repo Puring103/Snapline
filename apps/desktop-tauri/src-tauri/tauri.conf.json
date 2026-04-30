@@ -30,10 +30,11 @@
       {
         "title": "Snapline",
         "url": "/?mode=note",
-        "width": 360,
-        "height": 480,
+        "width": 380,
+        "height": 500,
         "minWidth": 320,
-        "minHeight": 300
+        "minHeight": 300,
+        "resizable": true
       }
     ],
     "security": {

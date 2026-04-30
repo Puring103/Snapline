@@ -40,7 +40,7 @@ export function SyncSettings({ initial, onSaved }: SyncSettingsProps) {
         value={password}
       />
       <button type="submit">Connect</button>
-      <span>{status}</span>
+      <span className="syncSettingsStatus">{status}</span>
     </form>
   );
 }
