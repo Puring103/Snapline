@@ -26,6 +26,11 @@ export function isSessionDirty(session: ActiveSession): boolean {
     || normalizeForComparison(session.bodyMd) !== normalizeForComparison(session.persistedBodyMd);
 }
 
+export function hasMeaningfulDraftContent(session: ActiveSession): boolean {
+  return session.title.trim() !== "" && normalizeForComparison(session.title) !== "Untitled"
+    || session.bodyMd.trim() !== "";
+}
+
 export function sortNotes(notes: NoteSummary[]): NoteSummary[] {
   return [...notes].sort((a, b) => {
     const aPinned = a.pinned ?? false;

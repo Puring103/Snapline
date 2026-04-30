@@ -14,10 +14,10 @@ describe("tauri security config", () => {
   it("opens the main note window at the compact note size", () => {
     expect(config.app.windows[0]).toMatchObject({
       url: "/?mode=note",
-      width: 380,
-      height: 500,
-      minWidth: 320,
-      minHeight: 300,
+      width: 340,
+      height: 440,
+      minWidth: 300,
+      minHeight: 260,
       resizable: true,
       decorations: false,
     });
