@@ -1,7 +1,7 @@
 import { emit, listen } from "@tauri-apps/api/event";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { api } from "./api";
 import { webviewAssetUrlFromFilesystemPath } from "./assetUrl";
 import { hasTransientImageSource } from "./markdown";
@@ -223,6 +223,7 @@ function NotesListWindow() {
         <div className="listHeaderActions">
           <IconButton label="New note" onClick={() => void handleNewNote()}><PlusIcon /></IconButton>
           <IconButton label="Settings" onClick={() => setSettingsOpen(true)}><SettingsIcon /></IconButton>
+          <IconButton label="Close window" onClick={() => void getCurrentWindow().close()}><CloseIcon /></IconButton>
         </div>
       </header>
 
@@ -307,22 +308,24 @@ function NotesListWindow() {
 function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   const windowLabel = useMemo(() => getCurrentWindow().label, []);
   const [session, setSession] = useState<ActiveSession>(() => createDraftSession());
-  const [pinned, setPinned] = useState(false);
+  const [notePinned, setNotePinned] = useState(false);
+  const [windowAlwaysOnTop, setWindowAlwaysOnTop] = useState(false);
   const [status, setStatus] = useState("Loading");
   const [error, setError] = useState<string | null>(null);
   const [deleted, setDeleted] = useState(false);
   const [focusRequestId, setFocusRequestId] = useState(0);
   const [noteLoadArmed, setNoteLoadArmed] = useState(noteId !== null);
   const [editorMode, setEditorMode] = useState<EditorMode>(DEFAULT_EDITOR_MODE);
+  const [chromeMenuOpen, setChromeMenuOpen] = useState(false);
   const [dataDir, setDataDir] = useState<string | null>(null);
 
   const sessionRef = useRef(session);
-  const pinnedRef = useRef(pinned);
+  const notePinnedRef = useRef(notePinned);
   const deletedRef = useRef(deleted);
   const saveTimerRef = useRef<number | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   sessionRef.current = session;
-  pinnedRef.current = pinned;
+  notePinnedRef.current = notePinned;
   deletedRef.current = deleted;
 
   useEffect(() => {
@@ -417,7 +420,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       void getCurrentWindow().close().finally(() => {
         if (windowLabel === "main") {
           setSession(createDraftSession());
-          setPinned(false);
+          setNotePinned(false);
           setDeleted(false);
           setNoteLoadArmed(false);
           setStatus("Ready");
@@ -484,7 +487,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       persistedTitle: note.title,
       persistedBodyMd: note.content_md,
     });
-    setPinned(note.pinned ?? false);
+    setNotePinned(note.pinned ?? false);
     setDeleted(false);
     setError(null);
     setStatus("Draft");
@@ -505,7 +508,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       setStatus("Saving");
 
       const noteIdToSave = snapshot.id ?? (await api.createNote()).id;
-      const saved = await api.saveNote(noteIdToSave, snapshot.title, snapshot.bodyMd, pinnedRef.current);
+      const saved = await api.saveNote(noteIdToSave, snapshot.title, snapshot.bodyMd, notePinnedRef.current);
 
       setSession({
         kind: "existing",
@@ -515,7 +518,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
         persistedTitle: saved.title,
         persistedBodyMd: saved.content_md,
       });
-      setPinned(saved.pinned ?? false);
+      setNotePinned(saved.pinned ?? false);
       setStatus("Saved");
       await emit("note-saved", { id: saved.id });
       void api.syncNow().catch(() => undefined);
@@ -573,24 +576,11 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     }
   }
 
-  async function handleTogglePinned() {
-    const targetId = sessionRef.current.id;
-    if (!targetId || deletedRef.current) return;
-
+  async function handleToggleWindowAlwaysOnTop() {
     try {
-      const nextPinned = !pinnedRef.current;
-      const saved = await api.setNotePinned(targetId, nextPinned);
-      setPinned(saved.pinned ?? nextPinned);
-      setSession((current) => ({
-        ...current,
-        title: saved.title,
-        bodyMd: saved.content_md,
-        persistedTitle: saved.title,
-        persistedBodyMd: saved.content_md,
-      }));
-      await emit("note-saved", { id: saved.id });
-      await getCurrentWindow().setAlwaysOnTop(nextPinned);
-      setStatus("Saved");
+      const nextAlwaysOnTop = !windowAlwaysOnTop;
+      await getCurrentWindow().setAlwaysOnTop(nextAlwaysOnTop);
+      setWindowAlwaysOnTop(nextAlwaysOnTop);
     } catch (err) {
       setError(String(err));
       setStatus("Error");
@@ -605,6 +595,19 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     void openListWindow();
   }
 
+  function handleChromeDrag(event: MouseEvent<HTMLElement>) {
+    if (event.button !== 0) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest("button, input, textarea, select, .chromeMenu")) return;
+    void getCurrentWindow().startDragging();
+  }
+
+  function handleChromeMenuAction(action: () => void) {
+    setChromeMenuOpen(false);
+    action();
+  }
+
   function clearSaveTimer() {
     if (saveTimerRef.current !== null) {
       window.clearTimeout(saveTimerRef.current);
@@ -615,8 +618,14 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   return (
     <main className="appShell editorShellRoot">
       <section className="shellFrame editorShellFrame">
-        <header className="chromeBar">
-          <IconButton label="Notes" onClick={handleOpenListWindow}><ListIcon /></IconButton>
+        <header className="chromeBar" onMouseDown={handleChromeDrag}>
+          <IconButton
+            active={windowAlwaysOnTop}
+            label={windowAlwaysOnTop ? "Disable window always on top" : "Keep window on top"}
+            onClick={() => void handleToggleWindowAlwaysOnTop()}
+          >
+            <PinIcon />
+          </IconButton>
           <input
             aria-label="Note title"
             className="titleInput"
@@ -626,25 +635,34 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
             placeholder="Untitled"
             value={session.title}
           />
-          <div className="chromeStatus" aria-label="Note status">
-            <span>{status}</span>
-            <span>{session.kind === "draft" ? "Draft" : "Saved note"}</span>
-          </div>
           <div className="chromeActions">
-            <IconButton
-              label={editorMode === "preview" ? "Switch to source mode" : "Switch to preview mode"}
-              onClick={() => setEditorMode((mode) => toggleEditorMode(mode))}
-            >
-              {editorMode === "preview" ? <SourceModeIcon /> : <PreviewModeIcon />}
-            </IconButton>
-            <IconButton active={pinned} disabled={deleted} label={pinned ? "Unpin note" : "Pin note"} onClick={() => void handleTogglePinned()}>
-              <PinIcon />
-            </IconButton>
-            <IconButton label="New window" onClick={handleCreateNoteWindow}><PlusIcon /></IconButton>
+            <div className="chromeMenuWrap">
+              <IconButton label="More actions" onClick={() => setChromeMenuOpen((open) => !open)}><MoreIcon /></IconButton>
+              {chromeMenuOpen ? (
+                <div className="chromeMenu" role="menu">
+                  <button onClick={() => handleChromeMenuAction(handleOpenListWindow)} role="menuitem" type="button">
+                    <ListIcon />
+                    <span>Notes</span>
+                  </button>
+                  <button onClick={() => handleChromeMenuAction(handleCreateNoteWindow)} role="menuitem" type="button">
+                    <PlusIcon />
+                    <span>New window</span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            <IconButton label="Close window" onClick={() => void getCurrentWindow().close()}><CloseIcon /></IconButton>
           </div>
         </header>
 
         <section className="noteSurface">
+          <IconButton
+            label={editorMode === "preview" ? "Switch to source mode" : "Switch to preview mode"}
+            onClick={() => setEditorMode((mode) => toggleEditorMode(mode))}
+            variant="floating"
+          >
+            {editorMode === "preview" ? <SourceModeIcon /> : <PreviewModeIcon />}
+          </IconButton>
           {error ? (
             <div className="errorBanner">
               <span>{error}</span>
@@ -842,6 +860,7 @@ function IconButton({
   disabled = false,
   label,
   onClick,
+  variant = "default",
   children,
 }: {
   active?: boolean;
@@ -849,12 +868,14 @@ function IconButton({
   disabled?: boolean;
   label: string;
   onClick: () => void;
+  variant?: "default" | "floating";
   children: ReactNode;
 }) {
   const className = [
     "iconButton",
     active ? "iconButtonActive" : "",
     danger ? "danger" : "",
+    variant === "floating" ? "floatingIconButton" : "",
   ].filter(Boolean).join(" ");
 
   return (
@@ -909,6 +930,10 @@ function TrashIcon() {
 
 function CloseIcon() {
   return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>;
+}
+
+function MoreIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.1M12 12h.1M19 12h.1" /></svg>;
 }
 
 function SourceModeIcon() {
