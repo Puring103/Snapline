@@ -142,7 +142,8 @@ html[data-theme="dark"] .shellFrame {
 .listShell {
   display: flex;
   flex-direction: column;
-  max-width: 360px;
+  width: 100%;
+  max-width: none;
   padding: 8px;
   gap: 8px;
   border: 1px solid var(--line);
@@ -171,7 +172,26 @@ html[data-theme="dark"] .listShell {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 2px;
+  margin-bottom: 0;
+}
+
+.chromeActions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.chromeStatus {
+  min-width: 76px;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.15;
+  white-space: nowrap;
 }
 
 .iconButton {
@@ -286,8 +306,8 @@ html[data-theme="dark"] .listShell {
 }
 
 .noteMeta {
+  display: none;
   min-height: 24px;
-  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -970,6 +990,17 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   font-size: 12px;
 }
 
+.settingsSyncStatus {
+  width: fit-content;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1;
+}
+
 .settingsToggle {
   min-height: 32px;
   display: flex;
@@ -1070,25 +1101,10 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   border-color: var(--line-strong);
 }
 
-.syncButton {
-  height: 32px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-  padding: 0 10px;
-  font: inherit;
-  cursor: pointer;
-}
-
 .syncSettings {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(140px, 180px) minmax(140px, 180px) auto auto;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  align-items: center;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
 }
 
 .syncSettings input {
@@ -1100,4 +1116,22 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   font: inherit;
   color: var(--text);
   background: var(--surface-soft);
+}
+
+.syncSettings button {
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.syncSettings button:hover {
+  border-color: var(--line-strong);
+}
+
+.syncSettingsStatus {
+  color: var(--muted);
+  font-size: 11px;
 }

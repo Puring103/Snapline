@@ -16,6 +16,7 @@ import {
 } from "./session";
 import { startupLog } from "./startupLog";
 import { SyncSettings } from "./SyncSettings";
+import { syncStatusLabel } from "./syncStatus";
 import type { Note, NoteSummary, SavedAsset, SyncAccountState } from "./types";
 import { openListWindow, openNoteWindow, readAppRoute, shouldDeferInitialNoteLoad } from "./window";
 
@@ -66,13 +67,13 @@ function NotesListWindow() {
   const [status, setStatus] = useState("Loading");
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [syncSettingsOpen, setSyncSettingsOpen] = useState(false);
   const [syncAccount, setSyncAccount] = useState<SyncAccountState | null>(null);
   const [dataDir, setDataDir] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [themeMode, setThemeMode] = useThemeMode();
+  const syncStatus = syncStatusLabel(syncAccount);
 
   const refreshNotes = useCallback(async (quiet = false) => {
     try {
@@ -216,20 +217,16 @@ function NotesListWindow() {
           <LogoIcon />
           <div>
             <div className="listTitle">Snapline</div>
-            <div className="listSub">{status} / {visibleNotes.length} items</div>
+            <div className="listSub">{status} / {visibleNotes.length} items / {syncStatus}</div>
           </div>
         </div>
         <div className="listHeaderActions">
-          <button className="syncButton" onClick={() => setSyncSettingsOpen((value) => !value)} type="button">
-            {syncAccount?.is_logged_in ? "Synced" : "Sync"}
-          </button>
           <IconButton label="New note" onClick={() => void handleNewNote()}><PlusIcon /></IconButton>
           <IconButton label="Settings" onClick={() => setSettingsOpen(true)}><SettingsIcon /></IconButton>
         </div>
       </header>
 
       {error ? <div className="errorBanner">{error}</div> : null}
-      {syncSettingsOpen ? <SyncSettings initial={syncAccount} onSaved={setSyncAccount} /> : null}
 
       <section className="listPanel" aria-label="Note list">
         {visibleNotes.length === 0 ? (
@@ -299,6 +296,8 @@ function NotesListWindow() {
           onAutostartChange={persistAutostart}
           themeMode={themeMode}
           onThemeModeChange={setThemeMode}
+          syncAccount={syncAccount}
+          onSyncSaved={setSyncAccount}
         />
       ) : null}
     </main>
@@ -627,22 +626,23 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
             placeholder="Untitled"
             value={session.title}
           />
-          <IconButton
-            label={editorMode === "preview" ? "Switch to source mode" : "Switch to preview mode"}
-            onClick={() => setEditorMode((mode) => toggleEditorMode(mode))}
-          >
-            {editorMode === "preview" ? <SourceModeIcon /> : <PreviewModeIcon />}
-          </IconButton>
-          <IconButton active={pinned} disabled={deleted} label={pinned ? "Unpin note" : "Pin note"} onClick={() => void handleTogglePinned()}>
-            <PinIcon />
-          </IconButton>
-          <IconButton label="New window" onClick={handleCreateNoteWindow}><PlusIcon /></IconButton>
+          <div className="chromeStatus" aria-label="Note status">
+            <span>{status}</span>
+            <span>{session.kind === "draft" ? "Draft" : "Saved note"}</span>
+          </div>
+          <div className="chromeActions">
+            <IconButton
+              label={editorMode === "preview" ? "Switch to source mode" : "Switch to preview mode"}
+              onClick={() => setEditorMode((mode) => toggleEditorMode(mode))}
+            >
+              {editorMode === "preview" ? <SourceModeIcon /> : <PreviewModeIcon />}
+            </IconButton>
+            <IconButton active={pinned} disabled={deleted} label={pinned ? "Unpin note" : "Pin note"} onClick={() => void handleTogglePinned()}>
+              <PinIcon />
+            </IconButton>
+            <IconButton label="New window" onClick={handleCreateNoteWindow}><PlusIcon /></IconButton>
+          </div>
         </header>
-
-        <div className="noteMeta">
-          <span>{status}</span>
-          <span>{session.kind === "draft" ? "Draft" : "Saved note"}</span>
-        </div>
 
         <section className="noteSurface">
           {error ? (
@@ -697,6 +697,8 @@ function SettingsPanel({
   onAutostartChange,
   themeMode,
   onThemeModeChange,
+  syncAccount,
+  onSyncSaved,
 }: {
   onClose: () => void;
   shortcut: string;
@@ -706,6 +708,8 @@ function SettingsPanel({
   onAutostartChange: (value: boolean) => void;
   themeMode: ThemeMode;
   onThemeModeChange: (value: ThemeMode) => void;
+  syncAccount: SyncAccountState | null;
+  onSyncSaved: (state: SyncAccountState) => void;
 }) {
   return (
     <div className="settingsBackdrop" onClick={onClose}>
@@ -762,6 +766,12 @@ function SettingsPanel({
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="settingsField">
+          <span>Sync</span>
+          <div className="settingsSyncStatus">{syncStatusLabel(syncAccount)}</div>
+          <SyncSettings initial={syncAccount} onSaved={onSyncSaved} />
         </div>
       </section>
     </div>

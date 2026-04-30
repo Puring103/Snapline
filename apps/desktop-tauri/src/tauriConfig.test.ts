@@ -9,4 +9,15 @@ describe("tauri security config", () => {
     expect(csp).toContain("https:");
     expect(csp).toContain("http:");
   });
+
+  it("opens the main note window at the compact note size", () => {
+    expect(config.app.windows[0]).toMatchObject({
+      url: "/?mode=note",
+      width: 380,
+      height: 500,
+      minWidth: 320,
+      minHeight: 300,
+      resizable: true,
+    });
+  });
 });
