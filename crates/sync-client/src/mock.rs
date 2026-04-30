@@ -3,12 +3,14 @@ use crate::SyncApi;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
-use snapline_domain::{Note, SyncPayload};
+use snapline_domain::{AssetUploadPayload, Note, SyncPayload};
 use std::sync::Mutex;
 
 #[derive(Default)]
 pub struct MockSyncApi {
     notes: Mutex<Vec<Note>>,
+    assets: Mutex<Vec<AssetUploadPayload>>,
+    asset_bytes: Mutex<Vec<(String, Vec<u8>)>>,
     cursor: Mutex<i64>,
 }
 
@@ -93,6 +95,30 @@ impl SyncApi for MockSyncApi {
             cursor: *self.cursor.lock().unwrap(),
             notes: self.notes.lock().unwrap().clone(),
             assets: Vec::new(),
+        })
+    }
+
+    async fn upload_asset(&self, _token: &str, request: AssetUploadRequest) -> Result<()> {
+        self.asset_bytes
+            .lock()
+            .unwrap()
+            .push((request.metadata.asset_id.to_string(), request.bytes));
+        self.assets.lock().unwrap().push(request.metadata);
+        Ok(())
+    }
+
+    async fn download_asset(&self, _token: &str, asset_id: &str) -> Result<AssetDownload> {
+        let bytes = self
+            .asset_bytes
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(id, _)| id == asset_id)
+            .map(|(_, bytes)| bytes.clone())
+            .unwrap_or_default();
+        Ok(AssetDownload {
+            content_type: "image/png".to_string(),
+            bytes,
         })
     }
 }

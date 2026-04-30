@@ -56,3 +56,8 @@ export interface SyncAccountState {
   server_base_url: string | null;
   is_logged_in: boolean;
 }
+
+export interface SyncStatusState {
+  label: "Synced" | "Sync" | "Syncing" | "Offline" | "Error" | "Conflict";
+  detail: string | null;
+}

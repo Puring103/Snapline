@@ -3,8 +3,8 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use snapline_domain::{
-    derive_preview, derive_preview_markdown, derive_title, Note, NoteId, NoteSummary,
-    SyncOpType, SyncPayload,
+    derive_preview, derive_preview_markdown, derive_title, Note, NoteId, NoteSummary, SyncOpType,
+    SyncPayload,
 };
 use std::path::Path;
 use uuid::Uuid;
@@ -108,6 +108,80 @@ impl NoteRepository {
             ],
         )?;
         self.get_note(id)
+    }
+
+    pub fn apply_remote_note(&self, note: &Note) -> Result<()> {
+        self.conn.execute(
+            "
+            INSERT INTO notes
+              (id, title, content_md, pinned, created_at, updated_at, deleted_at,
+               server_version, last_modified_by_device, is_conflict_copy, source_note_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            ON CONFLICT(id) DO UPDATE SET
+              title = excluded.title,
+              content_md = excluded.content_md,
+              pinned = excluded.pinned,
+              updated_at = excluded.updated_at,
+              deleted_at = excluded.deleted_at,
+              server_version = excluded.server_version,
+              last_modified_by_device = excluded.last_modified_by_device,
+              is_conflict_copy = excluded.is_conflict_copy,
+              source_note_id = excluded.source_note_id
+            ",
+            params![
+                note.id.to_string(),
+                note.title,
+                note.content_md,
+                note.pinned as i64,
+                note.created_at.to_rfc3339(),
+                note.updated_at.to_rfc3339(),
+                note.deleted_at.map(|time| time.to_rfc3339()),
+                note.server_version,
+                note.last_modified_by_device,
+                note.is_conflict_copy as i64,
+                note.source_note_id.as_ref().map(ToString::to_string),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn create_conflict_copy(&self, rejected_note: &Note, now: DateTime<Utc>) -> Result<Note> {
+        let mut copy = rejected_note.clone();
+        copy.id = NoteId::new();
+        copy.title = format!("{} (Conflict copy)", rejected_note.title);
+        copy.created_at = now;
+        copy.updated_at = now;
+        copy.deleted_at = None;
+        copy.server_version = 0;
+        copy.last_modified_by_device = None;
+        copy.is_conflict_copy = true;
+        copy.source_note_id = Some(rejected_note.id.clone());
+        self.conn.execute(
+            "
+            INSERT INTO notes
+              (id, title, content_md, pinned, created_at, updated_at, deleted_at,
+               server_version, last_modified_by_device, is_conflict_copy, source_note_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 0, NULL, 1, ?7)
+            ",
+            params![
+                copy.id.to_string(),
+                copy.title,
+                copy.content_md,
+                copy.pinned as i64,
+                copy.created_at.to_rfc3339(),
+                copy.updated_at.to_rfc3339(),
+                rejected_note.id.to_string(),
+            ],
+        )?;
+        self.get_note(&copy.id)
+    }
+
+    pub fn update_note_server_version(&self, id: &NoteId, server_version: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE notes SET server_version = ?1 WHERE id = ?2",
+            params![server_version, id.to_string()],
+        )?;
+        Ok(())
     }
 
     pub fn set_pinned(&self, id: &NoteId, pinned: bool, now: DateTime<Utc>) -> Result<Note> {
@@ -241,8 +315,25 @@ impl NoteRepository {
         sync::list_pending_changes(&self.conn, limit)
     }
 
+    pub fn has_pending_note_change(&self, note_id: &NoteId) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM change_queue WHERE note_id = ?1",
+            params![note_id.to_string()],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     pub fn delete_change(&self, id: &str) -> Result<()> {
         sync::delete_change(&self.conn, id)
+    }
+
+    pub fn delete_changes_for_note(&self, note_id: &NoteId) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM change_queue WHERE note_id = ?1",
+            params![note_id.to_string()],
+        )?;
+        Ok(())
     }
 
     pub fn mark_change_failed(&self, id: &str, error: &str) -> Result<()> {
@@ -255,6 +346,14 @@ impl NoteRepository {
 
     pub fn save_sync_state(&self, state: &sync::SyncState) -> Result<()> {
         sync::save_sync_state(&self.conn, state)
+    }
+
+    pub fn update_sync_cursor_success(&self, cursor: i64, now: DateTime<Utc>) -> Result<()> {
+        let mut state = self.get_or_create_sync_state()?;
+        state.server_cursor = cursor;
+        state.last_sync_at = Some(now);
+        state.last_success_at = Some(now);
+        self.save_sync_state(&state)
     }
 
     fn ensure_column(&self, table: &str, column: &str, definition: &str) -> Result<()> {
@@ -470,5 +569,70 @@ mod tests {
 
         repo.set_setting("shortcut", None).unwrap();
         assert!(repo.get_setting("shortcut").unwrap().is_none());
+    }
+
+    #[test]
+    fn applies_remote_note_and_updates_server_version() {
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let mut note =
+            snapline_domain::Note::draft(Utc.with_ymd_and_hms(2026, 4, 29, 8, 0, 0).unwrap());
+        note.title = "Remote".to_string();
+        note.content_md = "# Remote".to_string();
+        note.server_version = 7;
+        note.last_modified_by_device = Some("device-b".to_string());
+
+        repo.apply_remote_note(&note).unwrap();
+
+        let loaded = repo.get_note(&note.id).unwrap();
+        assert_eq!(loaded.title, "Remote");
+        assert_eq!(loaded.server_version, 7);
+        assert_eq!(loaded.last_modified_by_device.as_deref(), Some("device-b"));
+
+        repo.update_note_server_version(&note.id, 8).unwrap();
+        assert_eq!(repo.get_note(&note.id).unwrap().server_version, 8);
+    }
+
+    #[test]
+    fn detects_pending_changes_for_note() {
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let note =
+            snapline_domain::Note::draft(Utc.with_ymd_and_hms(2026, 4, 29, 9, 0, 0).unwrap());
+        let payload = snapline_domain::SyncPayload::Note(
+            snapline_domain::NoteChangePayload::from_note(&note),
+        );
+
+        assert!(!repo.has_pending_note_change(&note.id).unwrap());
+
+        repo.enqueue_change(
+            &note.id,
+            snapline_domain::SyncOpType::UpsertNote,
+            0,
+            &payload,
+            Utc.with_ymd_and_hms(2026, 4, 29, 9, 1, 0).unwrap(),
+        )
+        .unwrap();
+
+        assert!(repo.has_pending_note_change(&note.id).unwrap());
+
+        repo.delete_changes_for_note(&note.id).unwrap();
+        assert!(!repo.has_pending_note_change(&note.id).unwrap());
+    }
+
+    #[test]
+    fn creates_conflict_copy_for_note_payload() {
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let mut rejected =
+            snapline_domain::Note::draft(Utc.with_ymd_and_hms(2026, 4, 29, 10, 0, 0).unwrap());
+        rejected.title = "Local edit".to_string();
+        rejected.content_md = "# Local\n![img](assets/notes/local/image.png)".to_string();
+
+        let copy = repo.create_conflict_copy(&rejected, Utc.with_ymd_and_hms(2026, 4, 29, 10, 1, 0).unwrap()).unwrap();
+
+        assert_ne!(copy.id, rejected.id);
+        assert!(copy.is_conflict_copy);
+        assert_eq!(copy.source_note_id.as_ref(), Some(&rejected.id));
+        assert!(copy.title.contains("Conflict"));
+        assert_eq!(copy.content_md, rejected.content_md);
+        assert_eq!(copy.server_version, 0);
     }
 }

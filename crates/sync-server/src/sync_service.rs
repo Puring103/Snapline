@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use snapline_domain::{Note, NoteChangePayload, NoteId, SyncPayload};
+use snapline_domain::{AssetId, AssetMetadata, Note, NoteChangePayload, NoteId, SyncPayload};
 use snapline_sync_client::protocol::{PushChange, PushChangeResult, RemoteChange};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
@@ -102,7 +102,7 @@ pub async fn pull_changes(
         .collect()
 }
 
-pub async fn snapshot(pool: &PgPool, account_id: &str) -> Result<(i64, Vec<Note>)> {
+pub async fn snapshot(pool: &PgPool, account_id: &str) -> Result<(i64, Vec<Note>, Vec<AssetMetadata>)> {
     let rows = sqlx::query(
         "SELECT id, title, content_md, pinned, created_at, updated_at, deleted_at, version, last_modified_by_device
          FROM notes WHERE account_id = $1",
@@ -110,11 +110,13 @@ pub async fn snapshot(pool: &PgPool, account_id: &str) -> Result<(i64, Vec<Note>
     .bind(account_id)
     .fetch_all(pool)
     .await?;
-    let cursor = sqlx::query("SELECT COALESCE(MAX(cursor), 0) AS cursor FROM change_log WHERE account_id = $1")
-        .bind(account_id)
-        .fetch_one(pool)
-        .await?
-        .get("cursor");
+    let cursor = sqlx::query(
+        "SELECT COALESCE(MAX(cursor), 0) AS cursor FROM change_log WHERE account_id = $1",
+    )
+    .bind(account_id)
+    .fetch_one(pool)
+    .await?
+    .get("cursor");
     let notes = rows
         .iter()
         .map(|row| {
@@ -122,7 +124,18 @@ pub async fn snapshot(pool: &PgPool, account_id: &str) -> Result<(i64, Vec<Note>
             row_to_note(row, &note_id)
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok((cursor, notes))
+    let asset_rows = sqlx::query(
+        "SELECT id, note_id, content_type, byte_size, sha256, storage_key, created_at, deleted_at
+         FROM assets WHERE account_id = $1",
+    )
+    .bind(account_id)
+    .fetch_all(pool)
+    .await?;
+    let assets = asset_rows
+        .iter()
+        .map(row_to_asset_metadata)
+        .collect::<Result<Vec<_>>>()?;
+    Ok((cursor, notes, assets))
 }
 
 async fn upsert_note(
@@ -211,5 +224,18 @@ fn joined_row_to_note(row: &sqlx::postgres::PgRow, note_id: NoteId) -> Result<No
         last_modified_by_device: Some(row.get("last_modified_by_device")),
         is_conflict_copy: false,
         source_note_id: None,
+    })
+}
+
+fn row_to_asset_metadata(row: &sqlx::postgres::PgRow) -> Result<AssetMetadata> {
+    Ok(AssetMetadata {
+        id: AssetId::parse(row.get::<&str, _>("id"))?,
+        note_id: NoteId(Uuid::parse_str(row.get::<&str, _>("note_id"))?),
+        content_type: row.get("content_type"),
+        byte_size: row.get("byte_size"),
+        sha256: row.get("sha256"),
+        storage_key: row.get("storage_key"),
+        created_at: row.get("created_at"),
+        deleted_at: row.get("deleted_at"),
     })
 }

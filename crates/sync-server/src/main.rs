@@ -18,7 +18,8 @@ use std::{net::SocketAddr, sync::Arc};
 async fn main() -> Result<()> {
     let config = Config::from_env()?;
     let pool = db::connect(&config.database_url).await?;
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    db::migrate(&pool).await?;
+    routes::bootstrap_first_account(&pool, &config).await?;
     let asset_store = assets::LocalFsAssetStore::new(&config.asset_data_dir);
     let state = Arc::new(AppState {
         pool,
