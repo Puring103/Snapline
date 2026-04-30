@@ -134,6 +134,10 @@ impl AppCore {
         self.paths.markdown_asset_url(markdown_path)
     }
 
+    pub fn resolve_asset_path(&self, markdown_path: &str) -> std::path::PathBuf {
+        self.paths.resolve_markdown_asset_path(markdown_path)
+    }
+
     pub fn get_open_shortcut(&self) -> Result<String> {
         Ok(self
             .repo

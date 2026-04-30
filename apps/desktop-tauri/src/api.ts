@@ -12,10 +12,13 @@ export const api = {
   deleteNote: (id: string) => invoke<NoteSummary[]>("delete_note", { id }),
   savePngAsset: (noteId: string, bytes: number[]) =>
     invoke<AssetRef>("save_png_asset", { noteId, bytes }),
+  readAssetBytes: (markdownPath: string) =>
+    invoke<number[]>("read_asset_bytes", { markdownPath }),
   getOpenShortcut: () => invoke<string>("get_open_shortcut"),
   setOpenShortcut: (shortcut: string) => invoke<string>("set_open_shortcut", { shortcut }),
   getSyncAccountState: () => invoke<SyncAccountState>("get_sync_account_state"),
   loginSync: (serverBaseUrl: string, email: string, password: string) =>
     invoke<SyncAccountState>("login_sync", { serverBaseUrl, email, password }),
   syncNow: () => invoke<string>("sync_now"),
+  openExternalUrl: (url: string) => invoke<string>("open_external_url", { url }),
 };

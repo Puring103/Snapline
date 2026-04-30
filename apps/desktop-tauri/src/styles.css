@@ -142,7 +142,8 @@ html[data-theme="dark"] .shellFrame {
 .listShell {
   display: flex;
   flex-direction: column;
-  max-width: 360px;
+  width: 100%;
+  max-width: none;
   padding: 8px;
   gap: 8px;
   border: 1px solid var(--line);
@@ -167,11 +168,75 @@ html[data-theme="dark"] .listShell {
 }
 
 .chromeBar {
-  min-height: 34px;
+  min-height: 36px;
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 2px;
+  margin-bottom: 0;
+  padding: 1px 0;
+  -webkit-app-region: drag;
+  cursor: default;
+}
+
+.chromeActions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  margin-left: auto;
+  -webkit-app-region: no-drag;
+}
+
+.chromeStatus {
+  min-width: 40px;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.chromeMenuWrap {
+  position: relative;
+  flex: none;
+}
+
+.chromeMenu {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 20;
+  min-width: 118px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 24px rgba(78, 56, 24, 0.14);
+}
+
+.chromeMenu button {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0 8px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.chromeMenu button:hover,
+.chromeMenu button:focus-visible {
+  background: var(--surface-soft);
+  outline: none;
 }
 
 .iconButton {
@@ -185,6 +250,7 @@ html[data-theme="dark"] .listShell {
   color: var(--icon);
   cursor: pointer;
   flex: none;
+  -webkit-app-region: no-drag;
   transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
@@ -209,6 +275,27 @@ html[data-theme="dark"] .listShell {
 
 .iconButton.danger {
   color: color-mix(in srgb, var(--danger) 76%, var(--icon));
+}
+
+.floatingIconButton {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 12;
+  width: 30px;
+  height: 30px;
+  border-color: color-mix(in srgb, var(--line) 72%, transparent);
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+  color: color-mix(in srgb, var(--icon) 62%, transparent);
+  opacity: 0.58;
+  box-shadow: none;
+}
+
+.floatingIconButton:hover,
+.floatingIconButton:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: 0 7px 16px rgba(78, 56, 24, 0.08);
 }
 
 .chromeBar .iconButtonActive {
@@ -254,8 +341,9 @@ html[data-theme="dark"] .listShell {
 }
 
 .titleInput {
-  flex: 1;
-  min-width: 0;
+  flex: 0 1 auto;
+  min-width: 88px;
+  max-width: min(42vw, 210px);
   height: 34px;
   border: 1px solid transparent;
   border-radius: 9px;
@@ -265,6 +353,7 @@ html[data-theme="dark"] .listShell {
   font-weight: 700;
   color: var(--text);
   outline: none;
+  -webkit-app-region: no-drag;
 }
 
 .titleInput:focus {
@@ -274,6 +363,7 @@ html[data-theme="dark"] .listShell {
 }
 
 .noteSurface {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -286,8 +376,8 @@ html[data-theme="dark"] .listShell {
 }
 
 .noteMeta {
+  display: none;
   min-height: 24px;
-  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -315,8 +405,17 @@ html[data-theme="dark"] .listShell {
   overflow: auto;
 }
 
+.editorPreviewLayer {
+  flex: 1;
+  min-height: 0;
+}
+
+.editorPreviewLayer.hidden {
+  display: none;
+}
+
 .editorSurface {
-  padding: 14px 18px 22px;
+  padding: 18px 18px 48px;
 }
 
 .editorLoadingSurface {
@@ -331,6 +430,12 @@ html[data-theme="dark"] .listShell {
   font: inherit;
   font-size: 15px;
   line-height: 1.34;
+}
+
+.editorSourceSurface {
+  width: 100%;
+  resize: none;
+  white-space: pre-wrap;
 }
 
 .markdownSurface .ProseMirror {
@@ -536,13 +641,15 @@ html[data-theme="dark"] .markdownSurface .ProseMirror pre {
 
 .listHeader {
   flex: none;
-  min-height: 38px;
+  min-height: 40px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   padding: 2px 2px 0;
   margin-bottom: 0;
+  -webkit-app-region: drag;
+  cursor: default;
 }
 
 .listTitle {
@@ -559,6 +666,7 @@ html[data-theme="dark"] .markdownSurface .ProseMirror pre {
 .listHeaderActions {
   display: flex;
   gap: 6px;
+  -webkit-app-region: no-drag;
 }
 
 .listPanel {
@@ -921,7 +1029,7 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   padding: 13px;
   border: 1px solid var(--line);
   border-radius: 15px;
@@ -953,6 +1061,33 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   gap: 7px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.settingsGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-soft) 62%, transparent);
+}
+
+.settingsGroupTitle {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.settingsSyncStatus {
+  width: fit-content;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1;
 }
 
 .settingsToggle {
@@ -1055,34 +1190,138 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   border-color: var(--line-strong);
 }
 
-.syncButton {
+.syncSettings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.syncSettings button {
   height: 32px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 9px;
   background: var(--surface);
   color: var(--text);
-  padding: 0 10px;
-  font: inherit;
   cursor: pointer;
 }
 
-.syncSettings {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(140px, 180px) minmax(140px, 180px) auto auto;
-  gap: 8px;
-  align-items: center;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+.syncSettings button:hover {
+  border-color: var(--line-strong);
 }
 
-.syncSettings input {
+.syncSettingsStatus {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.syncSettingsSummary {
   min-width: 0;
-  height: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.syncSettingsServer {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.connectionDialogBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: rgba(78, 56, 24, 0.22);
+  backdrop-filter: blur(7px);
+}
+
+.connectionDialog {
+  width: min(100%, 340px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.connectionDialogHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.connectionDialogTitle {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.connectionDialogSub {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.dialogIconButton {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 0 8px;
+  background: var(--surface-soft);
+  color: var(--icon);
+  cursor: pointer;
+}
+
+.connectionField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.connectionField input {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 10px;
   font: inherit;
   color: var(--text);
   background: var(--surface-soft);
+  outline: none;
+}
+
+.connectionField input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.connectionField input[aria-invalid="true"] {
+  border-color: color-mix(in srgb, var(--danger) 70%, var(--line));
+}
+
+.connectionFieldError {
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.connectionDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.connectionDialogActions button {
+  min-width: 78px;
 }

@@ -1,6 +1,25 @@
+import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 export type AppWindowMode = "list" | "note";
+
+const NOTE_WINDOW_OPTIONS = {
+  width: 340,
+  height: 440,
+  minWidth: 300,
+  minHeight: 260,
+  resizable: true,
+  decorations: false,
+} as const;
+
+const LIST_WINDOW_OPTIONS = {
+  width: 360,
+  height: 520,
+  minWidth: 320,
+  minHeight: 300,
+  resizable: true,
+  decorations: false,
+} as const;
 
 export interface AppRoute {
   mode: AppWindowMode;
@@ -29,11 +48,9 @@ export function shouldDeferInitialNoteLoad({
 }
 
 export function openListWindow() {
-  return WebviewWindow.getByLabel("list").then((existing) => {
+  return WebviewWindow.getByLabel("list").then(async (existing) => {
     if (existing) {
-      void existing.show();
-      void existing.unminimize();
-      void existing.setFocus();
+      await revealExistingWindow(existing);
       return existing;
     }
 
@@ -41,23 +58,50 @@ export function openListWindow() {
   });
 }
 
-export function openNoteWindow(noteId?: string | null) {
-  return openAppWindow("note", noteId ?? null);
+export interface PointerWindowPosition {
+  x: number;
+  y: number;
 }
 
-function openAppWindow(mode: AppWindowMode, noteId: string | null = null) {
+export function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
+  return openAppWindow("note", noteId ?? null, position);
+}
+
+export function windowOptionsForMode(mode: AppWindowMode) {
+  return mode === "list" ? LIST_WINDOW_OPTIONS : NOTE_WINDOW_OPTIONS;
+}
+
+export function shouldStartWindowDrag(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return target.closest("button, input, textarea, select, .chromeMenu") === null;
+}
+
+export interface RevealableWindow {
+  show: () => Promise<void>;
+  unminimize: () => Promise<void>;
+  setFocus: () => Promise<void>;
+}
+
+export async function revealExistingWindow(window: RevealableWindow) {
+  await window.show();
+  await window.unminimize();
+  await window.setFocus();
+}
+
+function openAppWindow(mode: AppWindowMode, noteId: string | null = null, position?: PointerWindowPosition) {
   const label = buildWindowLabel(mode, noteId);
   const params = new URLSearchParams({ mode });
   if (noteId) params.set("noteId", noteId);
+  const options = windowOptionsForMode(mode);
 
   return new WebviewWindow(label, {
     url: `/?${params.toString()}`,
     title: mode === "list" ? "Snapline" : "Snapline Note",
-    width: mode === "list" ? 360 : 420,
-    height: mode === "list" ? 520 : 560,
-    minWidth: mode === "list" ? 320 : 360,
-    minHeight: 300,
-    resizable: true,
+    ...(position ? { position: new LogicalPosition(position.x + 12, position.y + 12) } : {}),
+    ...options,
   });
 }
 

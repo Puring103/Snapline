@@ -42,7 +42,5 @@ function hasUnsupportedMarkdownSyntax(markdownText: string): boolean {
   return [
     /^\s*:::/m,
     /^\s*\$\$/m,
-    /^\s*\[\^[^\]]+]:/m,
-    /\[\^[^\]]+]/,
   ].some((pattern) => pattern.test(markdownText));
 }
