@@ -9,6 +9,7 @@ import { DEFAULT_EDITOR_MODE, toggleEditorMode, type EditorMode } from "./editor
 import {
   createDraftSession,
   deleteConfirmationFor,
+  hasMeaningfulDraftContent,
   isSessionDirty,
   sortNotes,
   upsertNote,
@@ -18,7 +19,7 @@ import { startupLog } from "./startupLog";
 import { SyncSettings } from "./SyncSettings";
 import { syncStatusLabel } from "./syncStatus";
 import type { Note, NoteSummary, SavedAsset, SyncAccountState } from "./types";
-import { openListWindow, openNoteWindow, readAppRoute, shouldDeferInitialNoteLoad } from "./window";
+import { openListWindow, openNoteWindow, readAppRoute, shouldDeferInitialNoteLoad, shouldStartWindowDrag } from "./window";
 
 const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
 const FOCUS_EDITOR_EVENT = "snapline-focus-editor";
@@ -163,10 +164,10 @@ function NotesListWindow() {
     });
   }
 
-  async function handleNewNote() {
+  async function handleNewNote(event?: MouseEvent<HTMLElement>) {
     try {
       setError(null);
-      await openNoteWindow();
+      await openNoteWindow(null, pointerPositionFromEvent(event));
     } catch (err) {
       setError(String(err));
       setStatus("Error");
@@ -210,9 +211,14 @@ function NotesListWindow() {
     }
   }
 
+  function handleHeaderDrag(event: MouseEvent<HTMLElement>) {
+    if (event.button !== 0 || !shouldStartWindowDrag(event.target)) return;
+    void getCurrentWindow().startDragging();
+  }
+
   return (
     <main className="appShell listShell">
-      <header className="listHeader">
+      <header className="listHeader" onMouseDown={handleHeaderDrag}>
         <div className="brandBlock">
           <LogoIcon />
           <div>
@@ -221,7 +227,7 @@ function NotesListWindow() {
           </div>
         </div>
         <div className="listHeaderActions">
-          <IconButton label="New note" onClick={() => void handleNewNote()}><PlusIcon /></IconButton>
+          <IconButton label="New note" onClick={(event) => void handleNewNote(event)}><PlusIcon /></IconButton>
           <IconButton label="Settings" onClick={() => setSettingsOpen(true)}><SettingsIcon /></IconButton>
           <IconButton label="Close window" onClick={() => void getCurrentWindow().close()}><CloseIcon /></IconButton>
         </div>
@@ -318,6 +324,11 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   const [editorMode, setEditorMode] = useState<EditorMode>(DEFAULT_EDITOR_MODE);
   const [chromeMenuOpen, setChromeMenuOpen] = useState(false);
   const [dataDir, setDataDir] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [syncAccount, setSyncAccount] = useState<SyncAccountState | null>(null);
+  const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
+  const [autostartEnabled, setAutostartEnabled] = useState(false);
+  const [themeMode, setThemeMode] = useThemeMode();
 
   const sessionRef = useRef(session);
   const notePinnedRef = useRef(notePinned);
@@ -366,6 +377,21 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   }, [noteId, windowLabel]);
 
   useEffect(() => {
+    void api
+      .getOpenShortcut()
+      .then((next) => {
+        setShortcut(next ?? DEFAULT_SHORTCUT);
+      })
+      .catch(() => {
+        setShortcut(DEFAULT_SHORTCUT);
+      });
+    void isEnabled()
+      .then(setAutostartEnabled)
+      .catch(() => setAutostartEnabled(false));
+    void api.getSyncAccountState().then(setSyncAccount).catch(() => setSyncAccount(null));
+  }, []);
+
+  useEffect(() => {
     if (!noteLoadArmed) return;
 
     let cancelled = false;
@@ -375,10 +401,8 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
         const startedAt = performance.now();
         setError(null);
 
-        const [bootstrapState, next] = await Promise.all([
-          api.bootstrap(),
-          noteId ? api.getNote(noteId) : api.createNote(),
-        ]);
+        const bootstrapState = await api.bootstrap();
+        const next = noteId ? await api.getNote(noteId) : null;
         startupLog("note_data_loaded", {
           existing_note: noteId !== null,
           duration_ms: Math.round(performance.now() - startedAt),
@@ -388,7 +412,11 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
         }
 
         setDataDir(bootstrapState.data_dir);
-        beginSessionFromNote(next);
+        if (next) {
+          beginSessionFromNote(next);
+        } else {
+          beginDraftSession();
+        }
         setStatus("Draft");
       } catch (err) {
         if (!cancelled) {
@@ -439,6 +467,9 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     void listen(FOCUS_EDITOR_EVENT, () => {
+      if (noteId === null) {
+        beginDraftSession();
+      }
       setNoteLoadArmed(true);
       setFocusRequestId((current) => current + 1);
     }).then((nextUnlisten) => {
@@ -465,6 +496,11 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
 
     if (hasTransientImageSource(session.bodyMd)) {
       setStatus("Uploading image");
+      return;
+    }
+
+    if (!hasMeaningfulDraftContent(session)) {
+      setStatus("Draft");
       return;
     }
 
@@ -497,9 +533,22 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     });
   }
 
+  function beginDraftSession() {
+    clearSaveTimer();
+    setSession(createDraftSession());
+    setNotePinned(false);
+    setDeleted(false);
+    setError(null);
+    setStatus("Draft");
+    queueMicrotask(() => {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+    });
+  }
+
   async function persistCurrentSession() {
     const snapshot = sessionRef.current;
-    if (deletedRef.current || !isSessionDirty(snapshot)) {
+    if (deletedRef.current || !isSessionDirty(snapshot) || !hasMeaningfulDraftContent(snapshot)) {
       return null;
     }
 
@@ -587,19 +636,35 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     }
   }
 
-  function handleCreateNoteWindow() {
-    void openNoteWindow();
+  function handleCreateNoteWindow(event?: MouseEvent<HTMLElement>) {
+    void openNoteWindow(null, pointerPositionFromEvent(event));
   }
 
   function handleOpenListWindow() {
     void openListWindow();
   }
 
+  function handleOpenSettings() {
+    setSettingsOpen(true);
+  }
+
+  function persistShortcut(nextShortcut: string) {
+    void api
+      .setOpenShortcut(nextShortcut)
+      .then(() => setShortcut(nextShortcut))
+      .catch((err) => setError(String(err)));
+  }
+
+  function persistAutostart(nextEnabled: boolean) {
+    setAutostartEnabled(nextEnabled);
+    void (nextEnabled ? enable() : disable()).catch((err) => {
+      setAutostartEnabled(!nextEnabled);
+      setError(String(err));
+    });
+  }
+
   function handleChromeDrag(event: MouseEvent<HTMLElement>) {
-    if (event.button !== 0) return;
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (target.closest("button, input, textarea, select, .chromeMenu")) return;
+    if (event.button !== 0 || !shouldStartWindowDrag(event.target)) return;
     void getCurrentWindow().startDragging();
   }
 
@@ -633,6 +698,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
             ref={titleInputRef}
             onChange={(event) => handleTitleChange(event.target.value)}
             placeholder="Untitled"
+            style={{ width: `${Math.max(session.title.length || 8, 8)}ch` }}
             value={session.title}
           />
           <div className="chromeActions">
@@ -644,9 +710,13 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
                     <ListIcon />
                     <span>Notes</span>
                   </button>
-                  <button onClick={() => handleChromeMenuAction(handleCreateNoteWindow)} role="menuitem" type="button">
+                  <button onClick={(event) => handleChromeMenuAction(() => handleCreateNoteWindow(event))} role="menuitem" type="button">
                     <PlusIcon />
-                    <span>New window</span>
+                    <span>New</span>
+                  </button>
+                  <button onClick={() => handleChromeMenuAction(handleOpenSettings)} role="menuitem" type="button">
+                    <SettingsIcon />
+                    <span>Settings</span>
                   </button>
                 </div>
               ) : null}
@@ -685,6 +755,20 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
             />
           </Suspense>
         </section>
+        {settingsOpen ? (
+          <SettingsPanel
+            onClose={() => setSettingsOpen(false)}
+            shortcut={shortcut}
+            onShortcutChange={setShortcut}
+            onShortcutSave={persistShortcut}
+            autostartEnabled={autostartEnabled}
+            onAutostartChange={persistAutostart}
+            themeMode={themeMode}
+            onThemeModeChange={setThemeMode}
+            syncAccount={syncAccount}
+            onSyncSaved={setSyncAccount}
+          />
+        ) : null}
       </section>
     </main>
   );
@@ -740,56 +824,65 @@ function SettingsPanel({
           <IconButton label="Close settings" onClick={onClose}><CloseIcon /></IconButton>
         </header>
 
-        <label className="settingsField">
-          <span>Open shortcut</span>
-          <div className="shortcutRow">
-            <input
-              className="shortcutInput"
-              value={shortcut}
-              onChange={(event) => onShortcutChange(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  onShortcutSave(shortcut);
-                }
-              }}
-              placeholder={DEFAULT_SHORTCUT}
-            />
-            <button className="drawerAction" onClick={() => onShortcutSave(shortcut)} type="button">
-              Save
-            </button>
-          </div>
-        </label>
-
-        <label className="settingsToggle">
-          <span>Start at login</span>
-          <input
-            checked={autostartEnabled}
-            onChange={(event) => onAutostartChange(event.target.checked)}
-            type="checkbox"
-          />
-        </label>
-
-        <div className="settingsField">
-          <span>Theme</span>
-          <div className="segmentedControl">
-            {(["system", "light", "dark"] as const).map((mode) => (
-              <button
-                className={themeMode === mode ? "segment active" : "segment"}
-                key={mode}
-                onClick={() => onThemeModeChange(mode)}
-                type="button"
-              >
-                {mode}
+        <div className="settingsGroup">
+          <div className="settingsGroupTitle">General</div>
+          <label className="settingsField">
+            <span>Open shortcut</span>
+            <div className="shortcutRow">
+              <input
+                className="shortcutInput"
+                value={shortcut}
+                onChange={(event) => onShortcutChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    onShortcutSave(shortcut);
+                  }
+                }}
+                placeholder={DEFAULT_SHORTCUT}
+              />
+              <button className="drawerAction" onClick={() => onShortcutSave(shortcut)} type="button">
+                Save
               </button>
-            ))}
+            </div>
+          </label>
+
+          <label className="settingsToggle">
+            <span>Start at login</span>
+            <input
+              checked={autostartEnabled}
+              onChange={(event) => onAutostartChange(event.target.checked)}
+              type="checkbox"
+            />
+          </label>
+        </div>
+
+        <div className="settingsGroup">
+          <div className="settingsGroupTitle">Appearance</div>
+          <div className="settingsField">
+            <span>Theme</span>
+            <div className="segmentedControl">
+              {(["system", "light", "dark"] as const).map((mode) => (
+                <button
+                  className={themeMode === mode ? "segment active" : "segment"}
+                  key={mode}
+                  onClick={() => onThemeModeChange(mode)}
+                  type="button"
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
-        <div className="settingsField">
-          <span>Sync</span>
-          <div className="settingsSyncStatus">{syncStatusLabel(syncAccount)}</div>
-          <SyncSettings initial={syncAccount} onSaved={onSyncSaved} />
+        <div className="settingsGroup">
+          <div className="settingsGroupTitle">Sync</div>
+          <div className="settingsField">
+            <span>Status</span>
+            <div className="settingsSyncStatus">{syncStatusLabel(syncAccount)}</div>
+            <SyncSettings initial={syncAccount} onSaved={onSyncSaved} />
+          </div>
         </div>
       </section>
     </div>
@@ -854,6 +947,10 @@ function readStoredThemeMode(): ThemeMode {
   return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
 }
 
+function pointerPositionFromEvent(event?: MouseEvent<HTMLElement>) {
+  return event ? { x: event.screenX, y: event.screenY } : undefined;
+}
+
 function IconButton({
   active = false,
   danger = false,
@@ -867,7 +964,7 @@ function IconButton({
   danger?: boolean;
   disabled?: boolean;
   label: string;
-  onClick: () => void;
+  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
   variant?: "default" | "floating";
   children: ReactNode;
 }) {
@@ -881,7 +978,7 @@ function IconButton({
   return (
     <button aria-label={label} className={className} disabled={disabled} onClick={(event) => {
       event.stopPropagation();
-      onClick();
+      onClick(event);
     }} title={label} type="button">
       {children}
     </button>

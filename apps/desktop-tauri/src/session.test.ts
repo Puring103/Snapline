@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createDraftSession,
   deleteConfirmationFor,
+  hasMeaningfulDraftContent,
   isSessionDirty,
   matchesShortcut,
   sortNotes,
@@ -20,6 +21,13 @@ describe("session helpers", () => {
 
     expect(isSessionDirty({ ...session, title: "Changed" })).toBe(true);
     expect(isSessionDirty({ ...session, bodyMd: "Body" })).toBe(true);
+  });
+
+  it("only treats non-empty draft content as worth saving", () => {
+    expect(hasMeaningfulDraftContent(createDraftSession())).toBe(false);
+    expect(hasMeaningfulDraftContent({ ...createDraftSession(), title: "   ", bodyMd: "   " })).toBe(false);
+    expect(hasMeaningfulDraftContent({ ...createDraftSession(), title: "Idea", bodyMd: "" })).toBe(true);
+    expect(hasMeaningfulDraftContent({ ...createDraftSession(), title: "Untitled", bodyMd: "Body" })).toBe(true);
   });
 
   it("sorts pinned notes first and newest first within each group", () => {

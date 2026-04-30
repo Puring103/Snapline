@@ -168,11 +168,12 @@ html[data-theme="dark"] .listShell {
 }
 
 .chromeBar {
-  min-height: 34px;
+  min-height: 36px;
   display: flex;
   align-items: center;
   gap: 6px;
   margin-bottom: 0;
+  padding: 1px 0;
   -webkit-app-region: drag;
   cursor: default;
 }
@@ -181,6 +182,7 @@ html[data-theme="dark"] .listShell {
   display: flex;
   flex: none;
   gap: 6px;
+  margin-left: auto;
   -webkit-app-region: no-drag;
 }
 
@@ -277,11 +279,23 @@ html[data-theme="dark"] .listShell {
 
 .floatingIconButton {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  right: 10px;
+  bottom: 10px;
   z-index: 12;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  box-shadow: 0 8px 18px rgba(78, 56, 24, 0.1);
+  width: 30px;
+  height: 30px;
+  border-color: color-mix(in srgb, var(--line) 72%, transparent);
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+  color: color-mix(in srgb, var(--icon) 62%, transparent);
+  opacity: 0.58;
+  box-shadow: none;
+}
+
+.floatingIconButton:hover,
+.floatingIconButton:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: 0 7px 16px rgba(78, 56, 24, 0.08);
 }
 
 .chromeBar .iconButtonActive {
@@ -327,9 +341,9 @@ html[data-theme="dark"] .listShell {
 }
 
 .titleInput {
-  flex: 1;
-  min-width: 120px;
-  max-width: none;
+  flex: 0 1 auto;
+  min-width: 88px;
+  max-width: min(42vw, 210px);
   height: 34px;
   border: 1px solid transparent;
   border-radius: 9px;
@@ -401,7 +415,7 @@ html[data-theme="dark"] .listShell {
 }
 
 .editorSurface {
-  padding: 48px 18px 22px;
+  padding: 18px 18px 48px;
 }
 
 .editorLoadingSurface {
@@ -627,13 +641,15 @@ html[data-theme="dark"] .markdownSurface .ProseMirror pre {
 
 .listHeader {
   flex: none;
-  min-height: 38px;
+  min-height: 40px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   padding: 2px 2px 0;
   margin-bottom: 0;
+  -webkit-app-region: drag;
+  cursor: default;
 }
 
 .listTitle {
@@ -650,6 +666,7 @@ html[data-theme="dark"] .markdownSurface .ProseMirror pre {
 .listHeaderActions {
   display: flex;
   gap: 6px;
+  -webkit-app-region: no-drag;
 }
 
 .listPanel {
@@ -1012,7 +1029,7 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   padding: 13px;
   border: 1px solid var(--line);
   border-radius: 15px;
@@ -1044,6 +1061,22 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   gap: 7px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.settingsGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-soft) 62%, transparent);
+}
+
+.settingsGroupTitle {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .settingsSyncStatus {
@@ -1163,17 +1196,6 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   gap: 8px;
 }
 
-.syncSettings input {
-  min-width: 0;
-  height: 32px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0 8px;
-  font: inherit;
-  color: var(--text);
-  background: var(--surface-soft);
-}
-
 .syncSettings button {
   height: 32px;
   border: 1px solid var(--line);
@@ -1190,4 +1212,116 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
 .syncSettingsStatus {
   color: var(--muted);
   font-size: 11px;
+}
+
+.syncSettingsSummary {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.syncSettingsServer {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.connectionDialogBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: rgba(78, 56, 24, 0.22);
+  backdrop-filter: blur(7px);
+}
+
+.connectionDialog {
+  width: min(100%, 340px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.connectionDialogHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.connectionDialogTitle {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.connectionDialogSub {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.dialogIconButton {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--icon);
+  cursor: pointer;
+}
+
+.connectionField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.connectionField input {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-soft);
+  outline: none;
+}
+
+.connectionField input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.connectionField input[aria-invalid="true"] {
+  border-color: color-mix(in srgb, var(--danger) 70%, var(--line));
+}
+
+.connectionFieldError {
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.connectionDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.connectionDialogActions button {
+  min-width: 78px;
 }
