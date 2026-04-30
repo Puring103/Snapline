@@ -8,6 +8,7 @@ const NOTE_WINDOW_OPTIONS = {
   minWidth: 320,
   minHeight: 300,
   resizable: true,
+  decorations: false,
 } as const;
 
 const LIST_WINDOW_OPTIONS = {
@@ -16,6 +17,7 @@ const LIST_WINDOW_OPTIONS = {
   minWidth: 320,
   minHeight: 300,
   resizable: true,
+  decorations: false,
 } as const;
 
 export interface AppRoute {

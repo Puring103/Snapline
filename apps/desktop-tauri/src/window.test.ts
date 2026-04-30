@@ -22,6 +22,7 @@ describe("window routing", () => {
       minWidth: 320,
       minHeight: 300,
       resizable: true,
+      decorations: false,
     });
 
     expect(windowOptionsForMode("note")).toMatchObject({
@@ -30,6 +31,7 @@ describe("window routing", () => {
       minWidth: 320,
       minHeight: 300,
       resizable: true,
+      decorations: false,
     });
   });
 });

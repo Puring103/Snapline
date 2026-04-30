@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import mainCapability from "../src-tauri/capabilities/main.json";
 import config from "../src-tauri/tauri.conf.json";
 
 describe("tauri security config", () => {
@@ -18,6 +19,11 @@ describe("tauri security config", () => {
       minWidth: 320,
       minHeight: 300,
       resizable: true,
+      decorations: false,
     });
+  });
+
+  it("allows the custom chrome to start native window dragging", () => {
+    expect(mainCapability.permissions).toContain("core:window:allow-start-dragging");
   });
 });
