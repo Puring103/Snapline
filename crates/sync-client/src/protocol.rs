@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use snapline_domain::{AssetMetadata, Note, NoteId, SyncPayload};
+use snapline_domain::{AssetMetadata, AssetUploadPayload, Note, NoteId, SyncPayload};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginRequest {
@@ -70,4 +70,16 @@ pub struct SnapshotResponse {
     pub cursor: i64,
     pub notes: Vec<Note>,
     pub assets: Vec<AssetMetadata>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssetUploadRequest {
+    pub metadata: AssetUploadPayload,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetDownload {
+    pub content_type: String,
+    pub bytes: Vec<u8>,
 }

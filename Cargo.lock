@@ -4104,9 +4104,11 @@ dependencies = [
 name = "snapline-desktop"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "snapline-app-core",
  "snapline-domain",
  "snapline-platform",
+ "snapline-storage",
  "snapline-sync-client",
  "tauri",
  "tauri-build",
@@ -4114,6 +4116,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tempfile",
  "time",
+ "tokio",
  "uuid",
 ]
 
@@ -4162,6 +4165,7 @@ dependencies = [
  "serde_json",
  "snapline-domain",
  "snapline-storage",
+ "tempfile",
  "tokio",
 ]
 
@@ -4178,6 +4182,7 @@ dependencies = [
  "jsonwebtoken",
  "serde",
  "serde_json",
+ "sha2",
  "snapline-domain",
  "snapline-sync-client",
  "sqlx",

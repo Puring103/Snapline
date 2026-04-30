@@ -14,3 +14,6 @@ serde_json.workspace = true
 snapline-domain = { path = "../domain" }
 snapline-storage = { path = "../storage" }
 tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

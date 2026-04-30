@@ -3,8 +3,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use snapline_domain::{
-    AssetId, AssetRef, AssetUploadPayload, Note, NoteChangePayload, NoteId, NoteSummary,
-    SyncOpType, SyncPayload,
+    AssetId, AssetMetadata, AssetRef, AssetUploadPayload, Note, NoteChangePayload, NoteId,
+    NoteSummary, SyncOpType, SyncPayload,
 };
 use snapline_platform::AppPaths;
 use snapline_storage::NoteRepository;
@@ -77,7 +77,9 @@ impl AppCore {
     }
 
     pub fn set_note_title(&self, id: &NoteId, title: &str) -> Result<Note> {
-        self.repo.update_note_title(id, title, Utc::now())
+        let note = self.repo.update_note_title(id, title, Utc::now())?;
+        self.enqueue_note_change(&note, SyncOpType::UpsertNote, note.server_version)?;
+        Ok(note)
     }
 
     pub fn set_note_pinned(&self, id: &NoteId, pinned: bool) -> Result<Note> {
@@ -171,6 +173,10 @@ impl AppCore {
         self.repo.list_pending_changes(100)
     }
 
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.paths.data_dir
+    }
+
     pub fn sync_state(&self) -> Result<snapline_storage::SyncState> {
         self.repo.get_or_create_sync_state()
     }
@@ -187,8 +193,72 @@ impl AppCore {
         self.repo.delete_change(queue_id)
     }
 
+    pub fn delete_sync_changes_for_note(&self, note_id: &NoteId) -> Result<()> {
+        self.repo.delete_changes_for_note(note_id)
+    }
+
     pub fn mark_sync_change_failed(&self, queue_id: &str, error: &str) -> Result<()> {
         self.repo.mark_change_failed(queue_id, error)
+    }
+
+    pub fn update_note_server_version(&self, id: &NoteId, server_version: i64) -> Result<()> {
+        self.repo.update_note_server_version(id, server_version)
+    }
+
+    pub fn apply_remote_note(&self, note: &Note) -> Result<()> {
+        self.repo.apply_remote_note(note)
+    }
+
+    pub fn has_pending_note_change(&self, note_id: &NoteId) -> Result<bool> {
+        self.repo.has_pending_note_change(note_id)
+    }
+
+    pub fn create_conflict_copy(&self, note: &Note) -> Result<Note> {
+        self.repo.create_conflict_copy(note, Utc::now())
+    }
+
+    pub fn import_snapshot(&self, notes: &[Note], cursor: i64) -> Result<()> {
+        for note in notes {
+            if self.repo.has_pending_note_change(&note.id)? {
+                let local_note = self.repo.get_note(&note.id)?;
+                self.repo.create_conflict_copy(&local_note, Utc::now())?;
+            }
+            self.repo.apply_remote_note(note)?;
+        }
+        self.repo.update_sync_cursor_success(cursor, Utc::now())
+    }
+
+    pub fn missing_asset_metadata(&self, assets: &[AssetMetadata]) -> Vec<AssetMetadata> {
+        assets
+            .iter()
+            .filter(|asset| {
+                let path = self
+                    .paths
+                    .markdown_asset_path(&asset.note_id, &asset.id, asset_extension(asset));
+                !self.paths.resolve_markdown_asset_path(&path).exists()
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn save_remote_asset(&self, asset: &AssetMetadata, bytes: &[u8]) -> Result<()> {
+        let extension = asset_extension(asset);
+        let path = self
+            .paths
+            .note_asset_path(&asset.note_id, &asset.id, extension);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, bytes)?;
+        Ok(())
+    }
+
+    pub fn update_sync_cursor_success(
+        &self,
+        cursor: i64,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        self.repo.update_sync_cursor_success(cursor, now)
     }
 
     fn enqueue_note_change(
@@ -201,6 +271,15 @@ impl AppCore {
         self.repo
             .enqueue_change(&note.id, op_type, base_version, &payload, Utc::now())?;
         Ok(())
+    }
+}
+
+fn asset_extension(asset: &AssetMetadata) -> &str {
+    match asset.content_type.as_str() {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        _ => "bin",
     }
 }
 
@@ -294,6 +373,26 @@ mod tests {
     }
 
     #[test]
+    fn set_note_title_enqueues_upsert_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_data_dir(dir.path());
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let core = AppCore::with_repo(paths, repo);
+        let note = core.create_note().unwrap();
+        core.save_note(&note.id, "Title", "# Title", false).unwrap();
+        for change in core.pending_sync_changes().unwrap() {
+            core.delete_sync_change(&change.id).unwrap();
+        }
+
+        core.set_note_title(&note.id, "Renamed").unwrap();
+
+        let changes = core.pending_sync_changes().unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].op_type, snapline_domain::SyncOpType::UpsertNote);
+        assert_eq!(changes[0].base_version, 0);
+    }
+
+    #[test]
     fn save_png_asset_enqueues_asset_upload() {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
@@ -306,5 +405,47 @@ mod tests {
         let changes = core.pending_sync_changes().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].op_type, snapline_domain::SyncOpType::AssetUpload);
+    }
+
+    #[test]
+    fn import_snapshot_applies_notes_and_updates_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_data_dir(dir.path());
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let core = AppCore::with_repo(paths, repo);
+        let mut note = snapline_domain::Note::draft(chrono::Utc::now());
+        note.title = "Remote".to_string();
+        note.server_version = 4;
+
+        core.import_snapshot(&[note.clone()], 9).unwrap();
+
+        assert_eq!(core.get_note(&note.id).unwrap().title, "Remote");
+        assert_eq!(core.sync_state().unwrap().server_cursor, 9);
+    }
+
+    #[test]
+    fn save_remote_asset_uses_metadata_location() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_data_dir(dir.path());
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let core = AppCore::with_repo(paths, repo);
+        let note_id = snapline_domain::NoteId::new();
+        let asset = snapline_domain::AssetMetadata {
+            id: snapline_domain::AssetId::new(),
+            note_id: note_id.clone(),
+            content_type: "image/png".to_string(),
+            byte_size: 4,
+            sha256: "sha".to_string(),
+            storage_key: "server/key".to_string(),
+            created_at: chrono::Utc::now(),
+            deleted_at: None,
+        };
+
+        core.save_remote_asset(&asset, &[1, 2, 3, 4]).unwrap();
+
+        assert_eq!(
+            std::fs::read(dir.path().join(core.paths.markdown_asset_path(&note_id, &asset.id, "png"))).unwrap(),
+            vec![1, 2, 3, 4]
+        );
     }
 }

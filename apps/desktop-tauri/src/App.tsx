@@ -14,7 +14,7 @@ import {
 } from "./session";
 import { startupLog } from "./startupLog";
 import { SyncSettings } from "./SyncSettings";
-import type { Note, NoteSummary, SavedAsset, SyncAccountState } from "./types";
+import type { Note, NoteSummary, SavedAsset, SyncAccountState, SyncStatusState } from "./types";
 import { openListWindow, openNoteWindow, readAppRoute, shouldDeferInitialNoteLoad } from "./window";
 
 const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
@@ -66,6 +66,7 @@ function NotesListWindow() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [syncSettingsOpen, setSyncSettingsOpen] = useState(false);
   const [syncAccount, setSyncAccount] = useState<SyncAccountState | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatusState>({ label: "Sync", detail: null });
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
@@ -108,7 +109,34 @@ function NotesListWindow() {
     void isEnabled()
       .then(setAutostartEnabled)
       .catch(() => setAutostartEnabled(false));
-    void api.getSyncAccountState().then(setSyncAccount).catch(() => setSyncAccount(null));
+    void api.getSyncAccountState().then((next) => {
+      setSyncAccount(next);
+      setSyncStatus({ label: next.is_logged_in ? "Synced" : "Sync", detail: null });
+    }).catch(() => setSyncAccount(null));
+  }, [refreshNotes]);
+
+  useEffect(() => {
+    let unlistenStatus: (() => void) | null = null;
+    let unlistenError: (() => void) | null = null;
+
+    void listen<string>("sync-status", (event) => {
+      const hasConflict = !event.payload.includes("conflicts=0");
+      setSyncStatus({ label: hasConflict ? "Conflict" : "Synced", detail: event.payload });
+      void refreshNotes(true);
+    }).then((unlisten) => {
+      unlistenStatus = unlisten;
+    });
+    void listen<string>("sync-error", (event) => {
+      const label = event.payload.toLowerCase().includes("offline") ? "Offline" : "Error";
+      setSyncStatus({ label, detail: event.payload });
+    }).then((unlisten) => {
+      unlistenError = unlisten;
+    });
+
+    return () => {
+      unlistenStatus?.();
+      unlistenError?.();
+    };
   }, [refreshNotes]);
 
   useEffect(() => {
@@ -205,6 +233,22 @@ function NotesListWindow() {
     }
   }
 
+  async function handleSyncNow(): Promise<string> {
+    setSyncStatus({ label: "Syncing", detail: null });
+    try {
+      const report = await api.syncNow();
+      const hasConflict = !report.includes("conflicts=0");
+      setSyncStatus({ label: hasConflict ? "Conflict" : "Synced", detail: report });
+      await refreshNotes(true);
+      return report;
+    } catch (err) {
+      const message = String(err);
+      const label = message.toLowerCase().includes("offline") ? "Offline" : "Error";
+      setSyncStatus({ label, detail: message });
+      throw err;
+    }
+  }
+
   return (
     <main className="appShell listShell">
       <header className="listHeader">
@@ -217,7 +261,7 @@ function NotesListWindow() {
         </div>
         <div className="listHeaderActions">
           <button className="syncButton" onClick={() => setSyncSettingsOpen((value) => !value)} type="button">
-            {syncAccount?.is_logged_in ? "Synced" : "Sync"}
+            {syncStatus.label}
           </button>
           <IconButton label="New note" onClick={() => void handleNewNote()}><PlusIcon /></IconButton>
           <IconButton label="Settings" onClick={() => setSettingsOpen(true)}><SettingsIcon /></IconButton>
@@ -225,7 +269,16 @@ function NotesListWindow() {
       </header>
 
       {error ? <div className="errorBanner">{error}</div> : null}
-      {syncSettingsOpen ? <SyncSettings initial={syncAccount} onSaved={setSyncAccount} /> : null}
+      {syncSettingsOpen ? (
+        <SyncSettings
+          initial={syncAccount}
+          onSaved={(next) => {
+            setSyncAccount(next);
+            setSyncStatus({ label: next.is_logged_in ? "Synced" : "Sync", detail: null });
+          }}
+          onSyncNow={handleSyncNow}
+        />
+      ) : null}
 
       <section className="listPanel" aria-label="Note list">
         {visibleNotes.length === 0 ? (

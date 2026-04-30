@@ -1,10 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use snapline_app_core::{AppCore, BootstrapState, SyncAccountState};
-use snapline_domain::{AssetRef, Note, NoteId, NoteSummary};
+use snapline_domain::{AssetRef, Note, NoteId, NoteSummary, SyncPayload};
 use snapline_platform::AppPaths;
 use snapline_sync_client::{
-    protocol::{LoginRequest, PushChange, PushChangeResult, PushRequest},
+    protocol::{AssetUploadRequest, LoginRequest, PushChange, PushChangeResult, PushRequest},
     HttpSyncApi, SyncApi,
 };
 use std::sync::Mutex;
@@ -16,6 +16,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 const AUTOSTART_BACKGROUND_ARG: &str = "--background";
 const FOCUS_EDITOR_EVENT: &str = "snapline-focus-editor";
 const CURSOR_OFFSET: i32 = 12;
+const BACKGROUND_SYNC_INTERVAL_SECS: u64 = 60;
 
 struct AppState {
     core: Mutex<AppCore>,
@@ -208,17 +209,27 @@ async fn login_sync(
         })
         .await
         .map_err(|err| err.to_string())?;
-    state
+    let account_state = state
         .core
         .lock()
         .map_err(|_| "app state lock poisoned".to_string())?
-        .save_sync_login(&server_base_url, &response.account_id, &response.access_token)
-        .map_err(|err| err.to_string())
+        .save_sync_login(
+            &server_base_url,
+            &response.account_id,
+            &response.access_token,
+        )
+        .map_err(|err| err.to_string())?;
+    import_snapshot_and_assets(&state, &api, &response.access_token).await?;
+    Ok(account_state)
 }
 
 #[tauri::command]
 async fn sync_now(state: State<'_, AppState>) -> Result<String, String> {
-    let (base_url, token, device_id, pending) = {
+    run_sync_once(state.inner()).await
+}
+
+async fn run_sync_once(state: &AppState) -> Result<String, String> {
+    let (base_url, token, device_id, data_dir) = {
         let core = state
             .core
             .lock()
@@ -227,14 +238,46 @@ async fn sync_now(state: State<'_, AppState>) -> Result<String, String> {
             .sync_credentials()
             .map_err(|err| err.to_string())?
             .ok_or_else(|| "not logged in".to_string())?;
-        let pending = core.pending_sync_changes().map_err(|err| err.to_string())?;
-        (base_url, token, device_id, pending)
+        (base_url, token, device_id, core.data_dir().to_path_buf())
     };
-    if pending.is_empty() {
-        return Ok("accepted=0, conflicts=0, failed=0".to_string());
-    }
     let api = HttpSyncApi::new(base_url);
-    let response = api
+    let asset_items = {
+        let core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        core.pending_sync_changes()
+            .map_err(|err| err.to_string())?
+            .into_iter()
+            .filter(|item| matches!(item.payload, SyncPayload::Asset(_)))
+            .collect::<Vec<_>>()
+    };
+    let mut uploaded_assets = 0;
+    for item in asset_items {
+        let SyncPayload::Asset(metadata) = item.payload else {
+            continue;
+        };
+        let bytes =
+            std::fs::read(data_dir.join(&metadata.markdown_path)).map_err(|err| err.to_string())?;
+        api.upload_asset(&token, AssetUploadRequest { metadata, bytes })
+            .await
+            .map_err(|err| err.to_string())?;
+        let core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        core.delete_sync_change(&item.id)
+            .map_err(|err| err.to_string())?;
+        uploaded_assets += 1;
+    }
+    let pending = {
+        let core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        core.pending_sync_changes().map_err(|err| err.to_string())?
+    };
+    let push_response = api
         .push(
             &token,
             PushRequest {
@@ -252,29 +295,175 @@ async fn sync_now(state: State<'_, AppState>) -> Result<String, String> {
         )
         .await
         .map_err(|err| err.to_string())?;
-    let mut accepted = 0;
-    let mut conflicts = 0;
+    let mut pushed = 0;
+    let mut push_conflicts = 0;
+    let mut max_cursor = 0;
     {
         let core = state
             .core
             .lock()
             .map_err(|_| "app state lock poisoned".to_string())?;
-        for result in response.results {
+        for result in push_response.results {
             match result {
-                PushChangeResult::Accepted { queue_id, .. } => {
+                PushChangeResult::Accepted {
+                    queue_id,
+                    note_id,
+                    server_version,
+                    cursor,
+                } => {
+                    core.update_note_server_version(&note_id, server_version)
+                        .map_err(|err| err.to_string())?;
                     core.delete_sync_change(&queue_id)
                         .map_err(|err| err.to_string())?;
-                    accepted += 1;
+                    max_cursor = max_cursor.max(cursor);
+                    pushed += 1;
                 }
-                PushChangeResult::Conflict { queue_id, .. } => {
-                    core.mark_sync_change_failed(&queue_id, "version conflict")
+                PushChangeResult::Conflict {
+                    queue_id,
+                    note_id,
+                    server_note,
+                } => {
+                    if let Some(rejected_note) = rejected_note_from_pending(&pending, &queue_id, &note_id) {
+                        core.create_conflict_copy(&rejected_note)
+                            .map_err(|err| err.to_string())?;
+                        core.apply_remote_note(&server_note)
+                            .map_err(|err| err.to_string())?;
+                    }
+                    core.delete_sync_change(&queue_id)
                         .map_err(|err| err.to_string())?;
-                    conflicts += 1;
+                    push_conflicts += 1;
                 }
             }
         }
+        if max_cursor > 0 {
+            core.update_sync_cursor_success(max_cursor, chrono::Utc::now())
+                .map_err(|err| err.to_string())?;
+        }
     }
-    Ok(format!("accepted={accepted}, conflicts={conflicts}, failed=0"))
+    let cursor = {
+        let core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        core.sync_state()
+            .map_err(|err| err.to_string())?
+            .server_cursor
+    };
+    let pull_response = api
+        .pull(&token, cursor)
+        .await
+        .map_err(|err| err.to_string())?;
+    let pulled = pull_response.changes.len();
+    let mut pull_conflicts = 0;
+    {
+        let core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        for change in pull_response.changes {
+            if core
+                .has_pending_note_change(&change.note.id)
+                .map_err(|err| err.to_string())?
+            {
+                let local_note = core
+                    .get_note(&change.note.id)
+                    .map_err(|err| err.to_string())?;
+                core.create_conflict_copy(&local_note)
+                    .map_err(|err| err.to_string())?;
+                core.delete_sync_changes_for_note(&change.note.id)
+                    .map_err(|err| err.to_string())?;
+                pull_conflicts += 1;
+            }
+            core.apply_remote_note(&change.note)
+                .map_err(|err| err.to_string())?;
+        }
+        core.update_sync_cursor_success(pull_response.cursor, chrono::Utc::now())
+            .map_err(|err| err.to_string())?;
+    };
+    import_snapshot_and_assets(state, &api, &token).await?;
+    Ok(format!(
+        "uploaded_assets={}, pushed={}, pulled={}, conflicts={}, failed={}",
+        uploaded_assets,
+        pushed,
+        pulled,
+        push_conflicts + pull_conflicts,
+        0
+    ))
+}
+
+fn rejected_note_from_pending(
+    pending: &[snapline_storage::ChangeQueueItem],
+    queue_id: &str,
+    note_id: &NoteId,
+) -> Option<Note> {
+    let item = pending.iter().find(|item| item.id == queue_id)?;
+    let SyncPayload::Note(payload) = &item.payload else {
+        return None;
+    };
+    let now = chrono::Utc::now();
+    Some(Note {
+        id: note_id.clone(),
+        title: payload.title.clone(),
+        content_md: payload.content_md.clone(),
+        pinned: payload.pinned,
+        created_at: now,
+        updated_at: now,
+        deleted_at: payload.deleted_at,
+        server_version: item.base_version,
+        last_modified_by_device: None,
+        is_conflict_copy: false,
+        source_note_id: None,
+    })
+}
+
+async fn import_snapshot_and_assets(
+    state: &AppState,
+    api: &HttpSyncApi,
+    token: &str,
+) -> Result<(), String> {
+    let snapshot = api.snapshot(token).await.map_err(|err| err.to_string())?;
+    let missing_assets = {
+        let core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        core.import_snapshot(&snapshot.notes, snapshot.cursor)
+            .map_err(|err| err.to_string())?;
+        core.missing_asset_metadata(&snapshot.assets)
+    };
+    for asset in missing_assets {
+        let downloaded = api
+            .download_asset(token, &asset.id.to_string())
+            .await
+            .map_err(|err| err.to_string())?;
+        let core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        core.save_remote_asset(&asset, &downloaded.bytes)
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+async fn run_background_sync_loop(app: AppHandle) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+        BACKGROUND_SYNC_INTERVAL_SECS,
+    ));
+    loop {
+        interval.tick().await;
+        let state = app.state::<AppState>();
+        match run_sync_once(state.inner()).await {
+            Ok(report) => {
+                let _ = app.emit("sync-status", report);
+            }
+            Err(err) if err == "not logged in" => {}
+            Err(err) => {
+                eprintln!("snapline.background_sync_error={err}");
+                let _ = app.emit("sync-error", err);
+            }
+        }
+    }
 }
 
 fn parse_note_id(value: &str) -> Result<NoteId, String> {
@@ -436,6 +625,10 @@ fn main() {
                         shortcut_started.elapsed().as_millis()
                     );
                 }
+            });
+            let sync_app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                run_background_sync_loop(sync_app_handle).await;
             });
             if startup_logging_enabled {
                 eprintln!(
