@@ -224,8 +224,7 @@ impl AppCore {
     pub fn import_snapshot(&self, notes: &[Note], cursor: i64) -> Result<()> {
         for note in notes {
             if self.repo.has_pending_note_change(&note.id)? {
-                let local_note = self.repo.get_note(&note.id)?;
-                self.repo.create_conflict_copy(&local_note, Utc::now())?;
+                continue;
             }
             self.repo.apply_remote_note(note)?;
         }
@@ -236,9 +235,11 @@ impl AppCore {
         assets
             .iter()
             .filter(|asset| {
-                let path = self
-                    .paths
-                    .markdown_asset_path(&asset.note_id, &asset.id, asset_extension(asset));
+                let path = self.paths.markdown_asset_path(
+                    &asset.note_id,
+                    &asset.id,
+                    asset_extension(asset),
+                );
                 !self.paths.resolve_markdown_asset_path(&path).exists()
             })
             .cloned()
@@ -428,6 +429,32 @@ mod tests {
     }
 
     #[test]
+    fn import_snapshot_skips_notes_with_pending_local_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_data_dir(dir.path());
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let core = AppCore::with_repo(paths, repo);
+        let note = core.create_note().unwrap();
+        core.save_note(&note.id, "Local", "# Local", false).unwrap();
+        let mut remote_note = note.clone();
+        remote_note.title = "Remote".to_string();
+        remote_note.content_md = "# Remote".to_string();
+        remote_note.server_version = 3;
+
+        core.import_snapshot(&[remote_note], 9).unwrap();
+
+        assert_eq!(core.get_note(&note.id).unwrap().title, "Local");
+        assert!(core
+            .bootstrap()
+            .unwrap()
+            .notes
+            .iter()
+            .all(|note| !note.is_conflict_copy));
+        assert_eq!(core.pending_sync_changes().unwrap().len(), 1);
+        assert_eq!(core.sync_state().unwrap().server_cursor, 9);
+    }
+
+    #[test]
     fn save_remote_asset_uses_metadata_location() {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
@@ -448,7 +475,11 @@ mod tests {
         core.save_remote_asset(&asset, &[1, 2, 3, 4]).unwrap();
 
         assert_eq!(
-            std::fs::read(dir.path().join(core.paths.markdown_asset_path(&note_id, &asset.id, "png"))).unwrap(),
+            std::fs::read(
+                dir.path()
+                    .join(core.paths.markdown_asset_path(&note_id, &asset.id, "png"))
+            )
+            .unwrap(),
             vec![1, 2, 3, 4]
         );
     }

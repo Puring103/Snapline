@@ -9,6 +9,7 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub struct MockSyncApi {
     notes: Mutex<Vec<Note>>,
+    change_devices: Mutex<Vec<(snapline_domain::NoteId, String)>>,
     assets: Mutex<Vec<AssetUploadPayload>>,
     asset_bytes: Mutex<Vec<(String, Vec<u8>)>>,
     cursor: Mutex<i64>,
@@ -44,6 +45,10 @@ impl SyncApi for MockSyncApi {
                     existing.deleted_at = payload.deleted_at;
                     existing.server_version += 1;
                     *cursor += 1;
+                    self.change_devices
+                        .lock()
+                        .unwrap()
+                        .push((existing.id.clone(), request.device_id.clone()));
                     results.push(PushChangeResult::Accepted {
                         queue_id: change.queue_id,
                         note_id: existing.id.clone(),
@@ -60,6 +65,10 @@ impl SyncApi for MockSyncApi {
                     note.server_version = 1;
                     notes.push(note);
                     *cursor += 1;
+                    self.change_devices
+                        .lock()
+                        .unwrap()
+                        .push((change.note_id.clone(), request.device_id.clone()));
                     results.push(PushChangeResult::Accepted {
                         queue_id: change.queue_id,
                         note_id: change.note_id,
@@ -75,6 +84,7 @@ impl SyncApi for MockSyncApi {
     async fn pull(&self, _token: &str, _cursor: i64) -> Result<PullResponse> {
         let notes = self.notes.lock().unwrap();
         let cursor = *self.cursor.lock().unwrap();
+        let change_devices = self.change_devices.lock().unwrap();
         Ok(PullResponse {
             cursor,
             changes: notes
@@ -82,7 +92,12 @@ impl SyncApi for MockSyncApi {
                 .cloned()
                 .map(|note| RemoteChange {
                     cursor,
-                    device_id: "mock-device".to_string(),
+                    device_id: change_devices
+                        .iter()
+                        .rev()
+                        .find(|(note_id, _)| note_id == &note.id)
+                        .map(|(_, device_id)| device_id.clone())
+                        .unwrap_or_else(|| "mock-device".to_string()),
                     note,
                     changed_at: Utc::now(),
                 })

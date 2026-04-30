@@ -184,7 +184,8 @@ fn open_external_url(url: String) -> Result<String, String> {
 
 fn is_allowed_external_url(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
-    !url.chars().any(|character| character == '\r' || character == '\n')
+    !url.chars()
+        .any(|character| character == '\r' || character == '\n')
         && (lower.starts_with("http://")
             || lower.starts_with("https://")
             || lower.starts_with("mailto:"))
@@ -349,7 +350,7 @@ async fn run_sync_once(state: &AppState) -> Result<String, String> {
         .push(
             &token,
             PushRequest {
-                device_id,
+                device_id: device_id.clone(),
                 changes: pending
                     .iter()
                     .map(|item| PushChange {
@@ -391,7 +392,9 @@ async fn run_sync_once(state: &AppState) -> Result<String, String> {
                     note_id,
                     server_note,
                 } => {
-                    if let Some(rejected_note) = rejected_note_from_pending(&pending, &queue_id, &note_id) {
+                    if let Some(rejected_note) =
+                        rejected_note_from_pending(&pending, &queue_id, &note_id)
+                    {
                         core.create_conflict_copy(&rejected_note)
                             .map_err(|err| err.to_string())?;
                         core.apply_remote_note(&server_note)
@@ -421,7 +424,7 @@ async fn run_sync_once(state: &AppState) -> Result<String, String> {
         .pull(&token, cursor)
         .await
         .map_err(|err| err.to_string())?;
-    let pulled = pull_response.changes.len();
+    let mut pulled = 0;
     let mut pull_conflicts = 0;
     {
         let core = state
@@ -429,6 +432,9 @@ async fn run_sync_once(state: &AppState) -> Result<String, String> {
             .lock()
             .map_err(|_| "app state lock poisoned".to_string())?;
         for change in pull_response.changes {
+            if change.device_id == device_id {
+                continue;
+            }
             if core
                 .has_pending_note_change(&change.note.id)
                 .map_err(|err| err.to_string())?
@@ -444,6 +450,7 @@ async fn run_sync_once(state: &AppState) -> Result<String, String> {
             }
             core.apply_remote_note(&change.note)
                 .map_err(|err| err.to_string())?;
+            pulled += 1;
         }
         core.update_sync_cursor_success(pull_response.cursor, chrono::Utc::now())
             .map_err(|err| err.to_string())?;
