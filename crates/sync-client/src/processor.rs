@@ -67,7 +67,8 @@ pub async fn push_pending_changes<A: SyncApi + Sync>(
                 note_id,
                 server_note,
             } => {
-                if let Some(rejected_note) = local_note_from_pending(&pending, &queue_id, &note_id) {
+                if let Some(rejected_note) = local_note_from_pending(&pending, &queue_id, &note_id)
+                {
                     repo.create_conflict_copy(&rejected_note, Utc::now())?;
                     repo.apply_remote_note(&server_note)?;
                 }
@@ -110,11 +111,16 @@ pub async fn pull_remote_changes<A: SyncApi + Sync>(
     repo: &NoteRepository,
     api: &A,
     token: &str,
+    device_id: &str,
 ) -> Result<ProcessReport> {
     let state = repo.get_or_create_sync_state()?;
     let response = api.pull(token, state.server_cursor).await?;
     let mut conflicts = 0;
+    let mut accepted = 0;
     for change in &response.changes {
+        if change.device_id == device_id {
+            continue;
+        }
         if repo.has_pending_note_change(&change.note.id)? {
             let local_note = repo.get_note(&change.note.id)?;
             repo.create_conflict_copy(&local_note, Utc::now())?;
@@ -122,10 +128,11 @@ pub async fn pull_remote_changes<A: SyncApi + Sync>(
             conflicts += 1;
         }
         repo.apply_remote_note(&change.note)?;
+        accepted += 1;
     }
     repo.update_sync_cursor_success(response.cursor, Utc::now())?;
     Ok(ProcessReport {
-        accepted: response.changes.len(),
+        accepted,
         conflicts,
         failed: 0,
     })
@@ -234,7 +241,9 @@ mod tests {
         .await
         .unwrap();
 
-        let report = pull_remote_changes(&repo, &api, "token").await.unwrap();
+        let report = pull_remote_changes(&repo, &api, "token", "device-a")
+            .await
+            .unwrap();
 
         assert_eq!(report.accepted, 1);
         assert_eq!(repo.get_note(&note.id).unwrap().title, "Remote");
@@ -274,7 +283,9 @@ mod tests {
         )
         .unwrap();
 
-        let report = push_pending_changes(&repo, &api, "token", "device-b").await.unwrap();
+        let report = push_pending_changes(&repo, &api, "token", "device-b")
+            .await
+            .unwrap();
 
         assert_eq!(report.conflicts, 1);
         let summaries = repo.list_recent(10).unwrap();
@@ -318,10 +329,15 @@ mod tests {
         .await
         .unwrap();
 
-        let report = pull_remote_changes(&repo, &api, "token").await.unwrap();
+        let report = pull_remote_changes(&repo, &api, "token", "device-a")
+            .await
+            .unwrap();
 
         assert_eq!(report.conflicts, 1);
-        assert_eq!(repo.get_note(&local_note.id).unwrap().title, "Remote accepted");
+        assert_eq!(
+            repo.get_note(&local_note.id).unwrap().title,
+            "Remote accepted"
+        );
         let conflict_copy = repo
             .list_recent(10)
             .unwrap()
@@ -333,5 +349,42 @@ mod tests {
         assert!(loaded_copy.title.contains("Conflict copy"));
         assert_eq!(loaded_copy.content_md, local_note.content_md);
         assert!(repo.list_pending_changes(10).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn processor_ignores_pulled_changes_from_current_device() {
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let api = MockSyncApi::default();
+        let mut note = Note::draft(Utc::now());
+        note.title = "Local accepted".to_string();
+        repo.apply_remote_note(&note).unwrap();
+        repo.enqueue_change(
+            &note.id,
+            SyncOpType::UpsertNote,
+            0,
+            &SyncPayload::Note(NoteChangePayload::from_note(&note)),
+            Utc::now(),
+        )
+        .unwrap();
+        let push_report = push_pending_changes(&repo, &api, "token", "device-a")
+            .await
+            .unwrap();
+        assert_eq!(push_report.accepted, 1);
+        let mut state = repo.get_or_create_sync_state().unwrap();
+        state.server_cursor = 0;
+        repo.save_sync_state(&state).unwrap();
+
+        let pull_report = pull_remote_changes(&repo, &api, "token", "device-a")
+            .await
+            .unwrap();
+
+        assert_eq!(pull_report.accepted, 0);
+        assert_eq!(pull_report.conflicts, 0);
+        assert_eq!(repo.get_note(&note.id).unwrap().title, "Local accepted");
+        assert!(repo
+            .list_recent(10)
+            .unwrap()
+            .iter()
+            .all(|note| !note.is_conflict_copy));
     }
 }

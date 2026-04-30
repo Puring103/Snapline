@@ -102,7 +102,10 @@ pub async fn pull_changes(
         .collect()
 }
 
-pub async fn snapshot(pool: &PgPool, account_id: &str) -> Result<(i64, Vec<Note>, Vec<AssetMetadata>)> {
+pub async fn snapshot(
+    pool: &PgPool,
+    account_id: &str,
+) -> Result<(i64, Vec<Note>, Vec<AssetMetadata>)> {
     let rows = sqlx::query(
         "SELECT id, title, content_md, pinned, created_at, updated_at, deleted_at, version, last_modified_by_device
          FROM notes WHERE account_id = $1",

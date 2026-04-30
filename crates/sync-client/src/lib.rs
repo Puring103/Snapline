@@ -107,7 +107,10 @@ impl SyncApi for HttpSyncApi {
     async fn download_asset(&self, token: &str, asset_id: &str) -> Result<AssetDownload> {
         let response = self
             .client
-            .get(format!("{}/sync/assets/{}/download", self.base_url, asset_id))
+            .get(format!(
+                "{}/sync/assets/{}/download",
+                self.base_url, asset_id
+            ))
             .bearer_auth(token)
             .send()
             .await?

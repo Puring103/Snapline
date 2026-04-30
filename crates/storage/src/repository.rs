@@ -626,7 +626,12 @@ mod tests {
         rejected.title = "Local edit".to_string();
         rejected.content_md = "# Local\n![img](assets/notes/local/image.png)".to_string();
 
-        let copy = repo.create_conflict_copy(&rejected, Utc.with_ymd_and_hms(2026, 4, 29, 10, 1, 0).unwrap()).unwrap();
+        let copy = repo
+            .create_conflict_copy(
+                &rejected,
+                Utc.with_ymd_and_hms(2026, 4, 29, 10, 1, 0).unwrap(),
+            )
+            .unwrap();
 
         assert_ne!(copy.id, rejected.id);
         assert!(copy.is_conflict_copy);
