@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   bytesFromPastedImageFile,
   bytesFromTransientImageSource,
+  objectUrlFromImageBytes,
   pastedImageSourceFromClipboard,
   pastedImageFileFromClipboard,
 } from "./pasteImage";
@@ -164,5 +165,19 @@ describe("paste image helpers", () => {
         },
       }),
     ).toBeNull();
+  });
+
+  it("creates a displayable object url for local image bytes", () => {
+    const createdBlobs: Blob[] = [];
+    const createObjectUrl = vi.fn((blob: Blob) => {
+      createdBlobs.push(blob);
+      return "blob:local-image";
+    });
+
+    expect(objectUrlFromImageBytes([255, 216, 255, 224], "image/jpeg", createObjectUrl)).toBe(
+      "blob:local-image",
+    );
+    expect(createdBlobs[0]?.type).toBe("image/jpeg");
+    expect(createdBlobs[0]?.size).toBe(4);
   });
 });

@@ -1,5 +1,6 @@
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/core";
+import type { EditorView } from "@tiptap/pm/view";
 import { useEffect, useRef } from "react";
 import { api } from "./api";
 import { blobUrlFromBytes } from "./assetDisplay";
@@ -17,6 +18,7 @@ import {
 import {
   bytesFromPastedImageFile,
   bytesFromTransientImageSource,
+  objectUrlFromImageBytes,
   pastedImageSourceFromClipboard,
 } from "./pasteImage";
 import { insertClipboardMarkdown } from "./pasteMarkdown";
@@ -100,23 +102,21 @@ export function EditorPane({
           const imageSource = pastedImageSourceFromClipboard(clipboardData);
           if (imageSource) {
             event.preventDefault();
-            const placeholderSrc =
-              imageSource.kind === "file"
-                ? URL.createObjectURL(imageSource.file)
-                : localImagePlaceholderSource(imageSource.mimeType, imageSource.path);
-            const bytesPromise =
-              imageSource.kind === "file"
-                ? bytesFromPastedImageFile(imageSource.file)
-                : bytesFromLocalImageFile(imageSource.path, imageSource.mimeType);
-            uploadingImageSources.current.add(placeholderSrc);
+            if (imageSource.kind === "file") {
+              const placeholderSrc = URL.createObjectURL(imageSource.file);
+              const bytesPromise = bytesFromPastedImageFile(imageSource.file);
+              uploadingImageSources.current.add(placeholderSrc);
 
-            view.dispatch(
-              view.state.tr.replaceSelectionWith(
-                view.state.schema.nodes.image.create({ src: placeholderSrc }),
-              ),
-            );
+              view.dispatch(
+                view.state.tr.replaceSelectionWith(
+                  view.state.schema.nodes.image.create({ src: placeholderSrc }),
+                ),
+              );
 
-            void uploadTransientImageSource(placeholderSrc, bytesPromise);
+              void uploadTransientImageSource(placeholderSrc, bytesPromise);
+            } else {
+              void pasteLocalImageFile(view, imageSource.path, imageSource.mimeType);
+            }
 
             return true;
           }
@@ -265,9 +265,11 @@ export function EditorPane({
         return;
       }
 
-      uploadedImageSources.current.set(source, asset.markdown_path);
-      hydratedImageSources.current.set(source, asset.markdown_path);
-      assetBlobUrls.current.set(asset.markdown_path, source);
+      const displaySource = asset.asset_url;
+      uploadedImageSources.current.set(displaySource, asset.markdown_path);
+      hydratedImageSources.current.set(displaySource, asset.markdown_path);
+      assetBlobUrls.current.set(asset.markdown_path, displaySource);
+      updateImageSource(activeEditor, source, displaySource);
       onBodyChange(
         rewriteMarkdownImageSources(
           normalizeMarkdown(activeEditor.getMarkdown() ?? ""),
@@ -281,6 +283,27 @@ export function EditorPane({
       }
     } finally {
       uploadingImageSources.current.delete(source);
+    }
+  }
+
+  async function pasteLocalImageFile(view: EditorView, path: string, mimeType: string) {
+    try {
+      const originalBytes = await api.readLocalImageFile(path);
+      const placeholderSrc = objectUrlFromImageBytes(originalBytes, mimeType);
+      const bytesPromise = bytesFromPastedImageFile(
+        new Blob([new Uint8Array(originalBytes)], { type: mimeType }),
+      );
+      uploadingImageSources.current.add(placeholderSrc);
+
+      view.dispatch(
+        view.state.tr.replaceSelectionWith(
+          view.state.schema.nodes.image.create({ src: placeholderSrc }),
+        ),
+      );
+
+      void uploadTransientImageSource(placeholderSrc, bytesPromise);
+    } catch {
+      // Unsupported or unreadable local file paste; keep the editor unchanged.
     }
   }
 
@@ -410,13 +433,4 @@ function openLink(link: HTMLAnchorElement) {
   void api.openExternalUrl(link.href).catch(() => {
     window.open(link.href, "_blank", "noopener,noreferrer");
   });
-}
-
-function localImagePlaceholderSource(mimeType: string, path: string): string {
-  return `data:${mimeType};snapline-local-path,${encodeURIComponent(path)}`;
-}
-
-async function bytesFromLocalImageFile(path: string, mimeType: string): Promise<number[]> {
-  const bytes = await api.readLocalImageFile(path);
-  return bytesFromPastedImageFile(new Blob([new Uint8Array(bytes)], { type: mimeType }));
 }

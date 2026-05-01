@@ -54,6 +54,14 @@ export async function bytesFromPastedImageFile(
   return bytesFromArrayBuffer(await arrayBufferFromBlob(file));
 }
 
+export function objectUrlFromImageBytes(
+  bytes: number[],
+  mimeType: string,
+  createObjectUrl: (blob: Blob) => string = URL.createObjectURL,
+): string {
+  return createObjectUrl(new Blob([new Uint8Array(bytes)], { type: mimeType }));
+}
+
 export async function bytesFromTransientImageSource(source: string): Promise<number[]> {
   if (source.startsWith("data:")) {
     return bytesFromDataUrl(source);
