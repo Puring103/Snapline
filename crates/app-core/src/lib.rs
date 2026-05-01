@@ -45,7 +45,8 @@ impl AppCore {
     }
 
     pub fn bootstrap(&self) -> Result<BootstrapState> {
-        let notes = self.repo.list_recent(50)?;
+        let owner = self.current_account_id()?;
+        let notes = self.repo.list_recent_for_owner(50, owner.as_deref())?;
         let current = Note::draft(Utc::now());
         Ok(BootstrapState {
             notes,
@@ -55,11 +56,13 @@ impl AppCore {
     }
 
     pub fn create_note(&self) -> Result<Note> {
-        Ok(Note::draft(Utc::now()))
+        let owner = self.current_account_id()?;
+        self.repo.create_note(Utc::now(), owner.as_deref())
     }
 
     pub fn get_note(&self, id: &NoteId) -> Result<Note> {
-        self.repo.get_note(id)
+        let owner = self.current_account_id()?;
+        self.repo.get_note_for_owner(id, owner.as_deref())
     }
 
     pub fn save_note(
@@ -69,37 +72,45 @@ impl AppCore {
         content_md: &str,
         pinned: bool,
     ) -> Result<Note> {
-        let note = self
-            .repo
-            .save_note(id, title, content_md, pinned, Utc::now())?;
+        let owner = self.current_account_id()?;
+        if self.repo.note_exists(id)? {
+            self.repo.get_note_for_owner(id, owner.as_deref())?;
+        }
+        let note =
+            self.repo
+                .save_note(id, title, content_md, pinned, Utc::now(), owner.as_deref())?;
         self.enqueue_note_change(&note, SyncOpType::UpsertNote, note.server_version)?;
         Ok(note)
     }
 
     pub fn set_note_title(&self, id: &NoteId, title: &str) -> Result<Note> {
+        self.get_note(id)?;
         let note = self.repo.update_note_title(id, title, Utc::now())?;
         self.enqueue_note_change(&note, SyncOpType::UpsertNote, note.server_version)?;
         Ok(note)
     }
 
     pub fn set_note_pinned(&self, id: &NoteId, pinned: bool) -> Result<Note> {
+        self.get_note(id)?;
         let note = self.repo.set_pinned(id, pinned, Utc::now())?;
         self.enqueue_note_change(&note, SyncOpType::UpsertNote, note.server_version)?;
         Ok(note)
     }
 
     pub fn delete_note(&self, id: &NoteId) -> Result<Vec<NoteSummary>> {
-        let existing = self.repo.get_note(id)?;
+        let owner = self.current_account_id()?;
+        let existing = self.repo.get_note_for_owner(id, owner.as_deref())?;
         self.repo.soft_delete(id, Utc::now())?;
-        let deleted = self.repo.get_note(id)?;
+        let deleted = self.repo.get_note_for_owner(id, owner.as_deref())?;
         self.enqueue_note_change(&deleted, SyncOpType::DeleteNote, existing.server_version)?;
-        self.repo.list_recent(50)
+        self.repo.list_recent_for_owner(50, owner.as_deref())
     }
 
     pub fn save_png_asset(&self, note_id: &NoteId, png_bytes: &[u8]) -> Result<AssetRef> {
         if png_bytes.is_empty() {
             bail!("image bytes are empty");
         }
+        let note = self.get_note(note_id)?;
         let asset_id = AssetId::new();
         let dir = self.paths.note_asset_dir(note_id);
         fs::create_dir_all(&dir)?;
@@ -117,8 +128,16 @@ impl AppCore {
             sha256,
             markdown_path: markdown_path.clone(),
         });
-        self.repo
-            .enqueue_change(note_id, SyncOpType::AssetUpload, 0, &payload, Utc::now())?;
+        if let Some(account_id) = note.owner_account_id.as_deref() {
+            self.repo.enqueue_change(
+                Some(account_id),
+                note_id,
+                SyncOpType::AssetUpload,
+                0,
+                &payload,
+                Utc::now(),
+            )?;
+        }
         Ok(AssetRef {
             markdown_path: markdown_path.clone(),
             filesystem_path: self
@@ -173,8 +192,32 @@ impl AppCore {
         self.sync_account_state()
     }
 
+    fn current_account_id(&self) -> Result<Option<String>> {
+        Ok(self.repo.get_or_create_sync_state()?.account_id)
+    }
+
+    pub fn anonymous_note_count(&self) -> Result<usize> {
+        self.repo.count_anonymous_notes()
+    }
+
+    pub fn import_anonymous_notes_to_current_account(&self) -> Result<Vec<NoteSummary>> {
+        let account_id = self
+            .current_account_id()?
+            .ok_or_else(|| anyhow::anyhow!("not logged in"))?;
+        let imported_ids = self.repo.import_anonymous_notes(&account_id)?;
+        for note_id in imported_ids {
+            self.repo.delete_changes_for_note(None, &note_id)?;
+            let note = self.repo.get_note(&note_id)?;
+            self.enqueue_note_change(&note, SyncOpType::UpsertNote, 0)?;
+        }
+        self.repo.list_recent_for_owner(50, Some(&account_id))
+    }
+
     pub fn pending_sync_changes(&self) -> Result<Vec<snapline_storage::ChangeQueueItem>> {
-        self.repo.list_pending_changes(100)
+        let account_id = self
+            .current_account_id()?
+            .ok_or_else(|| anyhow::anyhow!("not logged in"))?;
+        self.repo.list_pending_changes(Some(&account_id), 100)
     }
 
     pub fn data_dir(&self) -> &std::path::Path {
@@ -198,7 +241,9 @@ impl AppCore {
     }
 
     pub fn delete_sync_changes_for_note(&self, note_id: &NoteId) -> Result<()> {
-        self.repo.delete_changes_for_note(note_id)
+        let account_id = self.current_account_id()?;
+        self.repo
+            .delete_changes_for_note(account_id.as_deref(), note_id)
     }
 
     pub fn mark_sync_change_failed(&self, queue_id: &str, error: &str) -> Result<()> {
@@ -214,7 +259,9 @@ impl AppCore {
     }
 
     pub fn has_pending_note_change(&self, note_id: &NoteId) -> Result<bool> {
-        self.repo.has_pending_note_change(note_id)
+        let account_id = self.current_account_id()?;
+        self.repo
+            .has_pending_note_change(account_id.as_deref(), note_id)
     }
 
     pub fn create_conflict_copy(&self, note: &Note) -> Result<Note> {
@@ -222,9 +269,18 @@ impl AppCore {
     }
 
     pub fn import_snapshot(&self, notes: &[Note], cursor: i64) -> Result<()> {
+        let account_id = self
+            .current_account_id()?
+            .ok_or_else(|| anyhow::anyhow!("not logged in"))?;
         for note in notes {
-            if self.repo.has_pending_note_change(&note.id)? {
-                continue;
+            if self
+                .repo
+                .has_pending_note_change(Some(&account_id), &note.id)?
+            {
+                let local_note = self.repo.get_note_for_owner(&note.id, Some(&account_id))?;
+                self.repo.create_conflict_copy(&local_note, Utc::now())?;
+                self.repo
+                    .delete_changes_for_note(Some(&account_id), &note.id)?;
             }
             self.repo.apply_remote_note(note)?;
         }
@@ -272,9 +328,18 @@ impl AppCore {
         op_type: SyncOpType,
         base_version: i64,
     ) -> Result<()> {
+        let Some(account_id) = note.owner_account_id.as_deref() else {
+            return Ok(());
+        };
         let payload = SyncPayload::Note(NoteChangePayload::from_note(note));
-        self.repo
-            .enqueue_change(&note.id, op_type, base_version, &payload, Utc::now())?;
+        self.repo.enqueue_change(
+            Some(account_id),
+            &note.id,
+            op_type,
+            base_version,
+            &payload,
+            Utc::now(),
+        )?;
         Ok(())
     }
 }
@@ -363,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn save_note_enqueues_upsert_change() {
+    fn anonymous_save_does_not_enqueue_sync_change() {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
@@ -372,9 +437,25 @@ mod tests {
 
         core.save_note(&note.id, "Title", "# Title", false).unwrap();
 
+        assert!(core.pending_sync_changes().is_err());
+    }
+
+    #[test]
+    fn account_save_enqueues_upsert_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_data_dir(dir.path());
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let core = AppCore::with_repo(paths, repo);
+        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+            .unwrap();
+        let note = core.create_note().unwrap();
+
+        core.save_note(&note.id, "Title", "# Title", false).unwrap();
+
         let changes = core.pending_sync_changes().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].op_type, snapline_domain::SyncOpType::UpsertNote);
+        assert_eq!(changes[0].account_id.as_deref(), Some("acct_a"));
     }
 
     #[test]
@@ -383,6 +464,8 @@ mod tests {
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
         let core = AppCore::with_repo(paths, repo);
+        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+            .unwrap();
         let note = core.create_note().unwrap();
         core.save_note(&note.id, "Title", "# Title", false).unwrap();
         for change in core.pending_sync_changes().unwrap() {
@@ -403,6 +486,8 @@ mod tests {
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
         let core = AppCore::with_repo(paths, repo);
+        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+            .unwrap();
         let note = core.create_note().unwrap();
 
         core.save_png_asset(&note.id, &[137, 80, 78, 71]).unwrap();
@@ -418,7 +503,10 @@ mod tests {
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
         let core = AppCore::with_repo(paths, repo);
+        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+            .unwrap();
         let mut note = snapline_domain::Note::draft(chrono::Utc::now());
+        note.owner_account_id = Some("acct_a".to_string());
         note.title = "Remote".to_string();
         note.server_version = 4;
 
@@ -429,11 +517,13 @@ mod tests {
     }
 
     #[test]
-    fn import_snapshot_skips_notes_with_pending_local_changes() {
+    fn import_snapshot_creates_conflict_copy_for_pending_local_changes() {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
         let core = AppCore::with_repo(paths, repo);
+        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+            .unwrap();
         let note = core.create_note().unwrap();
         core.save_note(&note.id, "Local", "# Local", false).unwrap();
         let mut remote_note = note.clone();
@@ -443,14 +533,14 @@ mod tests {
 
         core.import_snapshot(&[remote_note], 9).unwrap();
 
-        assert_eq!(core.get_note(&note.id).unwrap().title, "Local");
+        assert_eq!(core.get_note(&note.id).unwrap().title, "Remote");
         assert!(core
             .bootstrap()
             .unwrap()
             .notes
             .iter()
-            .all(|note| !note.is_conflict_copy));
-        assert_eq!(core.pending_sync_changes().unwrap().len(), 1);
+            .any(|note| note.is_conflict_copy));
+        assert!(core.pending_sync_changes().unwrap().is_empty());
         assert_eq!(core.sync_state().unwrap().server_cursor, 9);
     }
 
@@ -482,5 +572,97 @@ mod tests {
             .unwrap(),
             vec![1, 2, 3, 4]
         );
+    }
+
+    #[test]
+    fn bootstrap_shows_local_notes_when_logged_out_and_account_notes_when_logged_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_data_dir(dir.path());
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let core = AppCore::with_repo(paths, repo);
+
+        let local = core.create_note().unwrap();
+        core.save_note(&local.id, "Local", "Local", false).unwrap();
+        assert_eq!(core.bootstrap().unwrap().notes.len(), 1);
+
+        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+            .unwrap();
+        assert!(core.bootstrap().unwrap().notes.is_empty());
+
+        core.import_anonymous_notes_to_current_account().unwrap();
+        assert_eq!(core.bootstrap().unwrap().notes.len(), 1);
+    }
+
+    #[test]
+    fn importing_anonymous_notes_enqueues_upserts_for_current_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_data_dir(dir.path());
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let core = AppCore::with_repo(paths, repo);
+
+        let local = core.create_note().unwrap();
+        core.save_note(&local.id, "Local", "Local", false).unwrap();
+        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+            .unwrap();
+        core.import_anonymous_notes_to_current_account().unwrap();
+
+        let changes = core.pending_sync_changes().unwrap();
+        assert!(changes
+            .iter()
+            .all(|item| item.account_id.as_deref() == Some("acct_a")));
+        assert!(changes.iter().any(|item| item.note_id == local.id));
+    }
+
+    #[test]
+    fn importing_anonymous_notes_removes_old_anonymous_queue_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_data_dir(dir.path());
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let core = AppCore::with_repo(paths, repo);
+
+        let local = core.create_note().unwrap();
+        core.save_note(&local.id, "Local", "Local", false).unwrap();
+        let payload = snapline_domain::SyncPayload::Note(
+            snapline_domain::NoteChangePayload::from_note(&local),
+        );
+        core.repo
+            .enqueue_change(
+                None,
+                &local.id,
+                snapline_domain::SyncOpType::UpsertNote,
+                0,
+                &payload,
+                chrono::Utc::now(),
+            )
+            .unwrap();
+
+        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+            .unwrap();
+        core.import_anonymous_notes_to_current_account().unwrap();
+
+        assert!(core.repo.list_pending_changes(None, 10).unwrap().is_empty());
+        let changes = core.pending_sync_changes().unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].account_id.as_deref(), Some("acct_a"));
+    }
+
+    #[test]
+    fn logged_in_account_cannot_modify_anonymous_note_by_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_data_dir(dir.path());
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let core = AppCore::with_repo(paths, repo);
+
+        let local = core.create_note().unwrap();
+        core.save_note(&local.id, "Local", "Local", false).unwrap();
+        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+            .unwrap();
+
+        assert!(core
+            .save_note(&local.id, "Account edit", "Account edit", false)
+            .is_err());
+        assert!(core.set_note_pinned(&local.id, true).is_err());
+        assert!(core.delete_note(&local.id).is_err());
+        assert!(core.save_png_asset(&local.id, &[137, 80, 78, 71]).is_err());
     }
 }

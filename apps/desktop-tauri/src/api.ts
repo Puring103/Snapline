@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AssetRef, BootstrapState, Note, NoteSummary, SyncAccountState } from "./types";
+import type { AssetRef, BootstrapState, LoginSyncResult, Note, NoteSummary, SyncAccountState } from "./types";
 
 export const api = {
   launchedInBackground: () => invoke<boolean>("launched_in_background"),
@@ -18,7 +18,9 @@ export const api = {
   setOpenShortcut: (shortcut: string) => invoke<string>("set_open_shortcut", { shortcut }),
   getSyncAccountState: () => invoke<SyncAccountState>("get_sync_account_state"),
   loginSync: (serverBaseUrl: string, email: string, password: string) =>
-    invoke<SyncAccountState>("login_sync", { serverBaseUrl, email, password }),
+    invoke<LoginSyncResult>("login_sync", { serverBaseUrl, email, password }),
+  anonymousNoteCount: () => invoke<number>("anonymous_note_count"),
+  importAnonymousNotes: () => invoke<NoteSummary[]>("import_anonymous_notes"),
   syncNow: () => invoke<string>("sync_now"),
   openExternalUrl: (url: string) => invoke<string>("open_external_url", { url }),
 };

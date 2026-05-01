@@ -30,6 +30,7 @@ pub struct Note {
     pub last_modified_by_device: Option<String>,
     pub is_conflict_copy: bool,
     pub source_note_id: Option<NoteId>,
+    pub owner_account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +43,7 @@ pub struct NoteSummary {
     pub updated_at: DateTime<Utc>,
     pub is_conflict_copy: bool,
     pub source_note_id: Option<NoteId>,
+    pub owner_account_id: Option<String>,
 }
 
 impl Note {
@@ -58,6 +60,7 @@ impl Note {
             last_modified_by_device: None,
             is_conflict_copy: false,
             source_note_id: None,
+            owner_account_id: None,
         }
     }
 }

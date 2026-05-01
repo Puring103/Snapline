@@ -19,7 +19,11 @@ pub async fn push_pending_changes<A: SyncApi + Sync>(
     token: &str,
     device_id: &str,
 ) -> Result<ProcessReport> {
-    let pending = repo.list_pending_changes(25)?;
+    let account_id = repo
+        .get_or_create_sync_state()?
+        .account_id
+        .ok_or_else(|| anyhow::anyhow!("not logged in"))?;
+    let pending = repo.list_pending_changes(Some(&account_id), 25)?;
     if pending.is_empty() {
         return Ok(ProcessReport {
             accepted: 0,
@@ -86,7 +90,11 @@ pub async fn upload_pending_assets<A: SyncApi + Sync>(
     token: &str,
     data_dir: &Path,
 ) -> Result<ProcessReport> {
-    let pending = repo.list_pending_changes(100)?;
+    let account_id = repo
+        .get_or_create_sync_state()?
+        .account_id
+        .ok_or_else(|| anyhow::anyhow!("not logged in"))?;
+    let pending = repo.list_pending_changes(Some(&account_id), 100)?;
     let mut report = ProcessReport {
         accepted: 0,
         conflicts: 0,
@@ -114,6 +122,9 @@ pub async fn pull_remote_changes<A: SyncApi + Sync>(
     device_id: &str,
 ) -> Result<ProcessReport> {
     let state = repo.get_or_create_sync_state()?;
+    let account_id = state
+        .account_id
+        .ok_or_else(|| anyhow::anyhow!("not logged in"))?;
     let response = api.pull(token, state.server_cursor).await?;
     let mut conflicts = 0;
     let mut accepted = 0;
@@ -121,10 +132,10 @@ pub async fn pull_remote_changes<A: SyncApi + Sync>(
         if change.device_id == device_id {
             continue;
         }
-        if repo.has_pending_note_change(&change.note.id)? {
-            let local_note = repo.get_note(&change.note.id)?;
+        if repo.has_pending_note_change(Some(&account_id), &change.note.id)? {
+            let local_note = repo.get_note_for_owner(&change.note.id, Some(&account_id))?;
             repo.create_conflict_copy(&local_note, Utc::now())?;
-            repo.delete_changes_for_note(&change.note.id)?;
+            repo.delete_changes_for_note(Some(&account_id), &change.note.id)?;
             conflicts += 1;
         }
         repo.apply_remote_note(&change.note)?;
@@ -160,6 +171,7 @@ fn local_note_from_pending(
         last_modified_by_device: None,
         is_conflict_copy: false,
         source_note_id: None,
+        owner_account_id: item.account_id.clone(),
     })
 }
 
@@ -173,19 +185,33 @@ mod tests {
     #[tokio::test]
     async fn processor_deletes_accepted_queue_items() {
         let repo = NoteRepository::open_in_memory().unwrap();
-        let note = Note::draft(Utc::now());
+        let mut note = Note::draft(Utc::now());
+        note.owner_account_id = Some("acct_a".to_string());
         let payload = SyncPayload::Note(NoteChangePayload::from_note(&note));
         repo.apply_remote_note(&note).unwrap();
-        repo.enqueue_change(&note.id, SyncOpType::UpsertNote, 0, &payload, Utc::now())
-            .unwrap();
+        let mut state = repo.get_or_create_sync_state().unwrap();
+        state.account_id = Some("acct_a".to_string());
+        repo.save_sync_state(&state).unwrap();
+        repo.enqueue_change(
+            Some("acct_a"),
+            &note.id,
+            SyncOpType::UpsertNote,
+            0,
+            &payload,
+            Utc::now(),
+        )
+        .unwrap();
 
         let api = MockSyncApi::default();
-        let report = push_pending_changes(&repo, &api, "token", "device-a")
+        let report = push_pending_changes(&repo, &api, "token:acct_a", "device-a")
             .await
             .unwrap();
 
         assert_eq!(report.accepted, 1);
-        assert!(repo.list_pending_changes(10).unwrap().is_empty());
+        assert!(repo
+            .list_pending_changes(Some("acct_a"), 10)
+            .unwrap()
+            .is_empty());
         assert_eq!(repo.get_note(&note.id).unwrap().server_version, 1);
         assert_eq!(repo.get_or_create_sync_state().unwrap().server_cursor, 1);
     }
@@ -194,7 +220,11 @@ mod tests {
     async fn processor_uploads_asset_queue_items_from_disk() {
         let dir = tempfile::tempdir().unwrap();
         let repo = NoteRepository::open_in_memory().unwrap();
-        let note = Note::draft(Utc::now());
+        let mut state = repo.get_or_create_sync_state().unwrap();
+        state.account_id = Some("acct_a".to_string());
+        repo.save_sync_state(&state).unwrap();
+        let mut note = Note::draft(Utc::now());
+        note.owner_account_id = Some("acct_a".to_string());
         let markdown_path = format!("assets/notes/{}/asset.png", note.id);
         let asset_path = dir.path().join(&markdown_path);
         std::fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
@@ -207,27 +237,40 @@ mod tests {
             sha256: "sha".to_string(),
             markdown_path,
         });
-        repo.enqueue_change(&note.id, SyncOpType::AssetUpload, 0, &payload, Utc::now())
-            .unwrap();
+        repo.enqueue_change(
+            Some("acct_a"),
+            &note.id,
+            SyncOpType::AssetUpload,
+            0,
+            &payload,
+            Utc::now(),
+        )
+        .unwrap();
 
         let api = MockSyncApi::default();
-        let report = upload_pending_assets(&repo, &api, "token", dir.path())
+        let report = upload_pending_assets(&repo, &api, "token:acct_a", dir.path())
             .await
             .unwrap();
 
         assert_eq!(report.accepted, 1);
-        assert!(repo.list_pending_changes(10).unwrap().is_empty());
+        assert!(repo
+            .list_pending_changes(Some("acct_a"), 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
     async fn processor_pulls_remote_notes_into_repository() {
         let repo = NoteRepository::open_in_memory().unwrap();
+        let mut state = repo.get_or_create_sync_state().unwrap();
+        state.account_id = Some("acct_a".to_string());
+        repo.save_sync_state(&state).unwrap();
         let api = MockSyncApi::default();
         let mut note = Note::draft(Utc::now());
         note.title = "Remote".to_string();
         let payload = SyncPayload::Note(NoteChangePayload::from_note(&note));
         api.push(
-            "token",
+            "token:acct_a",
             PushRequest {
                 device_id: "device-b".to_string(),
                 changes: vec![PushChange {
@@ -241,7 +284,7 @@ mod tests {
         .await
         .unwrap();
 
-        let report = pull_remote_changes(&repo, &api, "token", "device-a")
+        let report = pull_remote_changes(&repo, &api, "token:acct_a", "device-a")
             .await
             .unwrap();
 
@@ -254,10 +297,14 @@ mod tests {
     async fn processor_creates_conflict_copy_for_rejected_local_edit() {
         let repo = NoteRepository::open_in_memory().unwrap();
         let api = MockSyncApi::default();
+        let mut state = repo.get_or_create_sync_state().unwrap();
+        state.account_id = Some("acct_a".to_string());
+        repo.save_sync_state(&state).unwrap();
         let mut server_note = Note::draft(Utc::now());
+        server_note.owner_account_id = Some("acct_a".to_string());
         server_note.title = "Server".to_string();
         api.push(
-            "token",
+            "token:acct_a",
             PushRequest {
                 device_id: "device-a".to_string(),
                 changes: vec![PushChange {
@@ -275,6 +322,7 @@ mod tests {
         local_note.content_md = "# Local\n![img](assets/notes/local/image.png)".to_string();
         repo.apply_remote_note(&local_note).unwrap();
         repo.enqueue_change(
+            Some("acct_a"),
             &local_note.id,
             SyncOpType::UpsertNote,
             0,
@@ -283,28 +331,36 @@ mod tests {
         )
         .unwrap();
 
-        let report = push_pending_changes(&repo, &api, "token", "device-b")
+        let report = push_pending_changes(&repo, &api, "token:acct_a", "device-b")
             .await
             .unwrap();
 
         assert_eq!(report.conflicts, 1);
-        let summaries = repo.list_recent(10).unwrap();
+        let summaries = repo.list_recent_for_owner(10, Some("acct_a")).unwrap();
         let conflict_copy = summaries.iter().find(|note| note.is_conflict_copy).unwrap();
         assert_eq!(conflict_copy.source_note_id.as_ref(), Some(&local_note.id));
         let loaded_copy = repo.get_note(&conflict_copy.id).unwrap();
         assert_eq!(loaded_copy.content_md, local_note.content_md);
         assert_eq!(repo.get_note(&local_note.id).unwrap().title, "Server");
-        assert!(repo.list_pending_changes(10).unwrap().is_empty());
+        assert!(repo
+            .list_pending_changes(Some("acct_a"), 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
     async fn processor_preserves_unsynced_local_edit_when_pull_advances_same_note() {
         let repo = NoteRepository::open_in_memory().unwrap();
         let api = MockSyncApi::default();
+        let mut state = repo.get_or_create_sync_state().unwrap();
+        state.account_id = Some("acct_a".to_string());
+        repo.save_sync_state(&state).unwrap();
         let mut local_note = Note::draft(Utc::now());
+        local_note.owner_account_id = Some("acct_a".to_string());
         local_note.title = "Local draft".to_string();
         repo.apply_remote_note(&local_note).unwrap();
         repo.enqueue_change(
+            Some("acct_a"),
             &local_note.id,
             SyncOpType::UpsertNote,
             0,
@@ -315,7 +371,7 @@ mod tests {
         let mut remote_note = local_note.clone();
         remote_note.title = "Remote accepted".to_string();
         api.push(
-            "token",
+            "token:acct_a",
             PushRequest {
                 device_id: "device-b".to_string(),
                 changes: vec![PushChange {
@@ -329,7 +385,7 @@ mod tests {
         .await
         .unwrap();
 
-        let report = pull_remote_changes(&repo, &api, "token", "device-a")
+        let report = pull_remote_changes(&repo, &api, "token:acct_a", "device-a")
             .await
             .unwrap();
 
@@ -339,7 +395,7 @@ mod tests {
             "Remote accepted"
         );
         let conflict_copy = repo
-            .list_recent(10)
+            .list_recent_for_owner(10, Some("acct_a"))
             .unwrap()
             .into_iter()
             .find(|note| note.is_conflict_copy)
@@ -348,17 +404,25 @@ mod tests {
         let loaded_copy = repo.get_note(&conflict_copy.id).unwrap();
         assert!(loaded_copy.title.contains("Conflict copy"));
         assert_eq!(loaded_copy.content_md, local_note.content_md);
-        assert!(repo.list_pending_changes(10).unwrap().is_empty());
+        assert!(repo
+            .list_pending_changes(Some("acct_a"), 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
     async fn processor_ignores_pulled_changes_from_current_device() {
         let repo = NoteRepository::open_in_memory().unwrap();
         let api = MockSyncApi::default();
+        let mut state = repo.get_or_create_sync_state().unwrap();
+        state.account_id = Some("acct_a".to_string());
+        repo.save_sync_state(&state).unwrap();
         let mut note = Note::draft(Utc::now());
+        note.owner_account_id = Some("acct_a".to_string());
         note.title = "Local accepted".to_string();
         repo.apply_remote_note(&note).unwrap();
         repo.enqueue_change(
+            Some("acct_a"),
             &note.id,
             SyncOpType::UpsertNote,
             0,
@@ -366,7 +430,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        let push_report = push_pending_changes(&repo, &api, "token", "device-a")
+        let push_report = push_pending_changes(&repo, &api, "token:acct_a", "device-a")
             .await
             .unwrap();
         assert_eq!(push_report.accepted, 1);
@@ -374,7 +438,7 @@ mod tests {
         state.server_cursor = 0;
         repo.save_sync_state(&state).unwrap();
 
-        let pull_report = pull_remote_changes(&repo, &api, "token", "device-a")
+        let pull_report = pull_remote_changes(&repo, &api, "token:acct_a", "device-a")
             .await
             .unwrap();
 

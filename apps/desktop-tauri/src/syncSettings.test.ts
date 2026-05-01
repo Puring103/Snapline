@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateSyncConnection } from "./SyncSettings";
+import { importPromptText, validateSyncConnection } from "./SyncSettings";
 
 describe("sync connection validation", () => {
   it("requires all connection fields", () => {
@@ -23,5 +23,10 @@ describe("sync connection validation", () => {
       email: "me@example.com",
       password: "secret",
     })).toEqual({});
+  });
+
+  it("describes local draft import after login", () => {
+    expect(importPromptText(1)).toBe("Detected 1 local note. Import into this account?");
+    expect(importPromptText(3)).toBe("Detected 3 local notes. Import into this account?");
   });
 });

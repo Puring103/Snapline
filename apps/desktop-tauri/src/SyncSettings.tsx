@@ -1,10 +1,10 @@
 import { FormEvent, useState } from "react";
 import { api } from "./api";
-import type { SyncAccountState } from "./types";
+import type { LoginSyncResult, SyncAccountState } from "./types";
 
 interface SyncSettingsProps {
   initial: SyncAccountState | null;
-  onSaved: (state: SyncAccountState) => void;
+  onSaved: (result: LoginSyncResult) => void;
   onSyncNow: () => Promise<string>;
 }
 
@@ -45,6 +45,10 @@ export function validateSyncConnection(fields: SyncConnectionFields): SyncConnec
   }
 
   return errors;
+}
+
+export function importPromptText(count: number): string {
+  return `Detected ${count} local ${count === 1 ? "note" : "notes"}. Import into this account?`;
 }
 
 export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps) {

@@ -170,20 +170,13 @@ pub async fn upload_asset(
         "accounts/{}/notes/{}/{}.png",
         account_id, payload.note_id, payload.asset_id
     );
-    state
-        .asset_store
-        .put(&storage_key, file_bytes)
-        .await
-        .map_err(internal_error)?;
-    sqlx::query(
+    let row = sqlx::query_scalar::<_, String>(
         "INSERT INTO assets (id, account_id, note_id, content_type, byte_size, sha256, storage_key)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT(account_id, id) DO UPDATE SET
-           note_id = excluded.note_id,
-           content_type = excluded.content_type,
-           byte_size = excluded.byte_size,
-           sha256 = excluded.sha256,
-           storage_key = excluded.storage_key",
+           note_id = assets.note_id
+         WHERE assets.sha256 = excluded.sha256 AND assets.deleted_at IS NULL
+         RETURNING storage_key",
     )
     .bind(payload.asset_id.to_string())
     .bind(&account_id)
@@ -192,9 +185,20 @@ pub async fn upload_asset(
     .bind(payload.byte_size)
     .bind(payload.sha256)
     .bind(storage_key)
-    .execute(&state.pool)
+    .fetch_optional(&state.pool)
     .await
     .map_err(internal_error)?;
+    let Some(storage_key) = row else {
+        return Err((
+            StatusCode::CONFLICT,
+            "asset id already exists with different sha256".to_string(),
+        ));
+    };
+    state
+        .asset_store
+        .put(&storage_key, file_bytes)
+        .await
+        .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

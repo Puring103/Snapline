@@ -16,8 +16,8 @@ import {
   type ActiveSession,
 } from "./session";
 import { startupLog } from "./startupLog";
-import { SyncSettings } from "./SyncSettings";
-import type { Note, NoteSummary, SavedAsset, SyncAccountState, SyncStatusState } from "./types";
+import { importPromptText, SyncSettings } from "./SyncSettings";
+import type { LoginSyncResult, Note, NoteSummary, SavedAsset, SyncAccountState, SyncStatusState } from "./types";
 import { syncStatusLabel } from "./syncStatus";
 import { openListWindow, openNoteWindow, readAppRoute, shouldDeferInitialNoteLoad, shouldStartWindowDrag } from "./window";
 
@@ -75,6 +75,7 @@ function NotesListWindow() {
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [themeMode, setThemeMode] = useThemeMode();
+  const [pendingImportCount, setPendingImportCount] = useState(0);
   const refreshNotes = useCallback(async (quiet = false) => {
     try {
       const startedAt = performance.now();
@@ -253,6 +254,26 @@ function NotesListWindow() {
     }
   }
 
+  function handleSyncSaved(result: LoginSyncResult) {
+    setSyncAccount(result.account);
+    setSyncStatus({ label: result.account.is_logged_in ? "Synced" : "Sync", detail: null });
+    setPendingImportCount(result.anonymous_note_count);
+    void refreshNotes(true);
+  }
+
+  async function handleImportAnonymousNotes() {
+    try {
+      setError(null);
+      const imported = await api.importAnonymousNotes();
+      setNotes(imported);
+      setPendingImportCount(0);
+      void api.syncNow().catch(() => undefined);
+    } catch (err) {
+      setError(String(err));
+      setStatus("Error");
+    }
+  }
+
   function handleHeaderDrag(event: MouseEvent<HTMLElement>) {
     if (event.button !== 0 || !shouldStartWindowDrag(event.target)) return;
     void getCurrentWindow().startDragging();
@@ -346,8 +367,20 @@ function NotesListWindow() {
           themeMode={themeMode}
           onThemeModeChange={setThemeMode}
           syncAccount={syncAccount}
-          onSyncSaved={setSyncAccount}
+          onSyncSaved={handleSyncSaved}
         />
+      ) : null}
+
+      {pendingImportCount > 0 ? (
+        <div className="connectionDialogBackdrop">
+          <div className="connectionDialog" role="dialog" aria-modal="true">
+            <div className="connectionDialogTitle">{importPromptText(pendingImportCount)}</div>
+            <div className="connectionDialogActions">
+              <button type="button" onClick={() => setPendingImportCount(0)}>Do not import</button>
+              <button type="button" onClick={() => void handleImportAnonymousNotes()}>Import</button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </main>
   );
@@ -690,6 +723,10 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     setSettingsOpen(true);
   }
 
+  function handleSyncSaved(result: LoginSyncResult) {
+    setSyncAccount(result.account);
+  }
+
   function persistShortcut(nextShortcut: string) {
     void api
       .setOpenShortcut(nextShortcut)
@@ -808,7 +845,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
             themeMode={themeMode}
             onThemeModeChange={setThemeMode}
             syncAccount={syncAccount}
-            onSyncSaved={setSyncAccount}
+            onSyncSaved={handleSyncSaved}
           />
         ) : null}
       </section>
@@ -853,7 +890,7 @@ function SettingsPanel({
   themeMode: ThemeMode;
   onThemeModeChange: (value: ThemeMode) => void;
   syncAccount: SyncAccountState | null;
-  onSyncSaved: (state: SyncAccountState) => void;
+  onSyncSaved: (result: LoginSyncResult) => void;
 }) {
   return (
     <div className="settingsBackdrop" onClick={onClose}>
@@ -928,7 +965,6 @@ function SettingsPanel({
               onSaved={onSyncSaved}
               onSyncNow={async () => {
                 const report = await api.syncNow();
-                onSyncSaved(await api.getSyncAccountState());
                 return report;
               }}
             />

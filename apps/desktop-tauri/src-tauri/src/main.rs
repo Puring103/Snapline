@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use serde::Serialize;
 use snapline_app_core::{AppCore, BootstrapState, SyncAccountState};
 use snapline_domain::{AssetRef, Note, NoteId, NoteSummary, SyncPayload};
 use snapline_platform::AppPaths;
@@ -22,6 +23,12 @@ struct AppState {
     core: Mutex<AppCore>,
     launched_in_background: bool,
     startup_logging_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LoginSyncResult {
+    account: SyncAccountState,
+    anonymous_note_count: usize,
 }
 
 #[tauri::command]
@@ -260,7 +267,7 @@ async fn login_sync(
     server_base_url: String,
     email: String,
     password: String,
-) -> Result<SyncAccountState, String> {
+) -> Result<LoginSyncResult, String> {
     let device_id = state
         .core
         .lock()
@@ -278,18 +285,46 @@ async fn login_sync(
         })
         .await
         .map_err(|err| err.to_string())?;
-    let account_state = state
+    let (account_state, anonymous_note_count) = {
+        let core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        let account_state = core
+            .save_sync_login(
+                &server_base_url,
+                &response.account_id,
+                &response.access_token,
+            )
+            .map_err(|err| err.to_string())?;
+        let anonymous_note_count = core.anonymous_note_count().map_err(|err| err.to_string())?;
+        (account_state, anonymous_note_count)
+    };
+    import_snapshot_and_assets(&state, &api, &response.access_token).await?;
+    Ok(LoginSyncResult {
+        account: account_state,
+        anonymous_note_count,
+    })
+}
+
+#[tauri::command]
+fn anonymous_note_count(state: State<'_, AppState>) -> Result<usize, String> {
+    state
         .core
         .lock()
         .map_err(|_| "app state lock poisoned".to_string())?
-        .save_sync_login(
-            &server_base_url,
-            &response.account_id,
-            &response.access_token,
-        )
-        .map_err(|err| err.to_string())?;
-    import_snapshot_and_assets(&state, &api, &response.access_token).await?;
-    Ok(account_state)
+        .anonymous_note_count()
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn import_anonymous_notes(state: State<'_, AppState>) -> Result<Vec<NoteSummary>, String> {
+    state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .import_anonymous_notes_to_current_account()
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -488,6 +523,7 @@ fn rejected_note_from_pending(
         last_modified_by_device: None,
         is_conflict_copy: false,
         source_note_id: None,
+        owner_account_id: item.account_id.clone(),
     })
 }
 
@@ -735,6 +771,8 @@ fn main() {
             set_open_shortcut,
             get_sync_account_state,
             login_sync,
+            anonymous_note_count,
+            import_anonymous_notes,
             sync_now
         ])
         .build(tauri::generate_context!())

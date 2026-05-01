@@ -18,19 +18,25 @@ pub struct MockSyncApi {
 #[async_trait]
 impl SyncApi for MockSyncApi {
     async fn login(&self, request: LoginRequest) -> Result<LoginResponse> {
+        let account_id = format!("acct_{}", request.email);
         Ok(LoginResponse {
-            account_id: format!("acct_{}", request.email),
-            access_token: "mock-token".to_string(),
+            access_token: format!("token:{account_id}"),
+            account_id,
         })
     }
 
     async fn push(&self, _token: &str, request: PushRequest) -> Result<PushResponse> {
+        let account_id =
+            account_id_from_token(_token).unwrap_or_else(|| "mock-account".to_string());
         let mut notes = self.notes.lock().unwrap();
         let mut cursor = self.cursor.lock().unwrap();
         let mut results = Vec::new();
         for change in request.changes {
             if let SyncPayload::Note(payload) = change.payload {
-                if let Some(existing) = notes.iter_mut().find(|note| note.id == change.note_id) {
+                if let Some(existing) = notes.iter_mut().find(|note| {
+                    note.id == change.note_id
+                        && note.owner_account_id.as_deref() == Some(&account_id)
+                }) {
                     if existing.server_version != change.base_version {
                         results.push(PushChangeResult::Conflict {
                             queue_id: change.queue_id,
@@ -62,6 +68,7 @@ impl SyncApi for MockSyncApi {
                     note.content_md = payload.content_md;
                     note.pinned = payload.pinned;
                     note.deleted_at = payload.deleted_at;
+                    note.owner_account_id = Some(account_id.clone());
                     note.server_version = 1;
                     notes.push(note);
                     *cursor += 1;
@@ -82,6 +89,8 @@ impl SyncApi for MockSyncApi {
     }
 
     async fn pull(&self, _token: &str, _cursor: i64) -> Result<PullResponse> {
+        let account_id =
+            account_id_from_token(_token).unwrap_or_else(|| "mock-account".to_string());
         let notes = self.notes.lock().unwrap();
         let cursor = *self.cursor.lock().unwrap();
         let change_devices = self.change_devices.lock().unwrap();
@@ -89,6 +98,7 @@ impl SyncApi for MockSyncApi {
             cursor,
             changes: notes
                 .iter()
+                .filter(|note| note.owner_account_id.as_deref() == Some(&account_id))
                 .cloned()
                 .map(|note| RemoteChange {
                     cursor,
@@ -106,9 +116,18 @@ impl SyncApi for MockSyncApi {
     }
 
     async fn snapshot(&self, _token: &str) -> Result<SnapshotResponse> {
+        let account_id =
+            account_id_from_token(_token).unwrap_or_else(|| "mock-account".to_string());
         Ok(SnapshotResponse {
             cursor: *self.cursor.lock().unwrap(),
-            notes: self.notes.lock().unwrap().clone(),
+            notes: self
+                .notes
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|note| note.owner_account_id.as_deref() == Some(&account_id))
+                .cloned()
+                .collect(),
             assets: Vec::new(),
         })
     }
@@ -136,6 +155,10 @@ impl SyncApi for MockSyncApi {
             bytes,
         })
     }
+}
+
+fn account_id_from_token(token: &str) -> Option<String> {
+    token.strip_prefix("token:").map(str::to_string)
 }
 
 #[cfg(test)]

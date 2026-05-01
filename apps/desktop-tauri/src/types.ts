@@ -12,6 +12,7 @@ export interface Note {
   last_modified_by_device?: string | null;
   is_conflict_copy?: boolean;
   source_note_id?: string | null;
+  owner_account_id?: string | null;
 }
 
 export interface NoteSummary {
@@ -23,6 +24,7 @@ export interface NoteSummary {
   updated_at: string;
   is_conflict_copy?: boolean;
   source_note_id?: string | null;
+  owner_account_id?: string | null;
 }
 
 export interface BootstrapState {
@@ -57,6 +59,11 @@ export interface SyncAccountState {
   device_id: string;
   server_base_url: string | null;
   is_logged_in: boolean;
+}
+
+export interface LoginSyncResult {
+  account: SyncAccountState;
+  anonymous_note_count: number;
 }
 
 export interface SyncStatusState {
