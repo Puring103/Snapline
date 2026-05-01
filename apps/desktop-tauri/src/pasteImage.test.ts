@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   bytesFromPastedImageFile,
   bytesFromTransientImageSource,
+  pastedImageSourceFromClipboard,
   pastedImageFileFromClipboard,
 } from "./pasteImage";
 
@@ -116,5 +117,52 @@ describe("paste image helpers", () => {
 
     expect(file).toBeInstanceOf(File);
     expect(file?.type).toBe("image/png");
+  });
+
+  it("extracts Linux file URI images from uri-list clipboard data", () => {
+    expect(
+      pastedImageSourceFromClipboard({
+        getData: (type: string) => {
+          if (type === "text/uri-list") {
+            return "# copied from file manager\nfile:///home/wtl/Pictures/Screenshot%202026-05-01.png\n";
+          }
+          return "";
+        },
+      }),
+    ).toEqual({
+      kind: "local-file",
+      path: "/home/wtl/Pictures/Screenshot 2026-05-01.png",
+      mimeType: "image/png",
+    });
+  });
+
+  it("extracts Linux file URI images from pasted html", () => {
+    expect(
+      pastedImageSourceFromClipboard({
+        getData: (type: string) => {
+          if (type === "text/html") {
+            return '<img src="file:///home/wtl/Pictures/photo.jpg">';
+          }
+          return "";
+        },
+      }),
+    ).toEqual({
+      kind: "local-file",
+      path: "/home/wtl/Pictures/photo.jpg",
+      mimeType: "image/jpeg",
+    });
+  });
+
+  it("ignores non-image local file URI clipboard data", () => {
+    expect(
+      pastedImageSourceFromClipboard({
+        getData: (type: string) => {
+          if (type === "text/uri-list") {
+            return "file:///home/wtl/Documents/report.pdf";
+          }
+          return "";
+        },
+      }),
+    ).toBeNull();
   });
 });

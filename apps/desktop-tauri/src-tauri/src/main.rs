@@ -171,12 +171,37 @@ fn read_asset_bytes(state: State<'_, AppState>, markdown_path: String) -> Result
     std::fs::read(path).map_err(|err| err.to_string())
 }
 
+#[tauri::command]
+fn read_local_image_file(path: String) -> Result<Vec<u8>, String> {
+    if !is_allowed_local_image_path(&path) {
+        return Err("unsupported image path".to_string());
+    }
+
+    std::fs::read(path).map_err(|err| err.to_string())
+}
+
 fn is_allowed_markdown_asset_path(markdown_path: &str) -> bool {
     markdown_path.starts_with("assets/")
         && !markdown_path.contains('\\')
         && !markdown_path
             .split('/')
             .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+}
+
+fn is_allowed_local_image_path(path: &str) -> bool {
+    let path = std::path::Path::new(path);
+    path.is_absolute()
+        && path.is_file()
+        && path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp"
+                )
+            })
+            .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -765,6 +790,7 @@ fn main() {
             delete_note,
             save_png_asset,
             read_asset_bytes,
+            read_local_image_file,
             resolve_asset_url,
             open_external_url,
             get_open_shortcut,
@@ -840,6 +866,24 @@ mod tests {
         assert!(!is_allowed_markdown_asset_path(
             "assets\\notes\\note-id\\image-id.png"
         ));
+    }
+
+    #[test]
+    fn local_image_reader_only_accepts_image_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let image_path = dir.path().join("Screenshot.png");
+        let nested_image_path = dir.path().join("nested").join("photo.jpeg");
+        let text_path = dir.path().join("notes.txt");
+        fs::create_dir_all(nested_image_path.parent().unwrap()).unwrap();
+        fs::write(&image_path, [137, 80, 78, 71]).unwrap();
+        fs::write(&nested_image_path, [255, 216, 255, 224]).unwrap();
+        fs::write(&text_path, b"not an image").unwrap();
+
+        assert!(is_allowed_local_image_path(image_path.to_str().unwrap()));
+        assert!(is_allowed_local_image_path(nested_image_path.to_str().unwrap()));
+        assert!(!is_allowed_local_image_path(text_path.to_str().unwrap()));
+        assert!(!is_allowed_local_image_path("../relative.png"));
+        assert!(!is_allowed_local_image_path(""));
     }
 
     #[test]

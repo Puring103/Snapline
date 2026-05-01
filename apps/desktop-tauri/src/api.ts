@@ -14,6 +14,8 @@ export const api = {
     invoke<AssetRef>("save_png_asset", { noteId, bytes }),
   readAssetBytes: (markdownPath: string) =>
     invoke<number[]>("read_asset_bytes", { markdownPath }),
+  readLocalImageFile: (path: string) =>
+    invoke<number[]>("read_local_image_file", { path }),
   getOpenShortcut: () => invoke<string>("get_open_shortcut"),
   setOpenShortcut: (shortcut: string) => invoke<string>("set_open_shortcut", { shortcut }),
   getSyncAccountState: () => invoke<SyncAccountState>("get_sync_account_state"),

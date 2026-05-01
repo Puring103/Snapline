@@ -10,22 +10,37 @@ interface ClipboardImageData {
 
 type PngEncoder = (file: Blob) => Promise<number[]>;
 
+export type PastedImageSource =
+  | { kind: "file"; file: File }
+  | { kind: "local-file"; path: string; mimeType: string };
+
 export function pastedImageFileFromClipboard(clipboardData: ClipboardImageData): File | null {
+  const source = pastedImageSourceFromClipboard(clipboardData);
+  return source?.kind === "file" ? source.file : null;
+}
+
+export function pastedImageSourceFromClipboard(clipboardData: ClipboardImageData): PastedImageSource | null {
   const imageItem = Array.from(clipboardData.items ?? []).find(
     (item) => item.type.startsWith("image/") && typeof item.getAsFile === "function",
   );
   const itemFile = imageItem?.getAsFile();
   if (itemFile) {
-    return itemFile;
+    return { kind: "file", file: itemFile };
   }
 
   const file = Array.from(clipboardData.files ?? []).find((candidate) => candidate.type.startsWith("image/"));
   if (file) {
-    return file;
+    return { kind: "file", file };
   }
 
   const htmlImage = dataUrlFromHtml(clipboardData.getData?.("text/html") ?? "");
-  return htmlImage ? fileFromDataUrl(htmlImage, "clipboard-image.png") : null;
+  if (htmlImage) {
+    const dataUrlFile = fileFromDataUrl(htmlImage, "clipboard-image.png");
+    return dataUrlFile ? { kind: "file", file: dataUrlFile } : null;
+  }
+
+  const localFile = localImageFileFromClipboard(clipboardData);
+  return localFile ? { kind: "local-file", ...localFile } : null;
 }
 
 export async function bytesFromPastedImageFile(
@@ -78,6 +93,66 @@ function dataUrlFromHtml(html: string): string | null {
   }
 
   return match[1].startsWith("data:image/") ? match[1] : null;
+}
+
+function localImageFileFromClipboard(
+  clipboardData: ClipboardImageData,
+): { path: string; mimeType: string } | null {
+  const uriList = clipboardData.getData?.("text/uri-list") ?? "";
+  const uriFromList = uriList
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line !== "" && !line.startsWith("#"));
+  const htmlUri = fileUrlFromHtml(clipboardData.getData?.("text/html") ?? "");
+  const uri = uriFromList ?? htmlUri;
+  if (!uri?.startsWith("file://")) {
+    return null;
+  }
+
+  const path = pathFromFileUri(uri);
+  if (!path) {
+    return null;
+  }
+
+  const mimeType = imageMimeTypeFromPath(path);
+  return mimeType ? { path, mimeType } : null;
+}
+
+function fileUrlFromHtml(html: string): string | null {
+  const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+  return match?.[1].startsWith("file://") ? match[1] : null;
+}
+
+function pathFromFileUri(uri: string): string | null {
+  try {
+    const url = new URL(uri);
+    if (url.protocol !== "file:") {
+      return null;
+    }
+
+    return decodeURIComponent(url.pathname);
+  } catch {
+    return null;
+  }
+}
+
+function imageMimeTypeFromPath(path: string): string | null {
+  const extension = path.split(".").pop()?.toLowerCase();
+  switch (extension) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    case "bmp":
+      return "image/bmp";
+    default:
+      return null;
+  }
 }
 
 function fileFromDataUrl(source: string, name: string): File | null {
