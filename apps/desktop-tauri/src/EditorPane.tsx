@@ -105,6 +105,7 @@ export function EditorPane({
           const imageSource = pastedImageSourceFromClipboard(clipboardData);
           if (imageSource) {
             event.preventDefault();
+            logImagePaste("dom_image_source", imageSource.kind);
             pasteImageSource(view, imageSource);
             return true;
           }
@@ -113,6 +114,7 @@ export function EditorPane({
             event.preventDefault();
             void pastedImageSourceFromClipboardAsync(clipboardData).then((asyncImageSource) => {
               if (asyncImageSource) {
+                logImagePaste("async_image_source", asyncImageSource.kind);
                 pasteImageSource(view, asyncImageSource);
                 return;
               }
@@ -137,7 +139,9 @@ export function EditorPane({
             return insertClipboardMarkdown(activeEditor, markdownText);
           }
 
-          return false;
+          event.preventDefault();
+          void pasteNativeClipboardImage(view);
+          return true;
         },
         click: (_view, event) => {
           const link = linkElementFromEvent(event);
@@ -266,10 +270,12 @@ export function EditorPane({
       }
 
       if (!asset) {
+        logImagePaste("asset_save_empty");
         removeImageSource(activeEditor, source);
         return;
       }
 
+      logImagePaste("asset_saved", asset.markdown_path);
       const displaySource = uploadedImageDisplaySource(source, asset.asset_url);
       uploadedImageSources.current.set(displaySource, asset.markdown_path);
       hydratedImageSources.current.set(displaySource, asset.markdown_path);
@@ -281,7 +287,8 @@ export function EditorPane({
           restoreImageSourceForMarkdown,
         ),
       );
-    } catch {
+    } catch (err) {
+      logImagePaste("upload_failed", String(err));
       const activeEditor = editorRef.current;
       if (activeEditor) {
         removeImageSource(activeEditor, source);
@@ -315,6 +322,7 @@ export function EditorPane({
   async function pasteLocalImageFile(view: EditorView, path: string, mimeType: string) {
     try {
       const originalBytes = await api.readLocalImageFile(path);
+      logImagePaste("local_file_read", `${path} bytes=${originalBytes.length}`);
       const placeholderSrc = objectUrlFromImageBytes(originalBytes, mimeType);
       const bytesPromise = bytesFromPastedImageFile(
         new Blob([new Uint8Array(originalBytes)], { type: mimeType }),
@@ -328,9 +336,39 @@ export function EditorPane({
       );
 
       void uploadTransientImageSource(placeholderSrc, bytesPromise);
-    } catch {
+    } catch (err) {
+      logImagePaste("local_file_read_failed", `${path} ${String(err)}`);
       // Unsupported or unreadable local file paste; keep the editor unchanged.
     }
+  }
+
+  async function pasteNativeClipboardImage(view: EditorView) {
+    try {
+      const bytes = await api.readClipboardImagePng();
+      if (!bytes) {
+        logImagePaste("native_clipboard_empty");
+        return;
+      }
+
+      logImagePaste("native_clipboard_image", `bytes=${bytes.length}`);
+      pasteImageBytes(view, bytes, "image/png");
+    } catch (err) {
+      logImagePaste("native_clipboard_failed", String(err));
+      // The native clipboard fallback is best-effort; normal paste already had no image data.
+    }
+  }
+
+  function pasteImageBytes(view: EditorView, bytes: number[], mimeType: string) {
+    const placeholderSrc = objectUrlFromImageBytes(bytes, mimeType);
+    uploadingImageSources.current.add(placeholderSrc);
+
+    view.dispatch(
+      view.state.tr.replaceSelectionWith(
+        view.state.schema.nodes.image.create({ src: placeholderSrc }),
+      ),
+    );
+
+    void uploadTransientImageSource(placeholderSrc, Promise.resolve(bytes));
   }
 
   function renderSourceEditor() {
@@ -455,4 +493,8 @@ function openLink(link: HTMLAnchorElement) {
   void api.openExternalUrl(link.href).catch(() => {
     window.open(link.href, "_blank", "noopener,noreferrer");
   });
+}
+
+function logImagePaste(event: string, detail = "") {
+  console.info(`[snapline:image-paste] ${event}${detail ? ` ${detail}` : ""}`);
 }

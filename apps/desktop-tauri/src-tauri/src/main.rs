@@ -8,6 +8,7 @@ use snapline_sync_client::{
     protocol::{AssetUploadRequest, LoginRequest, PushChange, PushChangeResult, PushRequest},
     HttpSyncApi, SyncApi,
 };
+use std::borrow::Cow;
 use std::sync::Mutex;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, Position, RunEvent, State, WindowEvent,
@@ -180,6 +181,16 @@ fn read_local_image_file(path: String) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|err| err.to_string())
 }
 
+#[tauri::command]
+fn read_clipboard_image_png() -> Result<Option<Vec<u8>>, String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|err| err.to_string())?;
+    match clipboard.get_image() {
+        Ok(image) => encode_clipboard_image_as_png(image).map(Some),
+        Err(arboard::Error::ContentNotAvailable) => Ok(None),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
 fn is_allowed_markdown_asset_path(markdown_path: &str) -> bool {
     markdown_path.starts_with("assets/")
         && !markdown_path.contains('\\')
@@ -202,6 +213,32 @@ fn is_allowed_local_image_path(path: &str) -> bool {
                 )
             })
             .unwrap_or(false)
+}
+
+fn encode_clipboard_image_as_png(image: arboard::ImageData<'_>) -> Result<Vec<u8>, String> {
+    let rgba = clipboard_image_rgba_bytes(image.bytes);
+    let mut output = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut output, image.width as u32, image.height as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|err| err.to_string())?;
+        writer.write_image_data(&rgba).map_err(|err| err.to_string())?;
+    }
+    Ok(output)
+}
+
+fn clipboard_image_rgba_bytes(bytes: Cow<'_, [u8]>) -> Vec<u8> {
+    bytes.into_owned()
+}
+
+#[cfg(test)]
+fn test_image_data(width: usize, height: usize, bytes: Vec<u8>) -> arboard::ImageData<'static> {
+    arboard::ImageData {
+        width,
+        height,
+        bytes: Cow::Owned(bytes),
+    }
 }
 
 #[tauri::command]
@@ -791,6 +828,7 @@ fn main() {
             save_png_asset,
             read_asset_bytes,
             read_local_image_file,
+            read_clipboard_image_png,
             resolve_asset_url,
             open_external_url,
             get_open_shortcut,
@@ -884,6 +922,18 @@ mod tests {
         assert!(!is_allowed_local_image_path(text_path.to_str().unwrap()));
         assert!(!is_allowed_local_image_path("../relative.png"));
         assert!(!is_allowed_local_image_path(""));
+    }
+
+    #[test]
+    fn encodes_clipboard_image_as_png() {
+        let png = encode_clipboard_image_as_png(test_image_data(
+            1,
+            1,
+            vec![255, 0, 0, 255],
+        ))
+        .unwrap();
+
+        assert_eq!(&png[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
     }
 
     #[test]

@@ -16,6 +16,8 @@ export const api = {
     invoke<number[]>("read_asset_bytes", { markdownPath }),
   readLocalImageFile: (path: string) =>
     invoke<number[]>("read_local_image_file", { path }),
+  readClipboardImagePng: () =>
+    invoke<number[] | null>("read_clipboard_image_png"),
   getOpenShortcut: () => invoke<string>("get_open_shortcut"),
   setOpenShortcut: (shortcut: string) => invoke<string>("set_open_shortcut", { shortcut }),
   getSyncAccountState: () => invoke<SyncAccountState>("get_sync_account_state"),

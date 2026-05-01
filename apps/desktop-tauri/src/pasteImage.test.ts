@@ -195,6 +195,23 @@ describe("paste image helpers", () => {
     ).toBe(true);
   });
 
+  it("does not flag non-image text clipboard items as async image sources", () => {
+    expect(
+      hasPotentialAsyncImageClipboardSource({
+        items: [
+          {
+            kind: "string",
+            type: "application/x-custom",
+            getAsFile: () => null,
+            getAsString: (callback: (value: string) => void) => {
+              callback("plain text");
+            },
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
   it("extracts GNOME copied file image URI clipboard items", async () => {
     await expect(
       pastedImageSourceFromClipboardAsync({
