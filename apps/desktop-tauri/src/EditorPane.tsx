@@ -8,6 +8,7 @@ import { fileUrlFromMarkdownPath } from "./assetUrl";
 import { copySelectedMarkdown, cutSelectedMarkdown } from "./copyMarkdown";
 import { shouldApplyEditorMarkdownUpdate } from "./editorSync";
 import { createMarkdownExtensions, setMarkdownContent } from "./editorExtensions";
+import { isTransientImageSource, uploadedImageDisplaySource } from "./imageUploadDisplay";
 import {
   hasTransientImageSource,
   markdownPathFromAssetUrl,
@@ -18,7 +19,9 @@ import {
 import {
   bytesFromPastedImageFile,
   bytesFromTransientImageSource,
+  hasPotentialAsyncImageClipboardSource,
   objectUrlFromImageBytes,
+  pastedImageSourceFromClipboardAsync,
   pastedImageSourceFromClipboard,
 } from "./pasteImage";
 import { insertClipboardMarkdown } from "./pasteMarkdown";
@@ -102,37 +105,39 @@ export function EditorPane({
           const imageSource = pastedImageSourceFromClipboard(clipboardData);
           if (imageSource) {
             event.preventDefault();
-            if (imageSource.kind === "file") {
-              const placeholderSrc = URL.createObjectURL(imageSource.file);
-              const bytesPromise = bytesFromPastedImageFile(imageSource.file);
-              uploadingImageSources.current.add(placeholderSrc);
+            pasteImageSource(view, imageSource);
+            return true;
+          }
 
-              view.dispatch(
-                view.state.tr.replaceSelectionWith(
-                  view.state.schema.nodes.image.create({ src: placeholderSrc }),
-                ),
-              );
+          if (hasPotentialAsyncImageClipboardSource(clipboardData)) {
+            event.preventDefault();
+            void pastedImageSourceFromClipboardAsync(clipboardData).then((asyncImageSource) => {
+              if (asyncImageSource) {
+                pasteImageSource(view, asyncImageSource);
+                return;
+              }
 
-              void uploadTransientImageSource(placeholderSrc, bytesPromise);
-            } else {
-              void pasteLocalImageFile(view, imageSource.path, imageSource.mimeType);
-            }
-
+              const fallbackMarkdownText = markdownTextFromClipboard(clipboardData);
+              const activeEditor = editorRef.current;
+              if (fallbackMarkdownText && activeEditor) {
+                insertClipboardMarkdown(activeEditor, fallbackMarkdownText);
+              }
+            });
             return true;
           }
 
           const markdownText = markdownTextFromClipboard(clipboardData);
-          if (!markdownText) {
-            return false;
+          if (markdownText) {
+            const activeEditor = editorRef.current;
+            if (!activeEditor) {
+              return false;
+            }
+
+            event.preventDefault();
+            return insertClipboardMarkdown(activeEditor, markdownText);
           }
 
-          const activeEditor = editorRef.current;
-          if (!activeEditor) {
-            return false;
-          }
-
-          event.preventDefault();
-          return insertClipboardMarkdown(activeEditor, markdownText);
+          return false;
         },
         click: (_view, event) => {
           const link = linkElementFromEvent(event);
@@ -265,7 +270,7 @@ export function EditorPane({
         return;
       }
 
-      const displaySource = asset.asset_url;
+      const displaySource = uploadedImageDisplaySource(source, asset.asset_url);
       uploadedImageSources.current.set(displaySource, asset.markdown_path);
       hydratedImageSources.current.set(displaySource, asset.markdown_path);
       assetBlobUrls.current.set(asset.markdown_path, displaySource);
@@ -283,6 +288,27 @@ export function EditorPane({
       }
     } finally {
       uploadingImageSources.current.delete(source);
+    }
+  }
+
+  function pasteImageSource(
+    view: EditorView,
+    imageSource: NonNullable<Awaited<ReturnType<typeof pastedImageSourceFromClipboardAsync>>>,
+  ) {
+    if (imageSource.kind === "file") {
+      const placeholderSrc = URL.createObjectURL(imageSource.file);
+      const bytesPromise = bytesFromPastedImageFile(imageSource.file);
+      uploadingImageSources.current.add(placeholderSrc);
+
+      view.dispatch(
+        view.state.tr.replaceSelectionWith(
+          view.state.schema.nodes.image.create({ src: placeholderSrc }),
+        ),
+      );
+
+      void uploadTransientImageSource(placeholderSrc, bytesPromise);
+    } else {
+      void pasteLocalImageFile(view, imageSource.path, imageSource.mimeType);
     }
   }
 
@@ -375,10 +401,6 @@ export function EditorPane({
     assetBlobUrls.current.set(markdownPath, source);
     return source;
   }
-}
-
-function isTransientImageSource(source: unknown): source is string {
-  return typeof source === "string" && (source.startsWith("blob:") || source.startsWith("data:"));
 }
 
 function removeImageSource(editor: Editor, source: string) {

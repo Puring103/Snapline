@@ -4,6 +4,7 @@ interface ClipboardImageData {
     kind: string;
     type: string;
     getAsFile: () => File | null;
+    getAsString?: (callback: (value: string) => void) => void;
   }>;
   getData?: (type: string) => string;
 }
@@ -13,6 +14,16 @@ type PngEncoder = (file: Blob) => Promise<number[]>;
 export type PastedImageSource =
   | { kind: "file"; file: File }
   | { kind: "local-file"; path: string; mimeType: string };
+
+export function hasPotentialAsyncImageClipboardSource(clipboardData: ClipboardImageData): boolean {
+  return Array.from(clipboardData.items ?? []).some((item) => {
+    if (item.kind !== "string" || typeof item.getAsString !== "function") {
+      return false;
+    }
+
+    return isClipboardTextTypeThatMayContainImage(item.type);
+  });
+}
 
 export function pastedImageFileFromClipboard(clipboardData: ClipboardImageData): File | null {
   const source = pastedImageSourceFromClipboard(clipboardData);
@@ -41,6 +52,31 @@ export function pastedImageSourceFromClipboard(clipboardData: ClipboardImageData
 
   const localFile = localImageFileFromClipboard(clipboardData);
   return localFile ? { kind: "local-file", ...localFile } : null;
+}
+
+export async function pastedImageSourceFromClipboardAsync(
+  clipboardData: ClipboardImageData,
+): Promise<PastedImageSource | null> {
+  const immediate = pastedImageSourceFromClipboard(clipboardData);
+  if (immediate) {
+    return immediate;
+  }
+
+  const stringItems = Array.from(clipboardData.items ?? []).filter(
+    (item) =>
+      item.kind === "string"
+      && typeof item.getAsString === "function"
+      && isClipboardTextTypeThatMayContainImage(item.type),
+  );
+  for (const item of stringItems) {
+    const value = await stringFromClipboardItem(item);
+    const localFile = localImageFileFromClipboardText(item.type, value);
+    if (localFile) {
+      return { kind: "local-file", ...localFile };
+    }
+  }
+
+  return null;
 }
 
 export async function bytesFromPastedImageFile(
@@ -107,12 +143,51 @@ function localImageFileFromClipboard(
   clipboardData: ClipboardImageData,
 ): { path: string; mimeType: string } | null {
   const uriList = clipboardData.getData?.("text/uri-list") ?? "";
-  const uriFromList = uriList
+  const uriFromList = firstFileUriFromText(uriList);
+  const htmlUri = fileUrlFromHtml(clipboardData.getData?.("text/html") ?? "");
+  const plainTextUri = firstFileUriFromText(clipboardData.getData?.("text/plain") ?? "");
+  const uri = uriFromList ?? htmlUri ?? plainTextUri;
+  return localImageFileFromUri(uri);
+}
+
+function localImageFileFromClipboardText(
+  type: string,
+  value: string,
+): { path: string; mimeType: string } | null {
+  const normalizedType = type.toLowerCase();
+  if (normalizedType === "text/html") {
+    return localImageFileFromUri(fileUrlFromHtml(value));
+  }
+
+  if (
+    normalizedType === "text/uri-list"
+    || normalizedType === "x-special/gnome-copied-files"
+    || normalizedType === "text/plain"
+  ) {
+    return localImageFileFromUri(firstFileUriFromText(value));
+  }
+
+  return null;
+}
+
+function isClipboardTextTypeThatMayContainImage(type: string): boolean {
+  const normalizedType = type.toLowerCase();
+  return (
+    normalizedType === "text/html"
+    || normalizedType === "text/uri-list"
+    || normalizedType === "x-special/gnome-copied-files"
+    || normalizedType === "text/plain"
+  );
+}
+
+function firstFileUriFromText(value: string): string | null {
+  return value
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .find((line) => line !== "" && !line.startsWith("#"));
-  const htmlUri = fileUrlFromHtml(clipboardData.getData?.("text/html") ?? "");
-  const uri = uriFromList ?? htmlUri;
+    .find((line) => line.startsWith("file://")) ?? null;
+}
+
+function localImageFileFromUri(uri: string | null | undefined): { path: string; mimeType: string } | null {
   if (!uri?.startsWith("file://")) {
     return null;
   }
@@ -124,6 +199,14 @@ function localImageFileFromClipboard(
 
   const mimeType = imageMimeTypeFromPath(path);
   return mimeType ? { path, mimeType } : null;
+}
+
+function stringFromClipboardItem(item: {
+  getAsString?: (callback: (value: string) => void) => void;
+}): Promise<string> {
+  return new Promise((resolve) => {
+    item.getAsString?.((value) => resolve(value));
+  });
 }
 
 function fileUrlFromHtml(html: string): string | null {
