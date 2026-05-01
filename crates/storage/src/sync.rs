@@ -7,6 +7,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeQueueItem {
     pub id: String,
+    pub account_id: Option<String>,
     pub note_id: NoteId,
     pub op_type: SyncOpType,
     pub base_version: i64,
@@ -32,6 +33,7 @@ pub fn migrate_sync_tables(conn: &Connection) -> Result<()> {
         "
         CREATE TABLE IF NOT EXISTS change_queue (
           id TEXT PRIMARY KEY,
+          account_id TEXT,
           note_id TEXT NOT NULL,
           op_type TEXT NOT NULL,
           base_version INTEGER NOT NULL,
@@ -55,23 +57,48 @@ pub fn migrate_sync_tables(conn: &Connection) -> Result<()> {
         );
         ",
     )?;
+    ensure_column(conn, "change_queue", "account_id", "TEXT")?;
+    conn.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS idx_change_queue_account_queued_at
+        ON change_queue (account_id, queued_at ASC);
+        ",
+    )?;
     Ok(())
 }
 
 pub fn enqueue_change(
     conn: &Connection,
+    account_id: Option<&str>,
     note_id: &NoteId,
     op_type: SyncOpType,
     base_version: i64,
     payload: &SyncPayload,
     queued_at: DateTime<Utc>,
 ) -> Result<String> {
+    if matches!(op_type, SyncOpType::UpsertNote | SyncOpType::DeleteNote) {
+        if let Some(existing_id) = find_existing_note_change(conn, account_id, note_id)? {
+            conn.execute(
+                "UPDATE change_queue
+                 SET op_type = ?1, payload_json = ?2, queued_at = ?3, retry_count = 0, last_error = NULL
+                 WHERE id = ?4",
+                params![
+                    op_type_to_str(&op_type),
+                    serde_json::to_string(payload)?,
+                    queued_at.to_rfc3339(),
+                    existing_id,
+                ],
+            )?;
+            return Ok(existing_id);
+        }
+    }
     let id = Uuid::new_v4().to_string();
     conn.execute(
-        "INSERT INTO change_queue (id, note_id, op_type, base_version, payload_json, queued_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO change_queue (id, account_id, note_id, op_type, base_version, payload_json, queued_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             id,
+            account_id,
             note_id.to_string(),
             op_type_to_str(&op_type),
             base_version,
@@ -82,29 +109,77 @@ pub fn enqueue_change(
     Ok(id)
 }
 
-pub fn list_pending_changes(conn: &Connection, limit: usize) -> Result<Vec<ChangeQueueItem>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, note_id, op_type, base_version, payload_json, queued_at, retry_count, last_error
-         FROM change_queue ORDER BY queued_at ASC LIMIT ?1",
-    )?;
-    let rows = stmt.query_map(params![limit as i64], |row| {
-        let note_id = Uuid::parse_str(&row.get::<_, String>(1)?)
-            .map(NoteId)
-            .map_err(to_sql_err)?;
-        let payload_json: String = row.get(4)?;
-        Ok(ChangeQueueItem {
-            id: row.get(0)?,
-            note_id,
-            op_type: op_type_from_str(&row.get::<_, String>(2)?)?,
-            base_version: row.get(3)?,
-            payload: serde_json::from_str(&payload_json).map_err(to_sql_err)?,
-            queued_at: parse_time(row.get::<_, String>(5)?)?,
-            retry_count: row.get(6)?,
-            last_error: row.get(7)?,
-        })
-    })?;
+fn find_existing_note_change(
+    conn: &Connection,
+    account_id: Option<&str>,
+    note_id: &NoteId,
+) -> Result<Option<String>> {
+    match account_id {
+        Some(account_id) => conn
+            .query_row(
+                "SELECT id FROM change_queue
+                 WHERE account_id = ?1 AND note_id = ?2 AND op_type IN ('upsert_note', 'delete_note')
+                 ORDER BY queued_at ASC LIMIT 1",
+                params![account_id, note_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into),
+        None => conn
+            .query_row(
+                "SELECT id FROM change_queue
+                 WHERE account_id IS NULL AND note_id = ?1 AND op_type IN ('upsert_note', 'delete_note')
+                 ORDER BY queued_at ASC LIMIT 1",
+                params![note_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into),
+    }
+}
+
+pub fn list_pending_changes(
+    conn: &Connection,
+    account_id: Option<&str>,
+    limit: usize,
+) -> Result<Vec<ChangeQueueItem>> {
+    let sql = match account_id {
+        Some(account_id) => {
+            let mut stmt = conn.prepare(
+                "SELECT id, account_id, note_id, op_type, base_version, payload_json, queued_at, retry_count, last_error
+                 FROM change_queue WHERE account_id = ?1 ORDER BY queued_at ASC LIMIT ?2",
+            )?;
+            let rows = stmt
+                .query_map(params![account_id, limit as i64], row_to_change_queue_item)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            return Ok(rows);
+        }
+        None =>
+            "SELECT id, account_id, note_id, op_type, base_version, payload_json, queued_at, retry_count, last_error
+             FROM change_queue WHERE account_id IS NULL ORDER BY queued_at ASC LIMIT ?1",
+    };
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params![limit as i64], row_to_change_queue_item)?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(Into::into)
+}
+
+fn row_to_change_queue_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChangeQueueItem> {
+    let note_id = Uuid::parse_str(&row.get::<_, String>(2)?)
+        .map(NoteId)
+        .map_err(to_sql_err)?;
+    let payload_json: String = row.get(5)?;
+    Ok(ChangeQueueItem {
+        id: row.get(0)?,
+        account_id: row.get(1)?,
+        note_id,
+        op_type: op_type_from_str(&row.get::<_, String>(3)?)?,
+        base_version: row.get(4)?,
+        payload: serde_json::from_str(&payload_json).map_err(to_sql_err)?,
+        queued_at: parse_time(row.get::<_, String>(6)?)?,
+        retry_count: row.get(7)?,
+        last_error: row.get(8)?,
+    })
 }
 
 pub fn delete_change(conn: &Connection, id: &str) -> Result<()> {
@@ -188,6 +263,22 @@ fn row_to_sync_state(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncState> {
     })
 }
 
+fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let has_column = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .any(|name| name == column);
+    if !has_column {
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 fn op_type_to_str(op_type: &SyncOpType) -> &'static str {
     match op_type {
         SyncOpType::UpsertNote => "upsert_note",
@@ -236,6 +327,7 @@ mod tests {
 
         let id = enqueue_change(
             &conn,
+            None,
             &note.id,
             SyncOpType::UpsertNote,
             0,
@@ -244,7 +336,7 @@ mod tests {
         )
         .unwrap();
 
-        let items = list_pending_changes(&conn, 10).unwrap();
+        let items = list_pending_changes(&conn, None, 10).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, id);
         assert_eq!(items[0].note_id, note.id);
@@ -265,5 +357,113 @@ mod tests {
         assert_eq!(loaded.device_id, state.device_id);
         assert_eq!(loaded.account_id.as_deref(), Some("acct_1"));
         assert_eq!(loaded.server_cursor, 42);
+    }
+
+    #[test]
+    fn migration_adds_account_id_before_index_for_existing_queue_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE change_queue (
+              id TEXT PRIMARY KEY,
+              note_id TEXT NOT NULL,
+              op_type TEXT NOT NULL,
+              base_version INTEGER NOT NULL,
+              payload_json TEXT NOT NULL,
+              queued_at TEXT NOT NULL,
+              retry_count INTEGER NOT NULL DEFAULT 0,
+              last_error TEXT
+            );
+            ",
+        )
+        .unwrap();
+
+        migrate_sync_tables(&conn).unwrap();
+
+        let account_column_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('change_queue') WHERE name = 'account_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let account_index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_change_queue_account_queued_at'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(account_column_count, 1);
+        assert_eq!(account_index_count, 1);
+    }
+
+    #[test]
+    fn pending_changes_are_scoped_to_account() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_sync_tables(&conn).unwrap();
+        let note = Note::draft(Utc.with_ymd_and_hms(2026, 4, 30, 3, 0, 0).unwrap());
+        let payload = SyncPayload::Note(NoteChangePayload::from_note(&note));
+
+        enqueue_change(
+            &conn,
+            Some("acct_a"),
+            &note.id,
+            SyncOpType::UpsertNote,
+            0,
+            &payload,
+            note.created_at,
+        )
+        .unwrap();
+        enqueue_change(
+            &conn,
+            Some("acct_b"),
+            &note.id,
+            SyncOpType::UpsertNote,
+            0,
+            &payload,
+            note.created_at,
+        )
+        .unwrap();
+
+        let acct_a = list_pending_changes(&conn, Some("acct_a"), 10).unwrap();
+        assert_eq!(acct_a.len(), 1);
+        assert_eq!(acct_a[0].account_id.as_deref(), Some("acct_a"));
+    }
+
+    #[test]
+    fn upsert_changes_for_same_note_are_coalesced() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_sync_tables(&conn).unwrap();
+        let mut note = Note::draft(Utc.with_ymd_and_hms(2026, 4, 30, 4, 0, 0).unwrap());
+        let first_payload = SyncPayload::Note(NoteChangePayload::from_note(&note));
+        let first_id = enqueue_change(
+            &conn,
+            Some("acct_a"),
+            &note.id,
+            SyncOpType::UpsertNote,
+            7,
+            &first_payload,
+            note.created_at,
+        )
+        .unwrap();
+        note.title = "Latest".to_string();
+        let latest_payload = SyncPayload::Note(NoteChangePayload::from_note(&note));
+        let second_id = enqueue_change(
+            &conn,
+            Some("acct_a"),
+            &note.id,
+            SyncOpType::UpsertNote,
+            7,
+            &latest_payload,
+            note.created_at,
+        )
+        .unwrap();
+
+        let items = list_pending_changes(&conn, Some("acct_a"), 10).unwrap();
+        assert_eq!(first_id, second_id);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].base_version, 7);
+        assert_eq!(items[0].payload, latest_payload);
     }
 }

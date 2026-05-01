@@ -21,6 +21,7 @@ tauri = { version = "2.10.3", features = ["protocol-asset"] }
 uuid.workspace = true
 chrono.workspace = true
 tokio.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

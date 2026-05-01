@@ -4105,6 +4105,7 @@ name = "snapline-desktop"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "serde",
  "snapline-app-core",
  "snapline-domain",
  "snapline-platform",

@@ -42,7 +42,8 @@ impl NoteRepository {
               server_version INTEGER NOT NULL DEFAULT 0,
               last_modified_by_device TEXT,
               is_conflict_copy INTEGER NOT NULL DEFAULT 0,
-              source_note_id TEXT
+              source_note_id TEXT,
+              owner_account_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_notes_deleted_pinned_updated
             ON notes (deleted_at, pinned DESC, updated_at DESC);
@@ -57,15 +58,17 @@ impl NoteRepository {
         self.ensure_column("notes", "last_modified_by_device", "TEXT")?;
         self.ensure_column("notes", "is_conflict_copy", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column("notes", "source_note_id", "TEXT")?;
+        self.ensure_column("notes", "owner_account_id", "TEXT")?;
         sync::migrate_sync_tables(&self.conn)?;
         Ok(())
     }
 
-    pub fn create_note(&self, now: DateTime<Utc>) -> Result<Note> {
-        let note = Note::draft(now);
+    pub fn create_note(&self, now: DateTime<Utc>, owner_account_id: Option<&str>) -> Result<Note> {
+        let mut note = Note::draft(now);
+        note.owner_account_id = owner_account_id.map(str::to_string);
         self.conn.execute(
-            "INSERT INTO notes (id, title, content_md, pinned, created_at, updated_at, deleted_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+            "INSERT INTO notes (id, title, content_md, pinned, created_at, updated_at, deleted_at, owner_account_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
             params![
                 note.id.to_string(),
                 note.title,
@@ -73,6 +76,7 @@ impl NoteRepository {
                 note.pinned as i64,
                 note.created_at.to_rfc3339(),
                 note.updated_at.to_rfc3339(),
+                note.owner_account_id,
             ],
         )?;
         Ok(note)
@@ -85,12 +89,13 @@ impl NoteRepository {
         content_md: &str,
         pinned: bool,
         now: DateTime<Utc>,
+        owner_account_id: Option<&str>,
     ) -> Result<Note> {
         let resolved_title = resolve_note_title(title, content_md);
         self.conn.execute(
             "
-            INSERT INTO notes (id, title, content_md, pinned, created_at, updated_at, deleted_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)
+            INSERT INTO notes (id, title, content_md, pinned, created_at, updated_at, deleted_at, owner_account_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)
             ON CONFLICT(id) DO UPDATE SET
               title = excluded.title,
               content_md = excluded.content_md,
@@ -105,9 +110,14 @@ impl NoteRepository {
                 pinned as i64,
                 now.to_rfc3339(),
                 now.to_rfc3339(),
+                owner_account_id,
             ],
         )?;
         self.get_note(id)
+    }
+
+    pub fn note_exists(&self, id: &NoteId) -> Result<bool> {
+        Ok(self.find_note(id)?.is_some())
     }
 
     pub fn apply_remote_note(&self, note: &Note) -> Result<()> {
@@ -115,8 +125,8 @@ impl NoteRepository {
             "
             INSERT INTO notes
               (id, title, content_md, pinned, created_at, updated_at, deleted_at,
-               server_version, last_modified_by_device, is_conflict_copy, source_note_id)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+               server_version, last_modified_by_device, is_conflict_copy, source_note_id, owner_account_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             ON CONFLICT(id) DO UPDATE SET
               title = excluded.title,
               content_md = excluded.content_md,
@@ -126,7 +136,8 @@ impl NoteRepository {
               server_version = excluded.server_version,
               last_modified_by_device = excluded.last_modified_by_device,
               is_conflict_copy = excluded.is_conflict_copy,
-              source_note_id = excluded.source_note_id
+              source_note_id = excluded.source_note_id,
+              owner_account_id = excluded.owner_account_id
             ",
             params![
                 note.id.to_string(),
@@ -140,6 +151,7 @@ impl NoteRepository {
                 note.last_modified_by_device,
                 note.is_conflict_copy as i64,
                 note.source_note_id.as_ref().map(ToString::to_string),
+                note.owner_account_id,
             ],
         )?;
         Ok(())
@@ -156,12 +168,13 @@ impl NoteRepository {
         copy.last_modified_by_device = None;
         copy.is_conflict_copy = true;
         copy.source_note_id = Some(rejected_note.id.clone());
+        copy.owner_account_id = rejected_note.owner_account_id.clone();
         self.conn.execute(
             "
             INSERT INTO notes
               (id, title, content_md, pinned, created_at, updated_at, deleted_at,
-               server_version, last_modified_by_device, is_conflict_copy, source_note_id)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 0, NULL, 1, ?7)
+               server_version, last_modified_by_device, is_conflict_copy, source_note_id, owner_account_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 0, NULL, 1, ?7, ?8)
             ",
             params![
                 copy.id.to_string(),
@@ -171,6 +184,7 @@ impl NoteRepository {
                 copy.created_at.to_rfc3339(),
                 copy.updated_at.to_rfc3339(),
                 rejected_note.id.to_string(),
+                copy.owner_account_id,
             ],
         )?;
         self.get_note(&copy.id)
@@ -188,14 +202,28 @@ impl NoteRepository {
         let note = self
             .find_note(id)?
             .unwrap_or_else(|| draft_note_with_id(id, now));
-        self.save_note(id, &note.title, &note.content_md, pinned, now)
+        self.save_note(
+            id,
+            &note.title,
+            &note.content_md,
+            pinned,
+            now,
+            note.owner_account_id.as_deref(),
+        )
     }
 
     pub fn update_note_title(&self, id: &NoteId, title: &str, now: DateTime<Utc>) -> Result<Note> {
         let note = self
             .find_note(id)?
             .unwrap_or_else(|| draft_note_with_id(id, now));
-        self.save_note(id, title, &note.content_md, note.pinned, now)
+        self.save_note(
+            id,
+            title,
+            &note.content_md,
+            note.pinned,
+            now,
+            note.owner_account_id.as_deref(),
+        )
     }
 
     pub fn update_note_content(
@@ -207,7 +235,14 @@ impl NoteRepository {
         let note = self
             .find_note(id)?
             .unwrap_or_else(|| draft_note_with_id(id, now));
-        self.save_note(id, &note.title, content_md, note.pinned, now)
+        self.save_note(
+            id,
+            &note.title,
+            content_md,
+            note.pinned,
+            now,
+            note.owner_account_id.as_deref(),
+        )
     }
 
     pub fn get_note(&self, id: &NoteId) -> Result<Note> {
@@ -215,12 +250,21 @@ impl NoteRepository {
             .ok_or_else(|| anyhow::anyhow!("note not found"))
     }
 
+    pub fn get_note_for_owner(&self, id: &NoteId, owner_account_id: Option<&str>) -> Result<Note> {
+        let note = self.get_note(id)?;
+        if note.owner_account_id.as_deref() == owner_account_id {
+            Ok(note)
+        } else {
+            anyhow::bail!("note not found for current owner")
+        }
+    }
+
     fn find_note(&self, id: &NoteId) -> Result<Option<Note>> {
         self.conn
             .query_row(
                 "
                 SELECT id, title, content_md, pinned, created_at, updated_at, deleted_at,
-                       server_version, last_modified_by_device, is_conflict_copy, source_note_id
+                       server_version, last_modified_by_device, is_conflict_copy, source_note_id, owner_account_id
                 FROM notes WHERE id = ?1
                 ",
                 params![id.to_string()],
@@ -231,29 +275,62 @@ impl NoteRepository {
     }
 
     pub fn list_recent(&self, limit: usize) -> Result<Vec<NoteSummary>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, title, pinned, updated_at, content_md, is_conflict_copy, source_note_id FROM notes
-             WHERE deleted_at IS NULL
-             ORDER BY pinned DESC, updated_at DESC
-             LIMIT ?1",
+        self.list_recent_for_owner(limit, None)
+    }
+
+    pub fn list_recent_for_owner(
+        &self,
+        limit: usize,
+        owner_account_id: Option<&str>,
+    ) -> Result<Vec<NoteSummary>> {
+        match owner_account_id {
+            Some(owner) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, title, pinned, updated_at, content_md, is_conflict_copy, source_note_id, owner_account_id FROM notes
+                     WHERE deleted_at IS NULL AND owner_account_id = ?2
+                     ORDER BY pinned DESC, updated_at DESC
+                     LIMIT ?1",
+                )?;
+                let rows = stmt.query_map(params![limit as i64, owner], note_summary_from_row)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(Into::into)
+            }
+            None => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, title, pinned, updated_at, content_md, is_conflict_copy, source_note_id, owner_account_id FROM notes
+                     WHERE deleted_at IS NULL AND owner_account_id IS NULL
+                     ORDER BY pinned DESC, updated_at DESC
+                     LIMIT ?1",
+                )?;
+                let rows = stmt.query_map(params![limit as i64], note_summary_from_row)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(Into::into)
+            }
+        }
+    }
+
+    pub fn count_anonymous_notes(&self) -> Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM notes WHERE owner_account_id IS NULL AND deleted_at IS NULL",
+            [],
+            |row| row.get(0),
         )?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            let source_note_id: Option<String> = row.get(6)?;
-            Ok(NoteSummary {
-                id: NoteId(parse_uuid(row.get::<_, String>(0)?)?),
-                title: row.get(1)?,
-                pinned: row.get::<_, i64>(2)? != 0,
-                updated_at: parse_time(row.get::<_, String>(3)?)?,
-                preview: derive_preview(&row.get::<_, String>(4)?),
-                preview_md: derive_preview_markdown(&row.get::<_, String>(4)?),
-                is_conflict_copy: row.get::<_, i64>(5)? != 0,
-                source_note_id: source_note_id
-                    .map(|value| parse_uuid(value).map(NoteId))
-                    .transpose()?,
-            })
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
+        Ok(count as usize)
+    }
+
+    pub fn import_anonymous_notes(&self, account_id: &str) -> Result<Vec<NoteId>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM notes WHERE owner_account_id IS NULL AND deleted_at IS NULL ORDER BY updated_at ASC",
+        )?;
+        let ids = stmt
+            .query_map([], |row| parse_uuid(row.get::<_, String>(0)?).map(NoteId))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        self.conn.execute(
+            "UPDATE notes SET owner_account_id = ?1 WHERE owner_account_id IS NULL AND deleted_at IS NULL",
+            params![account_id],
+        )?;
+        Ok(ids)
     }
 
     pub fn soft_delete(&self, id: &NoteId, now: DateTime<Utc>) -> Result<()> {
@@ -295,6 +372,7 @@ impl NoteRepository {
 
     pub fn enqueue_change(
         &self,
+        account_id: Option<&str>,
         note_id: &NoteId,
         op_type: SyncOpType,
         base_version: i64,
@@ -303,6 +381,7 @@ impl NoteRepository {
     ) -> Result<String> {
         sync::enqueue_change(
             &self.conn,
+            account_id,
             note_id,
             op_type,
             base_version,
@@ -311,16 +390,31 @@ impl NoteRepository {
         )
     }
 
-    pub fn list_pending_changes(&self, limit: usize) -> Result<Vec<sync::ChangeQueueItem>> {
-        sync::list_pending_changes(&self.conn, limit)
+    pub fn list_pending_changes(
+        &self,
+        account_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<sync::ChangeQueueItem>> {
+        sync::list_pending_changes(&self.conn, account_id, limit)
     }
 
-    pub fn has_pending_note_change(&self, note_id: &NoteId) -> Result<bool> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM change_queue WHERE note_id = ?1",
-            params![note_id.to_string()],
-            |row| row.get(0),
-        )?;
+    pub fn has_pending_note_change(
+        &self,
+        account_id: Option<&str>,
+        note_id: &NoteId,
+    ) -> Result<bool> {
+        let count: i64 = match account_id {
+            Some(account_id) => self.conn.query_row(
+                "SELECT COUNT(*) FROM change_queue WHERE account_id = ?1 AND note_id = ?2",
+                params![account_id, note_id.to_string()],
+                |row| row.get(0),
+            )?,
+            None => self.conn.query_row(
+                "SELECT COUNT(*) FROM change_queue WHERE account_id IS NULL AND note_id = ?1",
+                params![note_id.to_string()],
+                |row| row.get(0),
+            )?,
+        };
         Ok(count > 0)
     }
 
@@ -328,11 +422,25 @@ impl NoteRepository {
         sync::delete_change(&self.conn, id)
     }
 
-    pub fn delete_changes_for_note(&self, note_id: &NoteId) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM change_queue WHERE note_id = ?1",
-            params![note_id.to_string()],
-        )?;
+    pub fn delete_changes_for_note(
+        &self,
+        account_id: Option<&str>,
+        note_id: &NoteId,
+    ) -> Result<()> {
+        match account_id {
+            Some(account_id) => {
+                self.conn.execute(
+                    "DELETE FROM change_queue WHERE account_id = ?1 AND note_id = ?2",
+                    params![account_id, note_id.to_string()],
+                )?;
+            }
+            None => {
+                self.conn.execute(
+                    "DELETE FROM change_queue WHERE account_id IS NULL AND note_id = ?1",
+                    params![note_id.to_string()],
+                )?;
+            }
+        }
         Ok(())
     }
 
@@ -390,6 +498,24 @@ fn row_to_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         source_note_id: source_note_id
             .map(|value| parse_uuid(value).map(NoteId))
             .transpose()?,
+        owner_account_id: row.get(11)?,
+    })
+}
+
+fn note_summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteSummary> {
+    let source_note_id: Option<String> = row.get(6)?;
+    Ok(NoteSummary {
+        id: NoteId(parse_uuid(row.get::<_, String>(0)?)?),
+        title: row.get(1)?,
+        pinned: row.get::<_, i64>(2)? != 0,
+        updated_at: parse_time(row.get::<_, String>(3)?)?,
+        preview: derive_preview(&row.get::<_, String>(4)?),
+        preview_md: derive_preview_markdown(&row.get::<_, String>(4)?),
+        is_conflict_copy: row.get::<_, i64>(5)? != 0,
+        source_note_id: source_note_id
+            .map(|value| parse_uuid(value).map(NoteId))
+            .transpose()?,
+        owner_account_id: row.get(7)?,
     })
 }
 
@@ -416,6 +542,7 @@ fn draft_note_with_id(id: &NoteId, now: DateTime<Utc>) -> Note {
         last_modified_by_device: None,
         is_conflict_copy: false,
         source_note_id: None,
+        owner_account_id: None,
     }
 }
 
@@ -440,9 +567,9 @@ mod tests {
         let t2 = Utc.with_ymd_and_hms(2026, 4, 29, 1, 1, 0).unwrap();
         let t3 = Utc.with_ymd_and_hms(2026, 4, 29, 1, 2, 0).unwrap();
 
-        let note = repo.create_note(t1).unwrap();
+        let note = repo.create_note(t1, None).unwrap();
         let updated = repo
-            .save_note(&note.id, "Hello", "# Hello\nBody", true, t2)
+            .save_note(&note.id, "Hello", "# Hello\nBody", true, t2, None)
             .unwrap();
 
         assert_eq!(updated.title, "Hello");
@@ -460,8 +587,8 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2026, 4, 29, 3, 0, 0).unwrap();
         let t2 = Utc.with_ymd_and_hms(2026, 4, 29, 3, 1, 0).unwrap();
 
-        let first = repo.create_note(t1).unwrap();
-        let second = repo.create_note(t2).unwrap();
+        let first = repo.create_note(t1, None).unwrap();
+        let second = repo.create_note(t2, None).unwrap();
 
         repo.set_pinned(&first.id, true, t2).unwrap();
 
@@ -478,7 +605,7 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2026, 4, 29, 4, 0, 0).unwrap();
         let t2 = Utc.with_ymd_and_hms(2026, 4, 29, 4, 1, 0).unwrap();
 
-        let note = repo.create_note(t1).unwrap();
+        let note = repo.create_note(t1, None).unwrap();
         repo.update_note_title(&note.id, "Daily note", t1).unwrap();
         let updated = repo
             .update_note_content(&note.id, "# Heading\nBody", t2)
@@ -493,9 +620,16 @@ mod tests {
         let repo = NoteRepository::open_in_memory().unwrap();
         let t1 = Utc.with_ymd_and_hms(2026, 4, 29, 4, 2, 0).unwrap();
 
-        let note = repo.create_note(t1).unwrap();
+        let note = repo.create_note(t1, None).unwrap();
         let updated = repo
-            .save_note(&note.id, "", "## Secondary\n# Primary\nBody", false, t1)
+            .save_note(
+                &note.id,
+                "",
+                "## Secondary\n# Primary\nBody",
+                false,
+                t1,
+                None,
+            )
             .unwrap();
 
         assert_eq!(updated.title, "Primary");
@@ -506,13 +640,14 @@ mod tests {
         let repo = NoteRepository::open_in_memory().unwrap();
         let t1 = Utc.with_ymd_and_hms(2026, 4, 29, 4, 3, 0).unwrap();
 
-        let note = repo.create_note(t1).unwrap();
+        let note = repo.create_note(t1, None).unwrap();
         repo.save_note(
             &note.id,
             "Title",
             "# Title\n\nPreview line\nMore",
             false,
             t1,
+            None,
         )
         .unwrap();
 
@@ -525,13 +660,14 @@ mod tests {
         let repo = NoteRepository::open_in_memory().unwrap();
         let t1 = Utc.with_ymd_and_hms(2026, 4, 29, 4, 4, 0).unwrap();
 
-        let note = repo.create_note(t1).unwrap();
+        let note = repo.create_note(t1, None).unwrap();
         repo.save_note(
             &note.id,
             "Title",
             "# Title\n\n- **Preview** line",
             false,
             t1,
+            None,
         )
         .unwrap();
 
@@ -547,8 +683,8 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2026, 4, 29, 2, 0, 0).unwrap();
         let note_id = {
             let repo = NoteRepository::open(&db_path).unwrap();
-            let note = repo.create_note(t1).unwrap();
-            repo.save_note(&note.id, "Persistent", "Persistent", false, t1)
+            let note = repo.create_note(t1, None).unwrap();
+            repo.save_note(&note.id, "Persistent", "Persistent", false, t1, None)
                 .unwrap();
             note.id
         };
@@ -601,9 +737,10 @@ mod tests {
             snapline_domain::NoteChangePayload::from_note(&note),
         );
 
-        assert!(!repo.has_pending_note_change(&note.id).unwrap());
+        assert!(!repo.has_pending_note_change(None, &note.id).unwrap());
 
         repo.enqueue_change(
+            None,
             &note.id,
             snapline_domain::SyncOpType::UpsertNote,
             0,
@@ -612,10 +749,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(repo.has_pending_note_change(&note.id).unwrap());
+        assert!(repo.has_pending_note_change(None, &note.id).unwrap());
 
-        repo.delete_changes_for_note(&note.id).unwrap();
-        assert!(!repo.has_pending_note_change(&note.id).unwrap());
+        repo.delete_changes_for_note(None, &note.id).unwrap();
+        assert!(!repo.has_pending_note_change(None, &note.id).unwrap());
     }
 
     #[test]
@@ -639,5 +776,44 @@ mod tests {
         assert!(copy.title.contains("Conflict"));
         assert_eq!(copy.content_md, rejected.content_md);
         assert_eq!(copy.server_version, 0);
+    }
+
+    #[test]
+    fn list_recent_filters_by_owner_account() {
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 4, 30, 1, 0, 0).unwrap();
+        let local = repo.create_note(t1, None).unwrap();
+        let account = repo.create_note(t1, Some("acct_a")).unwrap();
+
+        assert_eq!(
+            repo.list_recent_for_owner(10, None).unwrap()[0].id,
+            local.id
+        );
+        assert_eq!(
+            repo.list_recent_for_owner(10, Some("acct_a")).unwrap()[0].id,
+            account.id
+        );
+        assert!(repo
+            .list_recent_for_owner(10, Some("acct_b"))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn imports_anonymous_notes_into_account() {
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 4, 30, 2, 0, 0).unwrap();
+        let local = repo.create_note(t1, None).unwrap();
+        repo.save_note(&local.id, "Local", "Local body", false, t1, None)
+            .unwrap();
+
+        let imported = repo.import_anonymous_notes("acct_a").unwrap();
+
+        assert_eq!(imported, vec![local.id.clone()]);
+        assert!(repo.list_recent_for_owner(10, None).unwrap().is_empty());
+        assert_eq!(
+            repo.list_recent_for_owner(10, Some("acct_a")).unwrap()[0].id,
+            local.id
+        );
     }
 }

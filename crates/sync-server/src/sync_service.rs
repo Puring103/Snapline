@@ -1,6 +1,8 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use snapline_domain::{AssetId, AssetMetadata, Note, NoteChangePayload, NoteId, SyncPayload};
+use snapline_domain::{
+    AssetId, AssetMetadata, Note, NoteChangePayload, NoteId, SyncOpType, SyncPayload,
+};
 use snapline_sync_client::protocol::{PushChange, PushChangeResult, RemoteChange};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
@@ -12,7 +14,7 @@ pub async fn apply_push_change(
     change: PushChange,
 ) -> Result<PushChangeResult> {
     let existing = sqlx::query(
-        "SELECT title, content_md, pinned, created_at, updated_at, deleted_at, version, last_modified_by_device
+        "SELECT account_id, title, content_md, pinned, created_at, updated_at, deleted_at, version, last_modified_by_device
          FROM notes WHERE account_id = $1 AND id = $2",
     )
     .bind(account_id)
@@ -62,6 +64,7 @@ pub async fn apply_push_change(
         &change.note_id.to_string(),
         next_version,
         &payload,
+        note_payload_op_type(&payload),
     )
     .await?;
     Ok(PushChangeResult::Accepted {
@@ -78,7 +81,7 @@ pub async fn pull_changes(
     cursor: i64,
 ) -> Result<Vec<RemoteChange>> {
     let rows = sqlx::query(
-        "SELECT c.cursor, c.device_id, c.created_at, n.id, n.title, n.content_md, n.pinned,
+        "SELECT c.cursor, c.device_id, c.created_at, n.account_id, n.id, n.title, n.content_md, n.pinned,
                 n.created_at AS note_created_at, n.updated_at, n.deleted_at, n.version, n.last_modified_by_device
          FROM change_log c
          JOIN notes n ON n.account_id = c.account_id AND n.id = c.note_id
@@ -107,7 +110,7 @@ pub async fn snapshot(
     account_id: &str,
 ) -> Result<(i64, Vec<Note>, Vec<AssetMetadata>)> {
     let rows = sqlx::query(
-        "SELECT id, title, content_md, pinned, created_at, updated_at, deleted_at, version, last_modified_by_device
+        "SELECT account_id, id, title, content_md, pinned, created_at, updated_at, deleted_at, version, last_modified_by_device
          FROM notes WHERE account_id = $1",
     )
     .bind(account_id)
@@ -129,7 +132,7 @@ pub async fn snapshot(
         .collect::<Result<Vec<_>>>()?;
     let asset_rows = sqlx::query(
         "SELECT id, note_id, content_type, byte_size, sha256, storage_key, created_at, deleted_at
-         FROM assets WHERE account_id = $1",
+         FROM assets WHERE account_id = $1 AND deleted_at IS NULL",
     )
     .bind(account_id)
     .fetch_all(pool)
@@ -182,20 +185,38 @@ async fn append_change_log(
     note_id: &str,
     version: i64,
     payload: &NoteChangePayload,
+    op_type: SyncOpType,
 ) -> Result<i64> {
     let row = sqlx::query(
         "INSERT INTO change_log (account_id, note_id, op_type, note_version, payload_json, device_id)
-         VALUES ($1, $2, 'upsert_note', $3, $4, $5)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING cursor",
     )
     .bind(account_id)
     .bind(note_id)
+    .bind(op_type_to_str(&op_type))
     .bind(version)
     .bind(serde_json::to_value(payload)?)
     .bind(device_id)
     .fetch_one(&mut **tx)
     .await?;
     Ok(row.get("cursor"))
+}
+
+fn note_payload_op_type(payload: &NoteChangePayload) -> SyncOpType {
+    if payload.deleted_at.is_some() {
+        SyncOpType::DeleteNote
+    } else {
+        SyncOpType::UpsertNote
+    }
+}
+
+fn op_type_to_str(op_type: &SyncOpType) -> &'static str {
+    match op_type {
+        SyncOpType::UpsertNote => "upsert_note",
+        SyncOpType::DeleteNote => "delete_note",
+        SyncOpType::AssetUpload => "asset_upload",
+    }
 }
 
 fn row_to_note(row: &sqlx::postgres::PgRow, note_id: &NoteId) -> Result<Note> {
@@ -211,6 +232,7 @@ fn row_to_note(row: &sqlx::postgres::PgRow, note_id: &NoteId) -> Result<Note> {
         last_modified_by_device: Some(row.get("last_modified_by_device")),
         is_conflict_copy: false,
         source_note_id: None,
+        owner_account_id: Some(row.get("account_id")),
     })
 }
 
@@ -227,6 +249,7 @@ fn joined_row_to_note(row: &sqlx::postgres::PgRow, note_id: NoteId) -> Result<No
         last_modified_by_device: Some(row.get("last_modified_by_device")),
         is_conflict_copy: false,
         source_note_id: None,
+        owner_account_id: Some(row.get("account_id")),
     })
 }
 
