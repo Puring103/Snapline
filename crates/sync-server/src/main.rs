@@ -17,6 +17,10 @@ use std::{net::SocketAddr, sync::Arc};
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::from_env()?;
+    eprintln!(
+        "snapline.sync_server.public_base_url={}",
+        config.public_base_url
+    );
     let pool = db::connect(&config.database_url).await?;
     db::migrate(&pool).await?;
     routes::bootstrap_first_account(&pool, &config).await?;

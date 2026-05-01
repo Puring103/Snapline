@@ -107,7 +107,7 @@ pub async fn upload_pending_assets<A: SyncApi + Sync>(
         let asset_path = data_dir.join(&metadata.markdown_path);
         let bytes = fs::read(&asset_path)
             .with_context(|| format!("failed to read asset {}", asset_path.display()))?;
-        api.upload_asset(&token, AssetUploadRequest { metadata, bytes })
+        api.upload_asset(token, AssetUploadRequest { metadata, bytes })
             .await?;
         repo.delete_change(&item.id)?;
         report.accepted += 1;

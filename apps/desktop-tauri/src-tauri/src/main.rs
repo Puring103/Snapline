@@ -223,7 +223,9 @@ fn encode_clipboard_image_as_png(image: arboard::ImageData<'_>) -> Result<Vec<u8
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().map_err(|err| err.to_string())?;
-        writer.write_image_data(&rgba).map_err(|err| err.to_string())?;
+        writer
+            .write_image_data(&rgba)
+            .map_err(|err| err.to_string())?;
     }
     Ok(output)
 }
@@ -918,7 +920,9 @@ mod tests {
         fs::write(&text_path, b"not an image").unwrap();
 
         assert!(is_allowed_local_image_path(image_path.to_str().unwrap()));
-        assert!(is_allowed_local_image_path(nested_image_path.to_str().unwrap()));
+        assert!(is_allowed_local_image_path(
+            nested_image_path.to_str().unwrap()
+        ));
         assert!(!is_allowed_local_image_path(text_path.to_str().unwrap()));
         assert!(!is_allowed_local_image_path("../relative.png"));
         assert!(!is_allowed_local_image_path(""));
@@ -926,12 +930,8 @@ mod tests {
 
     #[test]
     fn encodes_clipboard_image_as_png() {
-        let png = encode_clipboard_image_as_png(test_image_data(
-            1,
-            1,
-            vec![255, 0, 0, 255],
-        ))
-        .unwrap();
+        let png =
+            encode_clipboard_image_as_png(test_image_data(1, 1, vec![255, 0, 0, 255])).unwrap();
 
         assert_eq!(&png[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
     }
