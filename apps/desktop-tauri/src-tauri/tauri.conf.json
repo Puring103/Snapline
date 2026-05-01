@@ -44,7 +44,9 @@
         "enable": true,
         "scope": [
           "$APPDATA/Snapline/assets/**",
-          "$APPLOCALDATA/Snapline/assets/**"
+          "$APPLOCALDATA/Snapline/assets/**",
+          "$DATA/Snapline/assets/**",
+          "$HOME/.local/share/Snapline/assets/**"
         ]
       }
     }
