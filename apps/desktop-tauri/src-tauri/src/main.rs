@@ -244,6 +244,37 @@ fn test_image_data(width: usize, height: usize, bytes: Vec<u8>) -> arboard::Imag
 }
 
 #[tauri::command]
+fn export_note_as_markdown(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    let note_id = parse_note_id(&id)?;
+    let note = state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .get_note(&note_id)
+        .map_err(|err| err.to_string())?;
+
+    let filename = if note.title.trim().is_empty() {
+        "Untitled.md".to_string()
+    } else {
+        let safe: String = note
+            .title
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.') { c } else { '_' })
+            .collect();
+        format!("{}.md", safe.trim())
+    };
+
+    let downloads = dirs::download_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
+        .ok_or_else(|| "could not find downloads directory".to_string())?;
+
+    std::fs::create_dir_all(&downloads).map_err(|err| err.to_string())?;
+    let dest = downloads.join(&filename);
+    std::fs::write(&dest, note.content_md.as_bytes()).map_err(|err| err.to_string())?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 fn open_external_url(url: String) -> Result<String, String> {
     if !is_allowed_external_url(&url) {
         return Err("unsupported external URL".to_string());
@@ -839,7 +870,8 @@ fn main() {
             login_sync,
             anonymous_note_count,
             import_anonymous_notes,
-            sync_now
+            sync_now,
+            export_note_as_markdown
         ])
         .build(tauri::generate_context!())
         .expect("error while building Snapline")

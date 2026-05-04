@@ -322,7 +322,15 @@ function NotesListWindow() {
               >
                 <div className="noteRowHeader">
                   <div className="noteRowTitleBlock">
-                    <span className="noteRowTitle">{note.title}</span>
+                    <div className="noteRowTitleRow">
+                      <span className="noteRowTitle">{note.title}</span>
+                      {note.is_conflict_copy ? (
+                        <span className="conflictBadge" title="Conflict copy — your local changes conflicted with a remote update">
+                          <ConflictIcon />
+                          Conflict
+                        </span>
+                      ) : null}
+                    </div>
                     <span className="noteRowTime">{new Date(note.updated_at).toLocaleString()}</span>
                   </div>
                   <div className="noteRowActions">
@@ -404,6 +412,9 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [themeMode, setThemeMode] = useThemeMode();
+  const [toolbarVisible, setToolbarVisible] = useState(false);
+  const [isConflictCopy, setIsConflictCopy] = useState(false);
+  const [sourceNoteId, setSourceNoteId] = useState<string | null>(null);
 
   const sessionRef = useRef(session);
   const notePinnedRef = useRef(notePinned);
@@ -602,6 +613,8 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     setDeleted(false);
     setError(null);
     setStatus("Draft");
+    setIsConflictCopy(note.is_conflict_copy ?? false);
+    setSourceNoteId(note.source_note_id ?? null);
     queueMicrotask(() => {
       titleInputRef.current?.focus();
       titleInputRef.current?.select();
@@ -727,6 +740,17 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     setSyncAccount(result.account);
   }
 
+  async function handleExportNote() {
+    const snapshot = sessionRef.current;
+    if (!snapshot.id || deletedRef.current) return;
+    try {
+      setError(null);
+      await api.exportNoteAsMarkdown(snapshot.id);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   function persistShortcut(nextShortcut: string) {
     void api
       .setOpenShortcut(nextShortcut)
@@ -793,6 +817,14 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
                     <PlusIcon />
                     <span>New</span>
                   </button>
+                  <button onClick={() => handleChromeMenuAction(() => setToolbarVisible((v) => !v))} role="menuitem" type="button">
+                    <ToolbarIcon />
+                    <span>{toolbarVisible ? "Hide toolbar" : "Show toolbar"}</span>
+                  </button>
+                  <button onClick={() => handleChromeMenuAction(handleExportNote)} role="menuitem" type="button" disabled={!session.id || deleted}>
+                    <ExportIcon />
+                    <span>Export .md</span>
+                  </button>
                   <button onClick={() => handleChromeMenuAction(handleOpenSettings)} role="menuitem" type="button">
                     <SettingsIcon />
                     <span>Settings</span>
@@ -822,6 +854,21 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
               ) : null}
             </div>
           ) : null}
+          {isConflictCopy ? (
+            <div className="conflictBanner">
+              <ConflictIcon />
+              <span>This is a conflict copy — your local changes conflicted with a remote update.</span>
+              {sourceNoteId ? (
+                <button
+                  className="linkButton"
+                  onClick={() => void openNoteWindow(sourceNoteId)}
+                  type="button"
+                >
+                  View original
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <Suspense fallback={<EditorLoadingState bodyMarkdown={session.bodyMd} />}>
             <LazyEditorPane
               bodyMarkdown={session.bodyMd}
@@ -831,6 +878,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
               onBodyChange={handleBodyChange}
               onRequestImageSave={handleRequestImageSave}
               readOnly={deleted}
+              showToolbar={toolbarVisible}
             />
           </Suspense>
         </section>
@@ -1125,4 +1173,16 @@ function SourceModeIcon() {
 
 function PreviewModeIcon() {
   return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12s3.5-6.5 8.5-6.5 8.5 6.5 8.5 6.5-3.5 6.5-8.5 6.5S3.5 12 3.5 12Z" /><path d="M12 9.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6Z" /></svg>;
+}
+
+function ToolbarIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h2M9 7h2M14 7h2M4 12h16M4 17h8" /><rect x="3" y="5" width="5" height="4" rx="1.2"/></svg>;
+}
+
+function ExportIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>;
+}
+
+function ConflictIcon() {
+  return <svg className="conflictIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4M12 17h.01"/><path d="M10.3 4l-8 13.5A2 2 0 0 0 4 20h16a2 2 0 0 0 1.7-2.5L13.7 4a2 2 0 0 0-3.4 0z"/></svg>;
 }

@@ -1,7 +1,7 @@
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { api } from "./api";
 import { blobUrlFromBytes } from "./assetDisplay";
 import { fileUrlFromMarkdownPath } from "./assetUrl";
@@ -37,6 +37,7 @@ interface EditorPaneProps {
   onBodyChange: (bodyMarkdown: string) => void;
   onRequestImageSave: (bytes: number[]) => Promise<SavedAsset | null>;
   readOnly?: boolean;
+  showToolbar?: boolean;
 }
 
 export function EditorPane({
@@ -47,6 +48,7 @@ export function EditorPane({
   onBodyChange,
   onRequestImageSave,
   readOnly = false,
+  showToolbar = false,
 }: EditorPaneProps) {
   const suppressNextUpdate = useRef(false);
   const editorRef = useRef<Editor | null>(null);
@@ -226,6 +228,9 @@ export function EditorPane({
 
   return (
     <div className="editorShell">
+      {showToolbar && mode === "preview" && !readOnly ? (
+        <EditorToolbar editor={editor} />
+      ) : null}
       <div className={mode === "preview" ? "editorPreviewLayer" : "editorPreviewLayer hidden"}>
         <EditorContent editor={editor} className="editorSurface markdownSurface" />
       </div>
@@ -439,6 +444,156 @@ export function EditorPane({
     assetBlobUrls.current.set(markdownPath, source);
     return source;
   }
+}
+
+function EditorToolbar({ editor }: { editor: Editor | null }) {
+  if (!editor) return null;
+
+  return (
+    <div className="editorToolbar">
+      <ToolbarButton
+        active={editor.isActive("bold")}
+        label="Bold"
+        onClick={() => editor.chain().focus().toggleBold().run()}
+      >
+        <BoldIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("italic")}
+        label="Italic"
+        onClick={() => editor.chain().focus().toggleItalic().run()}
+      >
+        <ItalicIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("code")}
+        label="Inline code"
+        onClick={() => editor.chain().focus().toggleCode().run()}
+      >
+        <InlineCodeIcon />
+      </ToolbarButton>
+      <div className="editorToolbarDivider" />
+      <ToolbarButton
+        active={editor.isActive("heading", { level: 1 })}
+        label="Heading 1"
+        onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+      >
+        <HeadingIcon level={1} />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("heading", { level: 2 })}
+        label="Heading 2"
+        onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+      >
+        <HeadingIcon level={2} />
+      </ToolbarButton>
+      <div className="editorToolbarDivider" />
+      <ToolbarButton
+        active={editor.isActive("bulletList")}
+        label="Bullet list"
+        onClick={() => editor.chain().focus().toggleBulletList().run()}
+      >
+        <BulletListIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("orderedList")}
+        label="Ordered list"
+        onClick={() => editor.chain().focus().toggleOrderedList().run()}
+      >
+        <OrderedListIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("taskList")}
+        label="Task list"
+        onClick={() => editor.chain().focus().toggleTaskList().run()}
+      >
+        <TaskListIcon />
+      </ToolbarButton>
+      <div className="editorToolbarDivider" />
+      <ToolbarButton
+        active={editor.isActive("blockquote")}
+        label="Blockquote"
+        onClick={() => editor.chain().focus().toggleBlockquote().run()}
+      >
+        <BlockquoteIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("codeBlock")}
+        label="Code block"
+        onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+      >
+        <CodeBlockIcon />
+      </ToolbarButton>
+    </div>
+  );
+}
+
+function ToolbarButton({
+  active,
+  label,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      aria-label={label}
+      className={active ? "editorToolbarBtn editorToolbarBtnActive" : "editorToolbarBtn"}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        onClick();
+      }}
+      title={label}
+      type="button"
+    >
+      {children}
+    </button>
+  );
+}
+
+function BoldIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h8a4 4 0 0 1 0 8H6z"/><path d="M6 12h9a4 4 0 0 1 0 8H6z"/></svg>;
+}
+
+function ItalicIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 4h-9M14 20H5M15 4 9 20"/></svg>;
+}
+
+function InlineCodeIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8L5 12l4 4M15 8l4 4-4 4"/></svg>;
+}
+
+function HeadingIcon({ level }: { level: 1 | 2 }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 6v12M4 12h8M12 6v12" />
+      <text x="15" y="19" style={{ fontSize: "9px", fontWeight: 700, fill: "currentColor", stroke: "none" }}>{level}</text>
+    </svg>
+  );
+}
+
+function BulletListIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h10M9 12h10M9 18h10"/><circle cx="4" cy="6" r="1.2" style={{ fill: "currentColor", stroke: "none" }} /><circle cx="4" cy="12" r="1.2" style={{ fill: "currentColor", stroke: "none" }} /><circle cx="4" cy="18" r="1.2" style={{ fill: "currentColor", stroke: "none" }} /></svg>;
+}
+
+function OrderedListIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h10M10 12h10M10 18h10"/><text x="2" y="9" style={{ fontSize: "8px", fontWeight: 700, fill: "currentColor", stroke: "none" }}>1</text><text x="2" y="15" style={{ fontSize: "8px", fontWeight: 700, fill: "currentColor", stroke: "none" }}>2</text><text x="2" y="21" style={{ fontSize: "8px", fontWeight: 700, fill: "currentColor", stroke: "none" }}>3</text></svg>;
+}
+
+function TaskListIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="5" height="5" rx="1"/><path d="M4.5 7.5l1 1 2-2"/><path d="M10 7.5h10M10 12.5h10M10 17.5h10"/><rect x="3" y="10" width="5" height="5" rx="1"/><rect x="3" y="15" width="5" height="5" rx="1"/></svg>;
+}
+
+function BlockquoteIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h12M3 12h10M3 16h8"/><path d="M20 7c-2.5 1-2.5 3.5-2.5 3.5H20v4h-4V11c0-3 2-5 4-6l.5 2z"/></svg>;
+}
+
+function CodeBlockIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="M8 9l-3 3 3 3M16 9l3 3-3 3M13 8l-2 8"/></svg>;
 }
 
 function removeImageSource(editor: Editor, source: string) {
