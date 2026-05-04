@@ -7,3 +7,4 @@ apps/desktop-tauri/dist/
 server-data/
 *.log
 test-note.md
+./codex
