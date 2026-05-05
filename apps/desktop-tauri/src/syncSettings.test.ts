@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { importPromptText, validateSyncConnection } from "./SyncSettings";
+import { importPromptText, validateSyncConnection } from "./components/SyncSettings";
 
 describe("sync connection validation", () => {
   it("requires all connection fields", () => {

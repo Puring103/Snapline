@@ -1,6 +1,6 @@
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
-import { startupLog } from "./startupLog";
+import { startupLog } from "./platform/startupLog";
 import "./styles.css";
 
 startupLog("js_entry");

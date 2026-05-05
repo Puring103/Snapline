@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_EDITOR_MODE, toggleEditorMode } from "./editorMode";
+import { DEFAULT_EDITOR_MODE, toggleEditorMode } from "./features/editor/editorMode";
 
 describe("editor mode", () => {
   it("defaults to preview mode", () => {

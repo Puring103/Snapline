@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isTransientImageSource, uploadedImageDisplaySource } from "./imageUploadDisplay";
+import { isTransientImageSource, uploadedImageDisplaySource } from "./features/assets/imageUploadDisplay";
 
 describe("image upload display sources", () => {
   it("keeps pasted blob urls visible after upload while storage maps them to the asset path", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldApplyEditorMarkdownUpdate } from "./editorSync";
+import { shouldApplyEditorMarkdownUpdate } from "./features/editor/editorSync";
 
 describe("editor markdown synchronization", () => {
   it("does not reapply a stale transient image after the editor has a durable image source", () => {

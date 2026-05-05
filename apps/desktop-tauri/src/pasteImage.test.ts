@@ -7,7 +7,7 @@ import {
   pastedImageSourceFromClipboardAsync,
   pastedImageSourceFromClipboard,
   pastedImageFileFromClipboard,
-} from "./pasteImage";
+} from "./features/editor/pasteImage";
 
 describe("paste image helpers", () => {
   it("reads pasted image files without fetching the blob url", async () => {

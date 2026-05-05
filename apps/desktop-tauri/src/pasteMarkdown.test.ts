@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Editor } from "@tiptap/core";
-import { createMarkdownExtensions } from "./editorExtensions";
-import { insertClipboardMarkdown } from "./pasteMarkdown";
+import { createMarkdownExtensions } from "./features/editor/editorExtensions";
+import { insertClipboardMarkdown } from "./features/editor/pasteMarkdown";
 
 describe("paste markdown", () => {
   it("falls back to plain text insertion when markdown insertion fails", () => {

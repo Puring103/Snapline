@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { readAppRoute, revealExistingWindow, shouldDeferInitialNoteLoad, shouldStartWindowDrag, windowOptionsForMode } from "./window";
+import {
+  readAppRoute,
+  revealExistingWindow,
+  shouldDeferInitialNoteLoad,
+  shouldStartWindowDrag,
+  windowOptionsForMode,
+} from "./platform/window";
 
 describe("window routing", () => {
   it("defaults to the note window route", () => {

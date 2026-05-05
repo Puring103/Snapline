@@ -14,7 +14,7 @@ import {
   splitDraftMarkdown,
   stripTransientImageSources,
   titleFromMarkdown,
-} from "./markdown";
+} from "./features/editor/markdown";
 
 describe("markdown helpers", () => {
   it("normalizes line endings and trims trailing whitespace", () => {

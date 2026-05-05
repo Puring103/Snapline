@@ -1,8 +1,8 @@
 import { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { copySelectedMarkdown, cutSelectedMarkdown, selectedMarkdown } from "./copyMarkdown";
-import { createMarkdownExtensions, setMarkdownContent } from "./editorExtensions";
+import { copySelectedMarkdown, cutSelectedMarkdown, selectedMarkdown } from "./features/editor/copyMarkdown";
+import { createMarkdownExtensions, setMarkdownContent } from "./features/editor/editorExtensions";
 
 const editors: Editor[] = [];
 

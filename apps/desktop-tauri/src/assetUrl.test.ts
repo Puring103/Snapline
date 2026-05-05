@@ -3,7 +3,7 @@ import {
   fileUrlFromMarkdownPath,
   webviewAssetUrlFromFilesystemPath,
   webviewAssetUrlFromMarkdownPath,
-} from "./assetUrl";
+} from "./features/assets/assetUrl";
 
 describe("asset urls", () => {
   it("derives a webview url from a filesystem path", () => {

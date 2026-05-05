@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { syncStatusLabel } from "./syncStatus";
+import { syncStatusLabel } from "./features/sync/syncStatus";
 import type { SyncAccountState } from "./types";
 
 describe("sync status label", () => {

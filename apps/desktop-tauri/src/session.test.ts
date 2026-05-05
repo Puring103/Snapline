@@ -7,7 +7,7 @@ import {
   matchesShortcut,
   sortNotes,
   upsertNote,
-} from "./session";
+} from "./features/sync/session";
 
 describe("session helpers", () => {
   it("treats a blank draft as clean", () => {

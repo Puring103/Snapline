@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { blobUrlFromBytes } from "./assetDisplay";
+import { blobUrlFromBytes } from "./features/assets/assetDisplay";
 
 describe("asset display urls", () => {
   it("creates a png blob url from asset bytes", () => {
