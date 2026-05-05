@@ -594,9 +594,9 @@ mod tests {
 
         let notes = repo.list_recent(10).unwrap();
         assert_eq!(notes[0].id, first.id);
-        assert_eq!(notes[0].pinned, true);
+        assert!(notes[0].pinned);
         assert_eq!(notes[1].id, second.id);
-        assert_eq!(notes[1].pinned, false);
+        assert!(!notes[1].pinned);
     }
 
     #[test]

@@ -15,9 +15,16 @@ snapline-platform = { path = "../../../crates/platform" }
 snapline-storage = { path = "../../../crates/storage" }
 snapline-sync-client = { path = "../../../crates/sync-client" }
 time = "=0.3.36"
-tauri-plugin-autostart = "2"
-tauri-plugin-global-shortcut = "2"
-tauri = { version = "2.10.3", features = ["protocol-asset"] }
+tauri-plugin-autostart = "=2.5.1"
+tauri-plugin-global-shortcut = "=2.3.1"
+tauri = { version = "=2.10.3", features = ["protocol-asset"] }
+tauri-plugin = "=2.5.4"
+tauri-runtime = "=2.10.1"
+tauri-runtime-wry = { version = "=2.10.1", default-features = false }
+tauri-utils = "=2.8.3"
+arboard = { version = "3.6.1", features = ["wayland-data-control"] }
+png = "0.17"
+dirs = "5"
 uuid.workspace = true
 chrono.workspace = true
 tokio.workspace = true

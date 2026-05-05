@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   bytesFromPastedImageFile,
   bytesFromTransientImageSource,
+  hasPotentialAsyncImageClipboardSource,
+  objectUrlFromImageBytes,
+  pastedImageSourceFromClipboardAsync,
+  pastedImageSourceFromClipboard,
   pastedImageFileFromClipboard,
 } from "./pasteImage";
 
@@ -116,5 +120,160 @@ describe("paste image helpers", () => {
 
     expect(file).toBeInstanceOf(File);
     expect(file?.type).toBe("image/png");
+  });
+
+  it("extracts Linux file URI images from uri-list clipboard data", () => {
+    expect(
+      pastedImageSourceFromClipboard({
+        getData: (type: string) => {
+          if (type === "text/uri-list") {
+            return "# copied from file manager\nfile:///home/wtl/Pictures/Screenshot%202026-05-01.png\n";
+          }
+          return "";
+        },
+      }),
+    ).toEqual({
+      kind: "local-file",
+      path: "/home/wtl/Pictures/Screenshot 2026-05-01.png",
+      mimeType: "image/png",
+    });
+  });
+
+  it("extracts Linux file URI images from plain text clipboard data", () => {
+    expect(
+      pastedImageSourceFromClipboard({
+        getData: (type: string) => {
+          if (type === "text/plain") {
+            return "file:///home/wtl/Pictures/plain.bmp";
+          }
+          return "";
+        },
+      }),
+    ).toEqual({
+      kind: "local-file",
+      path: "/home/wtl/Pictures/plain.bmp",
+      mimeType: "image/bmp",
+    });
+  });
+
+  it("extracts Linux file URI images from async uri-list clipboard items", async () => {
+    await expect(
+      pastedImageSourceFromClipboardAsync({
+        items: [
+          {
+            kind: "string",
+            type: "text/uri-list",
+            getAsFile: () => null,
+            getAsString: (callback: (value: string) => void) => {
+              callback("file:///home/wtl/Pictures/async.png");
+            },
+          },
+        ],
+      }),
+    ).resolves.toEqual({
+      kind: "local-file",
+      path: "/home/wtl/Pictures/async.png",
+      mimeType: "image/png",
+    });
+  });
+
+  it("detects Linux async image clipboard sources before falling back to text paste", () => {
+    expect(
+      hasPotentialAsyncImageClipboardSource({
+        getData: (type: string) => (type === "text/plain" ? "file:///home/wtl/Pictures/async.png" : ""),
+        items: [
+          {
+            kind: "string",
+            type: "text/uri-list",
+            getAsFile: () => null,
+            getAsString: (callback: (value: string) => void) => {
+              callback("file:///home/wtl/Pictures/async.png");
+            },
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("does not flag non-image text clipboard items as async image sources", () => {
+    expect(
+      hasPotentialAsyncImageClipboardSource({
+        items: [
+          {
+            kind: "string",
+            type: "application/x-custom",
+            getAsFile: () => null,
+            getAsString: (callback: (value: string) => void) => {
+              callback("plain text");
+            },
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("extracts GNOME copied file image URI clipboard items", async () => {
+    await expect(
+      pastedImageSourceFromClipboardAsync({
+        items: [
+          {
+            kind: "string",
+            type: "x-special/gnome-copied-files",
+            getAsFile: () => null,
+            getAsString: (callback: (value: string) => void) => {
+              callback("copy\nfile:///home/wtl/Pictures/gnome.webp\n");
+            },
+          },
+        ],
+      }),
+    ).resolves.toEqual({
+      kind: "local-file",
+      path: "/home/wtl/Pictures/gnome.webp",
+      mimeType: "image/webp",
+    });
+  });
+
+  it("extracts Linux file URI images from pasted html", () => {
+    expect(
+      pastedImageSourceFromClipboard({
+        getData: (type: string) => {
+          if (type === "text/html") {
+            return '<img src="file:///home/wtl/Pictures/photo.jpg">';
+          }
+          return "";
+        },
+      }),
+    ).toEqual({
+      kind: "local-file",
+      path: "/home/wtl/Pictures/photo.jpg",
+      mimeType: "image/jpeg",
+    });
+  });
+
+  it("ignores non-image local file URI clipboard data", () => {
+    expect(
+      pastedImageSourceFromClipboard({
+        getData: (type: string) => {
+          if (type === "text/uri-list") {
+            return "file:///home/wtl/Documents/report.pdf";
+          }
+          return "";
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("creates a displayable object url for local image bytes", () => {
+    const createdBlobs: Blob[] = [];
+    const createObjectUrl = vi.fn((blob: Blob) => {
+      createdBlobs.push(blob);
+      return "blob:local-image";
+    });
+
+    expect(objectUrlFromImageBytes([255, 216, 255, 224], "image/jpeg", createObjectUrl)).toBe(
+      "blob:local-image",
+    );
+    expect(createdBlobs[0]?.type).toBe("image/jpeg");
+    expect(createdBlobs[0]?.size).toBe(4);
   });
 });

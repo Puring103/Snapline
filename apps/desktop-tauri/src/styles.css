@@ -386,6 +386,61 @@ html[data-theme="dark"] .listShell {
   font-size: 11px;
 }
 
+.conflictBanner {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(184, 91, 77, 0.18);
+  background: rgba(184, 91, 77, 0.07);
+  color: var(--danger);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.conflictBanner .conflictIcon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.conflictBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+
+.conflictBadge .conflictIcon {
+  width: 11px;
+  height: 11px;
+}
+
+.conflictIcon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.noteRowTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .errorBanner {
   padding: 10px 12px;
   border-bottom: 1px solid rgba(177, 74, 61, 0.18);
@@ -1138,6 +1193,67 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   color: inherit;
   cursor: pointer;
   font-weight: 700;
+}
+
+.editorToolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--note-line);
+  background: color-mix(in srgb, var(--canvas) 80%, var(--surface));
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.editorToolbarDivider {
+  width: 1px;
+  height: 18px;
+  background: var(--note-line);
+  margin: 0 3px;
+  flex-shrink: 0;
+}
+
+.editorToolbarBtn {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.editorToolbarBtn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.75;
+}
+
+.editorToolbarBtn:hover {
+  background: var(--surface-soft);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.editorToolbarBtnActive {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  color: var(--accent);
+}
+
+.editorToolbarBtnActive:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .editorHint {

@@ -8,6 +8,7 @@ use snapline_sync_client::{
     protocol::{AssetUploadRequest, LoginRequest, PushChange, PushChangeResult, PushRequest},
     HttpSyncApi, SyncApi,
 };
+use std::borrow::Cow;
 use std::sync::Mutex;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, Position, RunEvent, State, WindowEvent,
@@ -170,7 +171,24 @@ fn read_asset_bytes(state: State<'_, AppState>, markdown_path: String) -> Result
 
     std::fs::read(path).map_err(|err| err.to_string())
 }
+#[tauri::command]
+fn read_local_image_file(path: String) -> Result<Vec<u8>, String> {
+    if !is_allowed_local_image_path(&path) {
+        return Err("unsupported image path".to_string());
+    }
 
+    std::fs::read(path).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn read_clipboard_image_png() -> Result<Option<Vec<u8>>, String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|err| err.to_string())?;
+    match clipboard.get_image() {
+        Ok(image) => encode_clipboard_image_as_png(image).map(Some),
+        Err(arboard::Error::ContentNotAvailable) => Ok(None),
+        Err(err) => Err(err.to_string()),
+    }
+}
 fn is_allowed_markdown_asset_path(markdown_path: &str) -> bool {
     markdown_path.starts_with("assets/")
         && !markdown_path.contains('\\')
@@ -178,7 +196,86 @@ fn is_allowed_markdown_asset_path(markdown_path: &str) -> bool {
             .split('/')
             .any(|segment| segment.is_empty() || segment == "." || segment == "..")
 }
+fn is_allowed_local_image_path(path: &str) -> bool {
+    let path = std::path::Path::new(path);
+    path.is_absolute()
+        && path.is_file()
+        && path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp"
+                )
+            })
+            .unwrap_or(false)
+}
 
+fn encode_clipboard_image_as_png(image: arboard::ImageData<'_>) -> Result<Vec<u8>, String> {
+    let rgba = clipboard_image_rgba_bytes(image.bytes);
+    let mut output = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut output, image.width as u32, image.height as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|err| err.to_string())?;
+        writer
+            .write_image_data(&rgba)
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(output)
+}
+
+fn clipboard_image_rgba_bytes(bytes: Cow<'_, [u8]>) -> Vec<u8> {
+    bytes.into_owned()
+}
+
+#[cfg(test)]
+fn test_image_data(width: usize, height: usize, bytes: Vec<u8>) -> arboard::ImageData<'static> {
+    arboard::ImageData {
+        width,
+        height,
+        bytes: Cow::Owned(bytes),
+    }
+}
+
+#[tauri::command]
+fn export_note_as_markdown(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    let note_id = parse_note_id(&id)?;
+    let note = state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .get_note(&note_id)
+        .map_err(|err| err.to_string())?;
+
+    let filename = if note.title.trim().is_empty() {
+        "Untitled.md".to_string()
+    } else {
+        let safe: String = note
+            .title
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        format!("{}.md", safe.trim())
+    };
+
+    let downloads = dirs::download_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
+        .ok_or_else(|| "could not find downloads directory".to_string())?;
+
+    std::fs::create_dir_all(&downloads).map_err(|err| err.to_string())?;
+    let dest = downloads.join(&filename);
+    std::fs::write(&dest, note.content_md.as_bytes()).map_err(|err| err.to_string())?;
+    Ok(dest.to_string_lossy().into_owned())
+}
 #[tauri::command]
 fn open_external_url(url: String) -> Result<String, String> {
     if !is_allowed_external_url(&url) {
@@ -765,6 +862,8 @@ fn main() {
             delete_note,
             save_png_asset,
             read_asset_bytes,
+            read_local_image_file,
+            read_clipboard_image_png,
             resolve_asset_url,
             open_external_url,
             get_open_shortcut,
@@ -773,7 +872,8 @@ fn main() {
             login_sync,
             anonymous_note_count,
             import_anonymous_notes,
-            sync_now
+            sync_now,
+            export_note_as_markdown
         ])
         .build(tauri::generate_context!())
         .expect("error while building Snapline")
@@ -840,6 +940,34 @@ mod tests {
         assert!(!is_allowed_markdown_asset_path(
             "assets\\notes\\note-id\\image-id.png"
         ));
+    }
+
+    #[test]
+    fn local_image_reader_only_accepts_image_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let image_path = dir.path().join("Screenshot.png");
+        let nested_image_path = dir.path().join("nested").join("photo.jpeg");
+        let text_path = dir.path().join("notes.txt");
+        fs::create_dir_all(nested_image_path.parent().unwrap()).unwrap();
+        fs::write(&image_path, [137, 80, 78, 71]).unwrap();
+        fs::write(&nested_image_path, [255, 216, 255, 224]).unwrap();
+        fs::write(&text_path, b"not an image").unwrap();
+
+        assert!(is_allowed_local_image_path(image_path.to_str().unwrap()));
+        assert!(is_allowed_local_image_path(
+            nested_image_path.to_str().unwrap()
+        ));
+        assert!(!is_allowed_local_image_path(text_path.to_str().unwrap()));
+        assert!(!is_allowed_local_image_path("../relative.png"));
+        assert!(!is_allowed_local_image_path(""));
+    }
+
+    #[test]
+    fn encodes_clipboard_image_as_png() {
+        let png =
+            encode_clipboard_image_as_png(test_image_data(1, 1, vec![255, 0, 0, 255])).unwrap();
+
+        assert_eq!(&png[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
     }
 
     #[test]

@@ -11,6 +11,12 @@ impl NoteId {
     }
 }
 
+impl Default for NoteId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl std::fmt::Display for NoteId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -123,7 +129,14 @@ fn strip_markdown_markup(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_preview, derive_preview_markdown, derive_title};
+    use super::{derive_preview, derive_preview_markdown, derive_title, NoteId};
+
+    #[test]
+    fn default_note_id_generates_uuid() {
+        let id = NoteId::default();
+
+        assert_eq!(id.to_string().len(), 36);
+    }
 
     #[test]
     fn derives_title_from_first_non_empty_heading() {
