@@ -2,10 +2,10 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { api } from "./api";
-import { webviewAssetUrlFromFilesystemPath } from "./assetUrl";
-import { hasTransientImageSource } from "./markdown";
-import { DEFAULT_EDITOR_MODE, toggleEditorMode, type EditorMode } from "./editorMode";
+import { api } from "./platform/api";
+import { webviewAssetUrlFromFilesystemPath } from "./features/assets/assetUrl";
+import { hasTransientImageSource } from "./features/editor/markdown";
+import { DEFAULT_EDITOR_MODE, toggleEditorMode, type EditorMode } from "./features/editor/editorMode";
 import {
   createDraftSession,
   deleteConfirmationFor,
@@ -14,26 +14,26 @@ import {
   sortNotes,
   upsertNote,
   type ActiveSession,
-} from "./session";
-import { startupLog } from "./startupLog";
-import { importPromptText, SyncSettings } from "./SyncSettings";
+} from "./features/sync/session";
+import { startupLog } from "./platform/startupLog";
+import { importPromptText, SyncSettings } from "./components/SyncSettings";
 import type { LoginSyncResult, Note, NoteSummary, SavedAsset, SyncAccountState, SyncStatusState } from "./types";
-import { syncStatusLabel } from "./syncStatus";
-import { openListWindow, openNoteWindow, readAppRoute, shouldDeferInitialNoteLoad, shouldStartWindowDrag } from "./window";
+import { syncStatusLabel } from "./features/sync/syncStatus";
+import { openListWindow, openNoteWindow, readAppRoute, shouldDeferInitialNoteLoad, shouldStartWindowDrag } from "./platform/window";
 
 const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
 const FOCUS_EDITOR_EVENT = "snapline-focus-editor";
 const THEME_STORAGE_KEY = "snapline.theme";
 const LazyEditorPane = lazy(() => {
   startupLog("editor_chunk_requested");
-  return import("./EditorPane").then((module) => {
+  return import("./components/EditorPane").then((module) => {
     startupLog("editor_chunk_loaded");
     return { default: module.EditorPane };
   });
 });
 const LazyMarkdownPreview = lazy(() => {
   startupLog("preview_chunk_requested");
-  return import("./MarkdownPreview").then((module) => {
+  return import("./components/MarkdownPreview").then((module) => {
     startupLog("preview_chunk_loaded");
     return { default: module.MarkdownPreview };
   });
