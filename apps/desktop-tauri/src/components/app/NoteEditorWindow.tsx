@@ -21,8 +21,8 @@ import {
   ConflictIcon,
   IconButton,
   ListIcon,
+  LogoIcon,
   MoreIcon,
-  PinIcon,
   PlusIcon,
   SettingsIcon,
 } from "./AppIcons";
@@ -441,7 +441,7 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
             label={windowAlwaysOnTop ? "Disable window always on top" : "Keep window on top"}
             onClick={() => void handleToggleWindowAlwaysOnTop()}
           >
-            <PinIcon />
+            <LogoIcon />
           </IconButton>
           <input
             aria-label="Note title"

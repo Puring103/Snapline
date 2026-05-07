@@ -1,32 +1,32 @@
 :root {
   color-scheme: light;
-  --bg: #f5eee1;
-  --bg-glow: rgba(255, 229, 138, 0.18);
-  --desk: #fffdf9;
-  --canvas: #fff9dc;
-  --canvas-strong: #ffed9c;
-  --surface: #fffefa;
-  --surface-soft: #faf3e4;
-  --line: #eadfc0;
-  --line-strong: #d7be64;
-  --note-line: #e9dba3;
+  --bg: #ede8df;
+  --bg-glow: rgba(200, 180, 110, 0.13);
+  --desk: #f5f2ec;
+  --canvas: #f0ecd8;
+  --canvas-strong: #e8e0b8;
+  --surface: #f7f4ee;
+  --surface-soft: #ede8dc;
+  --line: #d8d0b4;
+  --line-strong: #c0a850;
+  --note-line: #d4c88a;
   --text: #2c2618;
   --muted: #746952;
   --accent: #2f8577;
-  --accent-soft: #e1f3ee;
+  --accent-soft: #d8ede8;
   --icon: #3b3324;
-  --pin-active: #8a6314;
-  --pin-active-bg: #ffe48a;
+  --pin-active: #7a5610;
+  --pin-active-bg: #f0d870;
   --danger: #b85b4d;
-  --code-bg: #f3ead0;
+  --code-bg: #e8e0c8;
   --code-text: #4a402b;
-  --code-line: #d9c891;
+  --code-line: #ccc080;
   --code-muted: #8d805f;
   --code-accent: #2f8577;
-  --inline-code-bg: #efe2b7;
+  --inline-code-bg: #e4d8a8;
   --code-chip-text: #3b3324;
   --scroll-thumb: rgba(78, 56, 24, 0.2);
-  --shadow: 0 18px 38px rgba(78, 56, 24, 0.095);
+  --shadow: 0 18px 38px rgba(78, 56, 24, 0.1);
   --note-shadow: 0 10px 20px rgba(88, 63, 20, 0.1);
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
@@ -164,9 +164,9 @@ html[data-theme="dark"] .listShell {
   gap: 6px;
   margin: -8px -8px 0;
   padding: 8px 8px 10px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
   border-radius: 18px 18px 0 0;
-  background: color-mix(in srgb, var(--surface-soft) 70%, var(--surface));
+  background: var(--canvas);
   -webkit-app-region: drag;
   cursor: default;
 }
@@ -324,6 +324,17 @@ html[data-theme="dark"] .listShell {
   stroke-linejoin: round;
   stroke-width: 1.9;
   box-shadow: var(--note-shadow);
+}
+
+.iconButton .logoMark {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  stroke-width: 1.9;
 }
 
 .brandBlock {
@@ -704,9 +715,9 @@ html[data-theme="dark"] .markdownSurface .ProseMirror pre {
   gap: 10px;
   margin: -8px -8px 0;
   padding: 8px 8px 10px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
   border-radius: 18px 18px 0 0;
-  background: color-mix(in srgb, var(--surface-soft) 70%, var(--surface));
+  background: var(--canvas);
   -webkit-app-region: drag;
   cursor: default;
 }
@@ -1239,10 +1250,10 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
 .editorToolbar {
   display: flex;
   align-items: center;
-  gap: 1px;
-  padding: 4px 4px 4px;
-  border-top: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface-soft) 70%, var(--surface));
+  gap: 2px;
+  padding: 5px 6px;
+  border-top: 1px solid var(--line-strong);
+  background: var(--canvas);
   flex-wrap: nowrap;
   flex-shrink: 0;
   overflow: hidden;
@@ -1261,12 +1272,12 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
 }
 
 .editorToolbarBtn {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   display: inline-grid;
   place-items: center;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -1275,13 +1286,13 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
 }
 
 .editorToolbarBtn svg {
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.9;
+  stroke-width: 1.75;
 }
 
 .editorToolbarBtn:hover {
