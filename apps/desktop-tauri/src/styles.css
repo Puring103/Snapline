@@ -164,9 +164,9 @@ html[data-theme="dark"] .listShell {
   gap: 6px;
   margin: -8px -8px 0;
   padding: 8px 8px 10px;
-  border-bottom: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line);
   border-radius: 18px 18px 0 0;
-  background: var(--canvas);
+  background: color-mix(in srgb, var(--surface-soft) 80%, var(--surface));
   -webkit-app-region: drag;
   cursor: default;
 }
@@ -715,9 +715,9 @@ html[data-theme="dark"] .markdownSurface .ProseMirror pre {
   gap: 10px;
   margin: -8px -8px 0;
   padding: 8px 8px 10px;
-  border-bottom: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line);
   border-radius: 18px 18px 0 0;
-  background: var(--canvas);
+  background: color-mix(in srgb, var(--surface-soft) 80%, var(--surface));
   -webkit-app-region: drag;
   cursor: default;
 }
@@ -1252,8 +1252,8 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   align-items: center;
   gap: 2px;
   padding: 5px 6px;
-  border-top: 1px solid var(--line-strong);
-  background: var(--canvas);
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-soft) 80%, var(--surface));
   flex-wrap: nowrap;
   flex-shrink: 0;
   overflow: hidden;

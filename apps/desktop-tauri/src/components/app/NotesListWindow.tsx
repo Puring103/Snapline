@@ -9,9 +9,9 @@ import {
   ConflictIcon,
   IconButton,
   LogoIcon,
-  PinIcon,
   PlusIcon,
   SettingsIcon,
+  StarIcon,
   TrashIcon,
 } from "./AppIcons";
 import { api } from "../../platform/api";
@@ -316,7 +316,7 @@ export function NotesListWindow() {
                     ) : (
                       <>
                         <IconButton active={pinned} label={pinned ? "Unpin" : "Pin"} onClick={() => void handleTogglePinned(note.id)}>
-                          <PinIcon />
+                          <StarIcon />
                         </IconButton>
                         <IconButton danger label="Delete" onClick={() => setConfirmingDeleteId((current) => deleteConfirmationFor(current, note.id))}>
                           <TrashIcon />

@@ -102,6 +102,10 @@ export function ConflictIcon() {
   return <svg className="conflictIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4M12 17h.01"/><path d="M10.3 4l-8 13.5A2 2 0 0 0 4 20h16a2 2 0 0 0 1.7-2.5L13.7 4a2 2 0 0 0-3.4 0z"/></svg>;
 }
 
+export function StarIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>;
+}
+
 export function ThemeSystemIcon() {
   return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M3 12h9v9H6a3 3 0 0 1-3-3v-6z" /></svg>;
 }
