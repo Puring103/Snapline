@@ -4,30 +4,44 @@ use rusqlite::{params, Connection, OptionalExtension};
 use snapline_domain::{NoteId, SyncOpType, SyncPayload};
 use uuid::Uuid;
 
+/// 待同步的变更队列条目。
+///
+/// 同一笔记的多次 upsert/delete 操作会被合并为一条记录（coalesced），
+/// 避免向服务端推送冗余的中间状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeQueueItem {
+    /// 队列条目 UUID，提交给服务端后用于对账。
     pub id: String,
+    /// 所属账户 ID；None 表示匿名本地队列。
     pub account_id: Option<String>,
     pub note_id: NoteId,
     pub op_type: SyncOpType,
+    /// 推送时携带的基准版本号，服务端据此检测冲突。
     pub base_version: i64,
     pub payload: SyncPayload,
     pub queued_at: DateTime<Utc>,
+    /// 已重试次数（每次失败加 1）。
     pub retry_count: i64,
     pub last_error: Option<String>,
 }
 
+/// 本地持久化的同步状态，整个数据库只有一行（id = 1）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncState {
     pub account_id: Option<String>,
+    /// 本设备的唯一标识，首次打开时生成，用于拉取时过滤自己推送的变更。
     pub device_id: String,
     pub server_base_url: Option<String>,
+    /// 上次成功拉取后服务端返回的游标，下次拉取时作为起点。
     pub server_cursor: i64,
     pub access_token: Option<String>,
     pub last_sync_at: Option<DateTime<Utc>>,
     pub last_success_at: Option<DateTime<Utc>>,
 }
 
+/// 初始化同步相关的数据库表（change_queue、sync_state）。
+///
+/// 通过 `ensure_column` 支持增量迁移：对已存在但缺少新列的旧数据库也能升级。
 pub fn migrate_sync_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
@@ -67,6 +81,10 @@ pub fn migrate_sync_tables(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// 向变更队列中写入一条记录。
+///
+/// 若队列中已存在同一笔记的 upsert/delete 条目，则原地更新（coalesce），
+/// 避免多次编辑产生多条推送请求；资源上传条目不合并，每次独立入队。
 pub fn enqueue_change(
     conn: &Connection,
     account_id: Option<&str>,
@@ -83,7 +101,7 @@ pub fn enqueue_change(
                  SET op_type = ?1, payload_json = ?2, queued_at = ?3, retry_count = 0, last_error = NULL
                  WHERE id = ?4",
                 params![
-                    op_type_to_str(&op_type),
+                    op_type.as_str(),
                     serde_json::to_string(payload)?,
                     queued_at.to_rfc3339(),
                     existing_id,
@@ -100,7 +118,7 @@ pub fn enqueue_change(
             id,
             account_id,
             note_id.to_string(),
-            op_type_to_str(&op_type),
+            op_type.as_str(),
             base_version,
             serde_json::to_string(payload)?,
             queued_at.to_rfc3339()
@@ -109,6 +127,7 @@ pub fn enqueue_change(
     Ok(id)
 }
 
+/// 查找同一账户 + 笔记的已存在 upsert/delete 队列条目 ID。
 fn find_existing_note_change(
     conn: &Connection,
     account_id: Option<&str>,
@@ -138,6 +157,7 @@ fn find_existing_note_change(
     }
 }
 
+/// 列出待处理的变更条目，按入队时间升序排列。
 pub fn list_pending_changes(
     conn: &Connection,
     account_id: Option<&str>,
@@ -164,16 +184,20 @@ pub fn list_pending_changes(
         .map_err(Into::into)
 }
 
+/// 将数据库行映射为 `ChangeQueueItem`。
 fn row_to_change_queue_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChangeQueueItem> {
     let note_id = Uuid::parse_str(&row.get::<_, String>(2)?)
         .map(NoteId)
         .map_err(to_sql_err)?;
+    let op_str: String = row.get(3)?;
+    let op_type = SyncOpType::from_str(&op_str)
+        .ok_or_else(|| rusqlite::Error::InvalidParameterName(format!("unknown op_type: {op_str}")))?;
     let payload_json: String = row.get(5)?;
     Ok(ChangeQueueItem {
         id: row.get(0)?,
         account_id: row.get(1)?,
         note_id,
-        op_type: op_type_from_str(&row.get::<_, String>(3)?)?,
+        op_type,
         base_version: row.get(4)?,
         payload: serde_json::from_str(&payload_json).map_err(to_sql_err)?,
         queued_at: parse_time(row.get::<_, String>(6)?)?,
@@ -182,11 +206,13 @@ fn row_to_change_queue_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChangeQ
     })
 }
 
+/// 从队列中删除已处理的条目（接受或冲突解决后调用）。
 pub fn delete_change(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM change_queue WHERE id = ?1", params![id])?;
     Ok(())
 }
 
+/// 标记条目推送失败，增加重试计数并记录错误信息。
 pub fn mark_change_failed(conn: &Connection, id: &str, error: &str) -> Result<()> {
     conn.execute(
         "UPDATE change_queue SET retry_count = retry_count + 1, last_error = ?1 WHERE id = ?2",
@@ -195,6 +221,9 @@ pub fn mark_change_failed(conn: &Connection, id: &str, error: &str) -> Result<()
     Ok(())
 }
 
+/// 读取（或首次创建）本地同步状态行。
+///
+/// 首次调用时生成随机 `device_id` 并写入数据库；后续复用同一行。
 pub fn get_or_create_sync_state(conn: &Connection) -> Result<SyncState> {
     let existing = conn
         .query_row(
@@ -223,6 +252,7 @@ pub fn get_or_create_sync_state(conn: &Connection) -> Result<SyncState> {
     })
 }
 
+/// 将同步状态写回数据库（upsert）。
 pub fn save_sync_state(conn: &Connection, state: &SyncState) -> Result<()> {
     conn.execute(
         "INSERT INTO sync_state
@@ -263,7 +293,13 @@ fn row_to_sync_state(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncState> {
     })
 }
 
-fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<()> {
+/// 检查表中是否存在指定列，不存在则用 ALTER TABLE 添加（用于增量迁移）。
+pub(crate) fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let has_column = stmt
         .query_map([], |row| row.get::<_, String>(1))?
@@ -277,25 +313,6 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str)
         )?;
     }
     Ok(())
-}
-
-fn op_type_to_str(op_type: &SyncOpType) -> &'static str {
-    match op_type {
-        SyncOpType::UpsertNote => "upsert_note",
-        SyncOpType::DeleteNote => "delete_note",
-        SyncOpType::AssetUpload => "asset_upload",
-    }
-}
-
-fn op_type_from_str(value: &str) -> rusqlite::Result<SyncOpType> {
-    match value {
-        "upsert_note" => Ok(SyncOpType::UpsertNote),
-        "delete_note" => Ok(SyncOpType::DeleteNote),
-        "asset_upload" => Ok(SyncOpType::AssetUpload),
-        _ => Err(rusqlite::Error::InvalidParameterName(format!(
-            "unknown sync op type: {value}"
-        ))),
-    }
 }
 
 fn parse_time(value: String) -> rusqlite::Result<DateTime<Utc>> {

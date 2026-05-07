@@ -1,3 +1,4 @@
+/// Snapline 同步服务器入口：初始化配置、数据库连接和 Axum 路由。
 mod assets;
 mod auth;
 mod config;

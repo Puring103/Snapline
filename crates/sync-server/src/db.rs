@@ -1,3 +1,4 @@
+/// PostgreSQL 连接池初始化与 schema 迁移。
 use anyhow::Result;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 

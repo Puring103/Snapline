@@ -1,3 +1,4 @@
+/// 领域模型层：定义 Snapline 的核心数据结构，不依赖任何持久化或网络细节。
 pub mod asset;
 pub mod note;
 pub mod sync;

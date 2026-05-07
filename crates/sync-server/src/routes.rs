@@ -1,3 +1,4 @@
+/// HTTP 路由处理器：注册、登录、推送、拉取、快照及资源上传/下载。
 use crate::{
     assets::{AssetStore, LocalFsAssetStore},
     auth,

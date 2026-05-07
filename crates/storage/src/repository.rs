@@ -9,11 +9,16 @@ use snapline_domain::{
 use std::path::Path;
 use uuid::Uuid;
 
+/// 本地 SQLite 笔记仓库。
+///
+/// 封装所有笔记 CRUD、设置键值对，以及同步队列的代理调用。
+/// 连接在打开时自动执行增量 schema 迁移，无需手动管理版本号。
 pub struct NoteRepository {
     conn: Connection,
 }
 
 impl NoteRepository {
+    /// 打开（或创建）指定路径的 SQLite 数据库。
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         let repo = Self { conn };
@@ -21,6 +26,7 @@ impl NoteRepository {
         Ok(repo)
     }
 
+    /// 打开内存数据库，仅用于测试。
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         let repo = Self { conn };
@@ -28,6 +34,10 @@ impl NoteRepository {
         Ok(repo)
     }
 
+    /// 执行增量 schema 迁移：建表、补列、建索引。
+    ///
+    /// 所有操作使用 `IF NOT EXISTS` 或 `ensure_column` 保证幂等，
+    /// 可在任意旧版本数据库上安全运行。
     fn migrate(&self) -> Result<()> {
         self.conn.execute_batch(
             "
@@ -53,16 +63,18 @@ impl NoteRepository {
             );
             ",
         )?;
-        self.ensure_column("notes", "pinned", "INTEGER NOT NULL DEFAULT 0")?;
-        self.ensure_column("notes", "server_version", "INTEGER NOT NULL DEFAULT 0")?;
-        self.ensure_column("notes", "last_modified_by_device", "TEXT")?;
-        self.ensure_column("notes", "is_conflict_copy", "INTEGER NOT NULL DEFAULT 0")?;
-        self.ensure_column("notes", "source_note_id", "TEXT")?;
-        self.ensure_column("notes", "owner_account_id", "TEXT")?;
+        // 对可能存在的旧版本数据库补齐新增列
+        sync::ensure_column(&self.conn, "notes", "pinned", "INTEGER NOT NULL DEFAULT 0")?;
+        sync::ensure_column(&self.conn, "notes", "server_version", "INTEGER NOT NULL DEFAULT 0")?;
+        sync::ensure_column(&self.conn, "notes", "last_modified_by_device", "TEXT")?;
+        sync::ensure_column(&self.conn, "notes", "is_conflict_copy", "INTEGER NOT NULL DEFAULT 0")?;
+        sync::ensure_column(&self.conn, "notes", "source_note_id", "TEXT")?;
+        sync::ensure_column(&self.conn, "notes", "owner_account_id", "TEXT")?;
         sync::migrate_sync_tables(&self.conn)?;
         Ok(())
     }
 
+    /// 创建一条空白草稿笔记并持久化，返回新笔记。
     pub fn create_note(&self, now: DateTime<Utc>, owner_account_id: Option<&str>) -> Result<Note> {
         let mut note = Note::draft(now);
         note.owner_account_id = owner_account_id.map(str::to_string);
@@ -82,6 +94,7 @@ impl NoteRepository {
         Ok(note)
     }
 
+    /// 保存笔记内容（upsert），标题为空或 "Untitled" 时自动从正文推导。
     pub fn save_note(
         &self,
         id: &NoteId,
@@ -116,10 +129,14 @@ impl NoteRepository {
         self.get_note(id)
     }
 
+    /// 检查指定 ID 的笔记是否存在（不区分 owner）。
     pub fn note_exists(&self, id: &NoteId) -> Result<bool> {
         Ok(self.find_note(id)?.is_some())
     }
 
+    /// 将远端同步来的笔记写入本地，覆盖同 ID 的已有记录（包括 server_version）。
+    ///
+    /// 此方法不入队同步变更，仅更新本地镜像。
     pub fn apply_remote_note(&self, note: &Note) -> Result<()> {
         self.conn.execute(
             "
@@ -157,6 +174,10 @@ impl NoteRepository {
         Ok(())
     }
 
+    /// 为同步冲突时被拒绝的本地版本创建副本，保留用户的编辑内容。
+    ///
+    /// 副本标题自动加 `(Conflict copy)` 后缀，`server_version` 归零，
+    /// `source_note_id` 指向原笔记以便 UI 展示来源关系。
     pub fn create_conflict_copy(&self, rejected_note: &Note, now: DateTime<Utc>) -> Result<Note> {
         let mut copy = rejected_note.clone();
         copy.id = NoteId::new();
@@ -190,6 +211,7 @@ impl NoteRepository {
         self.get_note(&copy.id)
     }
 
+    /// 更新笔记的服务端版本号（推送被服务端接受后调用）。
     pub fn update_note_server_version(&self, id: &NoteId, server_version: i64) -> Result<()> {
         self.conn.execute(
             "UPDATE notes SET server_version = ?1 WHERE id = ?2",
@@ -198,6 +220,7 @@ impl NoteRepository {
         Ok(())
     }
 
+    /// 设置笔记的置顶状态。
     pub fn set_pinned(&self, id: &NoteId, pinned: bool, now: DateTime<Utc>) -> Result<Note> {
         let note = self
             .find_note(id)?
@@ -212,6 +235,7 @@ impl NoteRepository {
         )
     }
 
+    /// 更新笔记标题（保持正文不变）。
     pub fn update_note_title(&self, id: &NoteId, title: &str, now: DateTime<Utc>) -> Result<Note> {
         let note = self
             .find_note(id)?
@@ -226,6 +250,7 @@ impl NoteRepository {
         )
     }
 
+    /// 更新笔记正文 Markdown（标题由调用方单独管理）。
     pub fn update_note_content(
         &self,
         id: &NoteId,
@@ -245,11 +270,13 @@ impl NoteRepository {
         )
     }
 
+    /// 按 ID 获取笔记，不存在则返回错误。
     pub fn get_note(&self, id: &NoteId) -> Result<Note> {
         self.find_note(id)?
             .ok_or_else(|| anyhow::anyhow!("note not found"))
     }
 
+    /// 按 ID 获取笔记，并校验 owner；owner 不匹配时返回错误。
     pub fn get_note_for_owner(&self, id: &NoteId, owner_account_id: Option<&str>) -> Result<Note> {
         let note = self.get_note(id)?;
         if note.owner_account_id.as_deref() == owner_account_id {
@@ -274,10 +301,14 @@ impl NoteRepository {
             .map_err(Into::into)
     }
 
+    /// 列出最近编辑的笔记（不区分 owner，用于未登录状态）。
     pub fn list_recent(&self, limit: usize) -> Result<Vec<NoteSummary>> {
         self.list_recent_for_owner(limit, None)
     }
 
+    /// 列出指定 owner 最近编辑的笔记，按置顶优先、更新时间降序排列。
+    ///
+    /// `owner_account_id = None` 表示只列匿名本地笔记。
     pub fn list_recent_for_owner(
         &self,
         limit: usize,
@@ -309,6 +340,7 @@ impl NoteRepository {
         }
     }
 
+    /// 统计匿名（本地）笔记数量，用于登录前提示是否迁移。
     pub fn count_anonymous_notes(&self) -> Result<usize> {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM notes WHERE owner_account_id IS NULL AND deleted_at IS NULL",
@@ -318,6 +350,9 @@ impl NoteRepository {
         Ok(count as usize)
     }
 
+    /// 将所有匿名笔记归属到指定账户，返回迁移的笔记 ID 列表。
+    ///
+    /// 迁移完成后调用方需为每条笔记入队 `UpsertNote` 同步变更。
     pub fn import_anonymous_notes(&self, account_id: &str) -> Result<Vec<NoteId>> {
         let mut stmt = self.conn.prepare(
             "SELECT id FROM notes WHERE owner_account_id IS NULL AND deleted_at IS NULL ORDER BY updated_at ASC",
@@ -333,6 +368,7 @@ impl NoteRepository {
         Ok(ids)
     }
 
+    /// 软删除笔记：设置 `deleted_at` 和 `updated_at`，不物理删除行。
     pub fn soft_delete(&self, id: &NoteId, now: DateTime<Utc>) -> Result<()> {
         self.conn.execute(
             "UPDATE notes SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
@@ -341,6 +377,7 @@ impl NoteRepository {
         Ok(())
     }
 
+    /// 读取设置项，不存在时返回 None。
     pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
         let mut stmt = self
             .conn
@@ -353,6 +390,7 @@ impl NoteRepository {
         }
     }
 
+    /// 写入或删除设置项（`value = None` 时删除该 key）。
     pub fn set_setting(&self, key: &str, value: Option<&str>) -> Result<()> {
         match value {
             Some(value) => {
@@ -370,6 +408,9 @@ impl NoteRepository {
         Ok(())
     }
 
+    // ── 同步队列代理方法 ─────────────────────────────────────────────────────
+
+    /// 向变更队列写入一条同步记录。
     pub fn enqueue_change(
         &self,
         account_id: Option<&str>,
@@ -390,6 +431,7 @@ impl NoteRepository {
         )
     }
 
+    /// 列出待处理的变更队列条目。
     pub fn list_pending_changes(
         &self,
         account_id: Option<&str>,
@@ -398,6 +440,7 @@ impl NoteRepository {
         sync::list_pending_changes(&self.conn, account_id, limit)
     }
 
+    /// 检查指定笔记是否有待处理的变更（用于冲突检测）。
     pub fn has_pending_note_change(
         &self,
         account_id: Option<&str>,
@@ -418,10 +461,12 @@ impl NoteRepository {
         Ok(count > 0)
     }
 
+    /// 删除单条变更队列条目（推送被接受后调用）。
     pub fn delete_change(&self, id: &str) -> Result<()> {
         sync::delete_change(&self.conn, id)
     }
 
+    /// 删除某笔记的所有待处理变更（冲突解决后清空队列）。
     pub fn delete_changes_for_note(
         &self,
         account_id: Option<&str>,
@@ -444,18 +489,22 @@ impl NoteRepository {
         Ok(())
     }
 
+    /// 标记变更队列条目推送失败，增加重试计数。
     pub fn mark_change_failed(&self, id: &str, error: &str) -> Result<()> {
         sync::mark_change_failed(&self.conn, id, error)
     }
 
+    /// 读取（或初始化）本地同步状态。
     pub fn get_or_create_sync_state(&self) -> Result<sync::SyncState> {
         sync::get_or_create_sync_state(&self.conn)
     }
 
+    /// 将同步状态写回数据库。
     pub fn save_sync_state(&self, state: &sync::SyncState) -> Result<()> {
         sync::save_sync_state(&self.conn, state)
     }
 
+    /// 推送成功后更新服务端游标和最后同步时间。
     pub fn update_sync_cursor_success(&self, cursor: i64, now: DateTime<Utc>) -> Result<()> {
         let mut state = self.get_or_create_sync_state()?;
         state.server_cursor = cursor;
@@ -463,23 +512,9 @@ impl NoteRepository {
         state.last_success_at = Some(now);
         self.save_sync_state(&state)
     }
-
-    fn ensure_column(&self, table: &str, column: &str, definition: &str) -> Result<()> {
-        let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
-        let has_column = stmt
-            .query_map([], |row| row.get::<_, String>(1))?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-            .into_iter()
-            .any(|name| name == column);
-        if !has_column {
-            self.conn.execute(
-                &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
-                [],
-            )?;
-        }
-        Ok(())
-    }
 }
+
+// ── 行映射辅助函数 ────────────────────────────────────────────────────────────
 
 fn row_to_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     let deleted: Option<String> = row.get(6)?;
@@ -504,13 +539,14 @@ fn row_to_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
 
 fn note_summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteSummary> {
     let source_note_id: Option<String> = row.get(6)?;
+    let content_md: String = row.get(4)?;
     Ok(NoteSummary {
         id: NoteId(parse_uuid(row.get::<_, String>(0)?)?),
         title: row.get(1)?,
         pinned: row.get::<_, i64>(2)? != 0,
         updated_at: parse_time(row.get::<_, String>(3)?)?,
-        preview: derive_preview(&row.get::<_, String>(4)?),
-        preview_md: derive_preview_markdown(&row.get::<_, String>(4)?),
+        preview: derive_preview(&content_md),
+        preview_md: derive_preview_markdown(&content_md),
         is_conflict_copy: row.get::<_, i64>(5)? != 0,
         source_note_id: source_note_id
             .map(|value| parse_uuid(value).map(NoteId))
@@ -529,6 +565,7 @@ fn parse_time(value: String) -> rusqlite::Result<DateTime<Utc>> {
         .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))
 }
 
+/// 生成一个带指定 ID 的临时内存草稿，用于局部更新时的 fallback。
 fn draft_note_with_id(id: &NoteId, now: DateTime<Utc>) -> Note {
     Note {
         id: id.clone(),
@@ -546,6 +583,7 @@ fn draft_note_with_id(id: &NoteId, now: DateTime<Utc>) -> Note {
     }
 }
 
+/// 标题解析：空白或 "Untitled" 时从正文 Markdown 自动推导。
 fn resolve_note_title(title: &str, content_md: &str) -> String {
     let trimmed = title.trim();
     if trimmed.is_empty() || trimmed == "Untitled" {
