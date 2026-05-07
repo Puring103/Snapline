@@ -129,7 +129,7 @@ async function revealExistingNoteWindow(noteId: string) {
   return null;
 }
 
-function openAppWindow(mode: AppWindowMode, noteId: string | null = null, _position?: PointerWindowPosition) {
+function openAppWindow(mode: AppWindowMode, noteId: string | null = null, position?: PointerWindowPosition) {
   const label = buildWindowLabel(mode, noteId);
   const params = new URLSearchParams({ mode });
   if (noteId) params.set("noteId", noteId);
@@ -138,7 +138,7 @@ function openAppWindow(mode: AppWindowMode, noteId: string | null = null, _posit
   const win = new WebviewWindow(label, {
     url: `/?${params.toString()}`,
     title: mode === "list" ? "Snapline" : "Snapline Note",
-    center: true,
+    ...(position ? { position: new LogicalPosition(position.x + 12, position.y + 12) } : { center: true }),
     ...options,
   });
 
