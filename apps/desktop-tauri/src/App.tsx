@@ -19,7 +19,7 @@ import { startupLog } from "./startupLog";
 import { importPromptText, SyncSettings } from "./SyncSettings";
 import type { LoginSyncResult, Note, NoteSummary, SavedAsset, SyncAccountState, SyncStatusState } from "./types";
 import { syncStatusLabel } from "./syncStatus";
-import { openListWindow, openNoteWindow, readAppRoute, shouldDeferInitialNoteLoad, shouldStartWindowDrag } from "./window";
+import { forgetNoteWindow, openListWindow, openNoteWindow, readAppRoute, rememberNoteWindow, shouldDeferInitialNoteLoad, shouldStartWindowDrag } from "./window";
 
 const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
 const FOCUS_EDITOR_EVENT = "snapline-focus-editor";
@@ -217,6 +217,7 @@ function NotesListWindow() {
       const nextNotes = await api.deleteNote(id);
       setNotes(nextNotes);
       setConfirmingDeleteId(null);
+      forgetNoteWindow(id);
       await emit("note-deleted", { id });
     } catch (err) {
       setError(String(err));
@@ -412,7 +413,6 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [themeMode, setThemeMode] = useThemeMode();
-  const [toolbarVisible, setToolbarVisible] = useState(false);
   const [isConflictCopy, setIsConflictCopy] = useState(false);
   const [sourceNoteId, setSourceNoteId] = useState<string | null>(null);
 
@@ -601,6 +601,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
 
   function beginSessionFromNote(note: Note) {
     clearSaveTimer();
+    rememberNoteWindow(note.id, windowLabel);
     setSession({
       kind: noteId ? "existing" : "draft",
       id: note.id,
@@ -647,6 +648,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       const noteIdToSave = snapshot.id ?? (await api.createNote()).id;
       const saved = await api.saveNote(noteIdToSave, snapshot.title, snapshot.bodyMd, notePinnedRef.current);
 
+      rememberNoteWindow(saved.id, windowLabel);
       setSession({
         kind: "existing",
         id: saved.id,
@@ -688,6 +690,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     if (!noteIdToUse) {
       const draft = await api.createNote();
       noteIdToUse = draft.id;
+      rememberNoteWindow(draft.id, windowLabel);
       setSession((current) => ({
         ...current,
         kind: "draft",
@@ -738,17 +741,6 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
 
   function handleSyncSaved(result: LoginSyncResult) {
     setSyncAccount(result.account);
-  }
-
-  async function handleExportNote() {
-    const snapshot = sessionRef.current;
-    if (!snapshot.id || deletedRef.current) return;
-    try {
-      setError(null);
-      await api.exportNoteAsMarkdown(snapshot.id);
-    } catch (err) {
-      setError(String(err));
-    }
   }
 
   function persistShortcut(nextShortcut: string) {
@@ -817,14 +809,6 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
                     <PlusIcon />
                     <span>New</span>
                   </button>
-                  <button onClick={() => handleChromeMenuAction(() => setToolbarVisible((v) => !v))} role="menuitem" type="button">
-                    <ToolbarIcon />
-                    <span>{toolbarVisible ? "Hide toolbar" : "Show toolbar"}</span>
-                  </button>
-                  <button onClick={() => handleChromeMenuAction(handleExportNote)} role="menuitem" type="button" disabled={!session.id || deleted}>
-                    <ExportIcon />
-                    <span>Export .md</span>
-                  </button>
                   <button onClick={() => handleChromeMenuAction(handleOpenSettings)} role="menuitem" type="button">
                     <SettingsIcon />
                     <span>Settings</span>
@@ -878,7 +862,7 @@ function NoteEditorWindow({ noteId }: { noteId: string | null }) {
               onBodyChange={handleBodyChange}
               onRequestImageSave={handleRequestImageSave}
               readOnly={deleted}
-              showToolbar={toolbarVisible}
+              showToolbar
             />
           </Suspense>
         </section>
@@ -940,6 +924,32 @@ function SettingsPanel({
   syncAccount: SyncAccountState | null;
   onSyncSaved: (result: LoginSyncResult) => void;
 }) {
+  const [shortcutListening, setShortcutListening] = useState(false);
+
+  useEffect(() => {
+    if (!shortcutListening) return;
+
+    const handleShortcutKey = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === "Escape") {
+        setShortcutListening(false);
+        return;
+      }
+
+      const nextShortcut = shortcutFromKeyboardEvent(event);
+      if (!nextShortcut) return;
+
+      onShortcutChange(nextShortcut);
+      onShortcutSave(nextShortcut);
+      setShortcutListening(false);
+    };
+
+    window.addEventListener("keydown", handleShortcutKey, true);
+    return () => window.removeEventListener("keydown", handleShortcutKey, true);
+  }, [onShortcutChange, onShortcutSave, shortcutListening]);
+
   return (
     <div className="settingsBackdrop" onClick={onClose}>
       <section className="settingsPanel" onClick={(event) => event.stopPropagation()}>
@@ -956,20 +966,11 @@ function SettingsPanel({
           <label className="settingsField">
             <span>Open shortcut</span>
             <div className="shortcutRow">
-              <input
-                className="shortcutInput"
-                value={shortcut}
-                onChange={(event) => onShortcutChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    onShortcutSave(shortcut);
-                  }
-                }}
-                placeholder={DEFAULT_SHORTCUT}
-              />
-              <button className="drawerAction" onClick={() => onShortcutSave(shortcut)} type="button">
-                Save
+              <div className={shortcutListening ? "shortcutDisplay listening" : "shortcutDisplay"}>
+                {shortcutListening ? "Press shortcut..." : shortcut}
+              </div>
+              <button className="drawerAction" onClick={() => setShortcutListening(true)} type="button">
+                {shortcutListening ? "Listening" : "Change"}
               </button>
             </div>
           </label>
@@ -991,12 +992,14 @@ function SettingsPanel({
             <div className="segmentedControl">
               {(["system", "light", "dark"] as const).map((mode) => (
                 <button
-                  className={themeMode === mode ? "segment active" : "segment"}
+                  aria-label={`Use ${mode} theme`}
+                  className={themeMode === mode ? "segment themeSegment active" : "segment themeSegment"}
                   key={mode}
                   onClick={() => onThemeModeChange(mode)}
+                  title={mode}
                   type="button"
                 >
-                  {mode}
+                  {mode === "system" ? <SystemThemeIcon /> : mode === "light" ? <LightThemeIcon /> : <DarkThemeIcon />}
                 </button>
               ))}
             </div>
@@ -1079,6 +1082,43 @@ function useThemeSync() {
 function readStoredThemeMode(): ThemeMode {
   const stored = localStorage.getItem(THEME_STORAGE_KEY);
   return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+}
+
+function shortcutFromKeyboardEvent(event: KeyboardEvent): string | null {
+  const key = normalizedShortcutKey(event);
+  if (!key) return null;
+
+  const parts = [];
+  if (event.ctrlKey) parts.push("Ctrl");
+  if (event.shiftKey) parts.push("Shift");
+  if (event.altKey) parts.push("Alt");
+  if (event.metaKey) parts.push("Meta");
+  parts.push(key);
+  return parts.join("+");
+}
+
+function normalizedShortcutKey(event: KeyboardEvent): string | null {
+  if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) {
+    return null;
+  }
+
+  if (event.code.startsWith("Key")) {
+    return event.code.slice(3).toUpperCase();
+  }
+
+  if (event.code.startsWith("Digit")) {
+    return event.code.slice(5);
+  }
+
+  const aliases: Record<string, string> = {
+    " ": "Space",
+    ArrowDown: "Down",
+    ArrowLeft: "Left",
+    ArrowRight: "Right",
+    ArrowUp: "Up",
+    Escape: "Esc",
+  };
+  return aliases[event.key] ?? (event.key.length === 1 ? event.key.toUpperCase() : event.key);
 }
 
 function pointerPositionFromEvent(event?: MouseEvent<HTMLElement>) {
@@ -1179,8 +1219,16 @@ function ToolbarIcon() {
   return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h2M9 7h2M14 7h2M4 12h16M4 17h8" /><rect x="3" y="5" width="5" height="4" rx="1.2"/></svg>;
 }
 
-function ExportIcon() {
-  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>;
+function SystemThemeIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="2" /><path d="M9 20h6M12 16v4" /></svg>;
+}
+
+function LightThemeIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2M12 19.5v2M4.5 4.5l1.4 1.4M18.1 18.1l1.4 1.4M2.5 12h2M19.5 12h2M4.5 19.5l1.4-1.4M18.1 5.9l1.4-1.4" /></svg>;
+}
+
+function DarkThemeIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.4A7.4 7.4 0 0 1 9.6 4 8.2 8.2 0 1 0 20 14.4Z" /></svg>;
 }
 
 function ConflictIcon() {

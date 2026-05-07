@@ -48,7 +48,7 @@ export function EditorPane({
   onBodyChange,
   onRequestImageSave,
   readOnly = false,
-  showToolbar = false,
+  showToolbar = true,
 }: EditorPaneProps) {
   const suppressNextUpdate = useRef(false);
   const editorRef = useRef<Editor | null>(null);

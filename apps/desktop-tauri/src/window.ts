@@ -21,6 +21,8 @@ const LIST_WINDOW_OPTIONS = {
   decorations: false,
 } as const;
 
+const NOTE_WINDOW_LABEL_PREFIX = "snapline.noteWindow.";
+
 export interface AppRoute {
   mode: AppWindowMode;
   noteId: string | null;
@@ -64,7 +66,23 @@ export interface PointerWindowPosition {
 }
 
 export function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
-  return openAppWindow("note", noteId ?? null, position);
+  const normalizedNoteId = noteId ?? null;
+
+  if (normalizedNoteId) {
+    return revealExistingNoteWindow(normalizedNoteId).then((existing) => {
+      return existing ?? openAppWindow("note", normalizedNoteId, position);
+    });
+  }
+
+  return openAppWindow("note", null, position);
+}
+
+export function rememberNoteWindow(noteId: string, label: string) {
+  localStorage.setItem(`${NOTE_WINDOW_LABEL_PREFIX}${noteId}`, label);
+}
+
+export function forgetNoteWindow(noteId: string) {
+  localStorage.removeItem(`${NOTE_WINDOW_LABEL_PREFIX}${noteId}`);
 }
 
 export function windowOptionsForMode(mode: AppWindowMode) {
@@ -91,6 +109,26 @@ export async function revealExistingWindow(window: RevealableWindow) {
   await window.setFocus();
 }
 
+async function revealExistingNoteWindow(noteId: string) {
+  const stableLabel = buildWindowLabel("note", noteId);
+  const rememberedLabel = readRememberedNoteWindowLabel(noteId);
+  const candidateLabels = rememberedLabel && rememberedLabel !== stableLabel
+    ? [rememberedLabel, stableLabel]
+    : [stableLabel];
+
+  for (const label of candidateLabels) {
+    const existing = await WebviewWindow.getByLabel(label);
+    if (existing) {
+      await revealExistingWindow(existing);
+      rememberNoteWindow(noteId, label);
+      return existing;
+    }
+  }
+
+  forgetNoteWindow(noteId);
+  return null;
+}
+
 function openAppWindow(mode: AppWindowMode, noteId: string | null = null, position?: PointerWindowPosition) {
   const label = buildWindowLabel(mode, noteId);
   const params = new URLSearchParams({ mode });
@@ -110,6 +148,14 @@ function buildWindowLabel(mode: AppWindowMode, noteId: string | null) {
     return "list";
   }
 
+  if (noteId) {
+    return `note-${noteId}`;
+  }
+
   const suffix = crypto.randomUUID().replace(/-/g, "");
-  return noteId ? `note-${noteId}-${suffix}` : `${mode}-${suffix}`;
+  return `${mode}-${suffix}`;
+}
+
+function readRememberedNoteWindowLabel(noteId: string): string | null {
+  return localStorage.getItem(`${NOTE_WINDOW_LABEL_PREFIX}${noteId}`);
 }

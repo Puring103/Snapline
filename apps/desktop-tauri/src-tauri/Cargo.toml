@@ -20,7 +20,6 @@ tauri-plugin-global-shortcut = "2"
 tauri = { version = "2.10.3", features = ["protocol-asset"] }
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 png = "0.17"
-dirs = "5"
 uuid.workspace = true
 chrono.workspace = true
 tokio.workspace = true

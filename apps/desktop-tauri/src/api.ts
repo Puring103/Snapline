@@ -29,5 +29,4 @@ export const api = {
   importAnonymousNotes: () => invoke<NoteSummary[]>("import_anonymous_notes"),
   syncNow: () => invoke<string>("sync_now"),
   openExternalUrl: (url: string) => invoke<string>("open_external_url", { url }),
-  exportNoteAsMarkdown: (id: string) => invoke<string>("export_note_as_markdown", { id }),
 };
