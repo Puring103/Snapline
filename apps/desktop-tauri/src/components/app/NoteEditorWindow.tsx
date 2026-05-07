@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { api } from "../../platform/api";
 import { startupLog } from "../../platform/startupLog";
-import { openListWindow, openNoteWindow, shouldDeferInitialNoteLoad, shouldStartWindowDrag } from "../../platform/window";
+import { CLOSE_OTHER_NOTES_EVENT, openListWindow, openNoteWindow, shouldDeferInitialNoteLoad, shouldStartWindowDrag } from "../../platform/window";
 import { webviewAssetUrlFromFilesystemPath } from "../../features/assets/assetUrl";
 import { DEFAULT_EDITOR_MODE, toggleEditorMode, type EditorMode } from "../../features/editor/editorMode";
 import {
@@ -211,6 +211,18 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     };
   }, [noteId]);
 
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void listen<{ keepLabel: string }>(CLOSE_OTHER_NOTES_EVENT, (event) => {
+      if (event.payload.keepLabel === windowLabel) return;
+      void getCurrentWindow().close();
+    }).then((nextUnlisten) => {
+      unlisten = nextUnlisten;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, [windowLabel]);
 
   useEffect(() => {
     clearSaveTimer();
