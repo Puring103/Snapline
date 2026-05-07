@@ -212,6 +212,9 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   }, [noteId]);
 
   useEffect(() => {
+    // main 窗口关闭会导致应用退出，只让独立的 note-* 窗口响应
+    if (windowLabel === "main") return;
+
     let unlisten: (() => void) | null = null;
     void listen<{ keepLabel: string }>(CLOSE_OTHER_NOTES_EVENT, (event) => {
       if (event.payload.keepLabel === windowLabel) return;
