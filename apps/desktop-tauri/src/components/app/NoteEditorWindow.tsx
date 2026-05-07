@@ -214,6 +214,22 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   }, [noteId]);
 
   useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void listen<{ keepNoteId: string }>("note-window-close-others", (event) => {
+      const keepId = event.payload.keepNoteId;
+      // 如果当前窗口的笔记 ID 不是要保留的，关闭自己
+      if (keepId && sessionRef.current.id === keepId) return;
+      if (!keepId && noteId === null) return;
+      void getCurrentWindow().close();
+    }).then((nextUnlisten) => {
+      unlisten = nextUnlisten;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, [noteId]);
+
+  useEffect(() => {
     clearSaveTimer();
 
     if (deleted) {

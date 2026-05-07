@@ -1,3 +1,4 @@
+import { emit } from "@tauri-apps/api/event";
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
@@ -68,25 +69,15 @@ export interface PointerWindowPosition {
 export async function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
   const normalizedNoteId = noteId ?? null;
 
+  // 广播关闭事件，各 note 窗口自己处理（无需跨窗口 ACL）
+  await emit("note-window-close-others", { keepNoteId: normalizedNoteId ?? "" });
+
   if (normalizedNoteId) {
     const existing = await revealExistingNoteWindow(normalizedNoteId);
-    if (existing) {
-      await closeOtherNoteWindows(existing.label);
-      return existing;
-    }
+    if (existing) return existing;
   }
 
-  await closeOtherNoteWindows(null);
   return openAppWindow("note", normalizedNoteId, position);
-}
-
-async function closeOtherNoteWindows(keepLabel: string | null) {
-  const all = await WebviewWindow.getAll();
-  await Promise.all(
-    all
-      .filter((w) => w.label !== keepLabel && w.label !== "list" && w.label !== "main")
-      .map((w) => w.close().catch(() => undefined)),
-  );
 }
 
 export function rememberNoteWindow(noteId: string, label: string) {
