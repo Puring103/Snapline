@@ -69,15 +69,17 @@ export interface PointerWindowPosition {
 export async function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
   const normalizedNoteId = noteId ?? null;
 
-  // 广播关闭事件，各 note 窗口自己处理（无需跨窗口 ACL）
-  await emit("note-window-close-others", { keepNoteId: normalizedNoteId ?? "" });
-
   if (normalizedNoteId) {
+    // 打开已有笔记：先关闭其他笔记窗口，再聚焦/新建
+    await emit("note-window-close-others", { keepNoteId: normalizedNoteId });
     const existing = await revealExistingNoteWindow(normalizedNoteId);
     if (existing) return existing;
+    return openAppWindow("note", normalizedNoteId, position);
   }
 
-  return openAppWindow("note", normalizedNoteId, position);
+  // 新建笔记：关闭所有其他笔记窗口，再开新窗口
+  await emit("note-window-close-others", { keepNoteId: "__new__" });
+  return openAppWindow("note", null, position);
 }
 
 export function rememberNoteWindow(noteId: string, label: string) {

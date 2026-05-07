@@ -1,25 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
-  <title id="title">Snapline</title>
-  <desc id="desc">A folded note with fast horizontal capture lines.</desc>
-  <defs>
-    <linearGradient id="bg" x1="168" y1="112" x2="856" y2="912" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#79b7cf"/>
-      <stop offset="1" stop-color="#2f6f8f"/>
-    </linearGradient>
-    <linearGradient id="paper" x1="282" y1="196" x2="740" y2="826" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#fffbe7"/>
-      <stop offset="1" stop-color="#fff1aa"/>
-    </linearGradient>
-    <filter id="shadow" x="146" y="142" width="732" height="756" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
-      <feDropShadow dx="0" dy="28" stdDeviation="28" flood-color="#123846" flood-opacity=".28"/>
-    </filter>
-  </defs>
-  <rect width="1024" height="1024" rx="232" fill="url(#bg)"/>
-  <path fill="#1f5e78" fill-opacity=".2" d="M228 776 728 276l128 128-500 500c-54-25-97-68-128-128z"/>
-  <g filter="url(#shadow)">
-    <path fill="url(#paper)" d="M278 166h340l178 178v498c0 38-30 68-68 68H278c-38 0-68-30-68-68V234c0-38 30-68 68-68z"/>
-    <path fill="#f7dc83" d="M618 166v130c0 27 21 48 48 48h130L618 166z"/>
-    <path fill="none" stroke="#2f6f8f" stroke-linecap="round" stroke-linejoin="round" stroke-width="42" d="M346 418h306M300 532h352M348 646h226"/>
-    <path fill="none" stroke="#2f6f8f" stroke-linecap="round" stroke-width="42" d="M212 418h82M154 532h140"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="220" fill="#2f6f5a"/>
+  <g transform="translate(192, 160) scale(640, 640)" fill="none" stroke="#fffbe7" stroke-linecap="round" stroke-linejoin="round" stroke-width="0.12">
+    <!-- note body -->
+    <path d="M0.28 0.17h0.35l0.16 0.16v0.50c0 0.04-0.03 0.07-0.07 0.07H0.28c-0.04 0-0.07-0.03-0.07-0.07V0.24c0-0.04 0.03-0.07 0.07-0.07z"/>
+    <!-- folded corner -->
+    <path d="M0.63 0.17v0.13c0 0.02 0.02 0.04 0.04 0.04h0.13"/>
+    <!-- lines -->
+    <path d="M0.35 0.47h0.25"/>
+    <path d="M0.28 0.57h0.32"/>
+    <path d="M0.30 0.67h0.20"/>
+    <!-- left accent lines -->
+    <path d="M0.18 0.47h0.08"/>
+    <path d="M0.14 0.57h0.10"/>
   </g>
 </svg>

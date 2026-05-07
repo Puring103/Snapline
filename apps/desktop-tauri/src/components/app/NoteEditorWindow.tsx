@@ -215,9 +215,8 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     let unlisten: (() => void) | null = null;
     void listen<{ keepNoteId: string }>("note-window-close-others", (event) => {
       const keepId = event.payload.keepNoteId;
-      // 如果当前窗口的笔记 ID 不是要保留的，关闭自己
-      if (keepId && sessionRef.current.id === keepId) return;
-      if (!keepId && noteId === null) return;
+      // keepId 是要保留的笔记 ID，"__new__" 表示新建，关闭所有已有笔记窗口
+      if (keepId !== "__new__" && sessionRef.current.id === keepId) return;
       void getCurrentWindow().close();
     }).then((nextUnlisten) => {
       unlisten = nextUnlisten;
