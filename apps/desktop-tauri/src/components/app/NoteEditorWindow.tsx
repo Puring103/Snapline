@@ -19,7 +19,6 @@ import { EditorLoadingState } from "./EditorLoadingState";
 import {
   CloseIcon,
   ConflictIcon,
-  ExportIcon,
   IconButton,
   ListIcon,
   MoreIcon,
@@ -28,7 +27,6 @@ import {
   PreviewModeIcon,
   SettingsIcon,
   SourceModeIcon,
-  ToolbarIcon,
 } from "./AppIcons";
 import { useThemeMode } from "../../hooks/theme";
 
@@ -61,7 +59,6 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [themeMode, setThemeMode] = useThemeMode();
-  const [toolbarVisible, setToolbarVisible] = useState(false);
   const [isConflictCopy, setIsConflictCopy] = useState(false);
   const [sourceNoteId, setSourceNoteId] = useState<string | null>(null);
 
@@ -389,17 +386,6 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     setSyncAccount(result.account);
   }
 
-  async function handleExportNote() {
-    const snapshot = sessionRef.current;
-    if (!snapshot.id || deletedRef.current) return;
-    try {
-      setError(null);
-      await api.exportNoteAsMarkdown(snapshot.id);
-    } catch (err) {
-      setError(String(err));
-    }
-  }
-
   function persistShortcut(nextShortcut: string) {
     void api
       .setOpenShortcut(nextShortcut)
@@ -466,14 +452,6 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
                     <PlusIcon />
                     <span>New</span>
                   </button>
-                  <button onClick={() => handleChromeMenuAction(() => setToolbarVisible((v) => !v))} role="menuitem" type="button">
-                    <ToolbarIcon />
-                    <span>{toolbarVisible ? "Hide toolbar" : "Show toolbar"}</span>
-                  </button>
-                  <button onClick={() => handleChromeMenuAction(handleExportNote)} role="menuitem" type="button" disabled={!session.id || deleted}>
-                    <ExportIcon />
-                    <span>Export .md</span>
-                  </button>
                   <button onClick={() => handleChromeMenuAction(handleOpenSettings)} role="menuitem" type="button">
                     <SettingsIcon />
                     <span>Settings</span>
@@ -527,7 +505,7 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
               onBodyChange={handleBodyChange}
               onRequestImageSave={handleRequestImageSave}
               readOnly={deleted}
-              showToolbar={toolbarVisible}
+              showToolbar={true}
             />
           </Suspense>
         </section>

@@ -2,7 +2,7 @@ import { api } from "../../platform/api";
 import { SyncSettings } from "../SyncSettings";
 import { syncStatusLabel } from "../../features/sync/syncStatus";
 import type { LoginSyncResult, SyncAccountState } from "../../types";
-import { CloseIcon, IconButton } from "./AppIcons";
+import { CloseIcon, IconButton, ThemeDarkIcon, ThemeLightIcon, ThemeSystemIcon } from "./AppIcons";
 import type { ThemeMode } from "../../hooks/theme";
 
 const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
@@ -40,74 +40,80 @@ export function SettingsPanel({
             <div className="settingsTitle">Settings</div>
             <div className="settingsSub">Shortcut and appearance</div>
           </div>
-          <IconButton label="Close settings" onClick={onClose}><CloseIcon /></IconButton>
+          <div className="settingsHeaderActions">
+            <IconButton
+              active={themeMode === "system"}
+              label="System theme"
+              onClick={() => onThemeModeChange("system")}
+            >
+              <ThemeSystemIcon />
+            </IconButton>
+            <IconButton
+              active={themeMode === "light"}
+              label="Light theme"
+              onClick={() => onThemeModeChange("light")}
+            >
+              <ThemeLightIcon />
+            </IconButton>
+            <IconButton
+              active={themeMode === "dark"}
+              label="Dark theme"
+              onClick={() => onThemeModeChange("dark")}
+            >
+              <ThemeDarkIcon />
+            </IconButton>
+            <IconButton label="Close settings" onClick={onClose}><CloseIcon /></IconButton>
+          </div>
         </header>
 
-        <div className="settingsGroup">
-          <div className="settingsGroupTitle">General</div>
-          <label className="settingsField">
-            <span>Open shortcut</span>
-            <div className="shortcutRow">
-              <input
-                className="shortcutInput"
-                value={shortcut}
-                onChange={(event) => onShortcutChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    onShortcutSave(shortcut);
-                  }
-                }}
-                placeholder={DEFAULT_SHORTCUT}
-              />
-              <button className="drawerAction" onClick={() => onShortcutSave(shortcut)} type="button">
-                Save
-              </button>
-            </div>
-          </label>
-
-          <label className="settingsToggle">
-            <span>Start at login</span>
-            <input
-              checked={autostartEnabled}
-              onChange={(event) => onAutostartChange(event.target.checked)}
-              type="checkbox"
-            />
-          </label>
-        </div>
-
-        <div className="settingsGroup">
-          <div className="settingsGroupTitle">Appearance</div>
-          <div className="settingsField">
-            <span>Theme</span>
-            <div className="segmentedControl">
-              {(["system", "light", "dark"] as const).map((mode) => (
-                <button
-                  className={themeMode === mode ? "segment active" : "segment"}
-                  key={mode}
-                  onClick={() => onThemeModeChange(mode)}
-                  type="button"
-                >
-                  {mode}
+        <div className="settingsPanelScroll">
+          <div className="settingsGroup">
+            <div className="settingsGroupTitle">General</div>
+            <label className="settingsField">
+              <span>Open shortcut</span>
+              <div className="shortcutRow">
+                <input
+                  className="shortcutInput"
+                  value={shortcut}
+                  onChange={(event) => onShortcutChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      onShortcutSave(shortcut);
+                    }
+                  }}
+                  placeholder={DEFAULT_SHORTCUT}
+                />
+                <button className="drawerAction" onClick={() => onShortcutSave(shortcut)} type="button">
+                  Save
                 </button>
-              ))}
-            </div>
-          </div>
-        </div>
+              </div>
+            </label>
 
-        <div className="settingsGroup">
-          <div className="settingsGroupTitle">Sync</div>
-          <div className="settingsField">
-            <span>Status</span>
-            <div className="settingsSyncStatus">{syncStatusLabel(syncAccount)}</div>
-            <SyncSettings
-              initial={syncAccount}
-              onSaved={onSyncSaved}
-              onSyncNow={async () => {
-                const report = await api.syncNow();
-                return report;
-              }}
-            />
+            <label className="settingsToggle">
+              <span>Start at login</span>
+              <input
+                checked={autostartEnabled}
+                onChange={(event) => onAutostartChange(event.target.checked)}
+                type="checkbox"
+              />
+            </label>
+          </div>
+
+          <div className="settingsGroup">
+            <div className="settingsGroupTitle">Sync</div>
+            <div className="settingsField">
+              <span>Status</span>
+              <div className="settingsSyncStatus">{syncStatusLabel(syncAccount)}</div>
+              <SyncSettings
+                initial={syncAccount}
+                onSaved={onSyncSaved}
+                onSyncNow={async () => {
+                  const report = await api.syncNow();
+                  return report;
+                }}
+              />
+            </div>
           </div>
         </div>
       </section>

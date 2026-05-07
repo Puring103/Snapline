@@ -65,16 +65,28 @@ export interface PointerWindowPosition {
   y: number;
 }
 
-export function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
+export async function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
   const normalizedNoteId = noteId ?? null;
 
   if (normalizedNoteId) {
-    return revealExistingNoteWindow(normalizedNoteId).then((existing) => {
-      return existing ?? openAppWindow("note", normalizedNoteId, position);
-    });
+    const existing = await revealExistingNoteWindow(normalizedNoteId);
+    if (existing) {
+      await closeOtherNoteWindows(existing.label);
+      return existing;
+    }
   }
 
-  return openAppWindow("note", null, position);
+  await closeOtherNoteWindows(null);
+  return openAppWindow("note", normalizedNoteId, position);
+}
+
+async function closeOtherNoteWindows(keepLabel: string | null) {
+  const all = await WebviewWindow.getAll();
+  await Promise.all(
+    all
+      .filter((w) => w.label !== keepLabel && w.label !== "list" && w.label !== "main")
+      .map((w) => w.close().catch(() => undefined)),
+  );
 }
 
 export function rememberNoteWindow(noteId: string, label: string) {

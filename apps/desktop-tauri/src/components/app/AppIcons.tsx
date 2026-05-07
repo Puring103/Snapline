@@ -101,3 +101,15 @@ export function ExportIcon() {
 export function ConflictIcon() {
   return <svg className="conflictIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4M12 17h.01"/><path d="M10.3 4l-8 13.5A2 2 0 0 0 4 20h16a2 2 0 0 0 1.7-2.5L13.7 4a2 2 0 0 0-3.4 0z"/></svg>;
 }
+
+export function ThemeSystemIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M3 12h9v9H6a3 3 0 0 1-3-3v-6z" /></svg>;
+}
+
+export function ThemeLightIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" /></svg>;
+}
+
+export function ThemeDarkIcon() {
+  return <svg className="flatIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>;
+}
