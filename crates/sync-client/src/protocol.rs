@@ -14,6 +14,12 @@ pub struct LoginRequest {
     /// 发起请求的设备唯一 ID（UUID）。
     pub device_id: String,
     pub device_name: String,
+    /// 注册时上传：base64 编码的 KEK 盐（32 字节）。登录时为 None。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kek_salt: Option<String>,
+    /// 注册时上传：KEK 包裹后的 DEK，base64(nonce || ciphertext)。登录时为 None。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_dek: Option<String>,
 }
 
 /// 登录成功响应。
@@ -22,6 +28,12 @@ pub struct LoginResponse {
     pub account_id: String,
     /// Bearer token，后续所有需鉴权的请求均须携带。
     pub access_token: String,
+    /// base64 编码的 KEK 盐，客户端用于重新派生 KEK 解包 DEK。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kek_salt: Option<String>,
+    /// KEK 包裹后的 DEK，base64(nonce || ciphertext)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_dek: Option<String>,
 }
 
 /// 批量推送变更的请求体。

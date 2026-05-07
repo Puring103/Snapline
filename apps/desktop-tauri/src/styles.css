@@ -1441,3 +1441,34 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
 .connectionDialogActions button {
   min-width: 78px;
 }
+
+.connectionModeToggle {
+  display: flex;
+  gap: 2px;
+  background: var(--surface-2, var(--surface));
+  border-radius: 6px;
+  padding: 3px;
+}
+
+.connectionModeToggle button {
+  flex: 1;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 100ms, color 100ms;
+}
+
+.connectionModeToggle button:hover {
+  color: var(--text);
+}
+
+.connectionModeToggle button.connectionModeActive {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}

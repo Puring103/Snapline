@@ -10,12 +10,13 @@ pub async fn connect(database_url: &str) -> Result<PgPool> {
 }
 
 pub async fn migrate(pool: &PgPool) -> Result<()> {
-    for statement in include_str!("../migrations/0001_init.sql")
-        .split(';')
-        .map(str::trim)
-        .filter(|statement| !statement.is_empty())
-    {
-        sqlx::query(statement).execute(pool).await?;
+    for sql in [
+        include_str!("../migrations/0001_init.sql"),
+        include_str!("../migrations/0002_e2ee.sql"),
+    ] {
+        for statement in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+            sqlx::query(statement).execute(pool).await?;
+        }
     }
     Ok(())
 }

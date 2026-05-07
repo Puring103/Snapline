@@ -21,11 +21,17 @@ pub struct MockSyncApi {
 
 #[async_trait]
 impl SyncApi for MockSyncApi {
+    async fn register(&self, request: LoginRequest) -> Result<LoginResponse> {
+        self.login(request).await
+    }
+
     async fn login(&self, request: LoginRequest) -> Result<LoginResponse> {
         let account_id = format!("acct_{}", request.email);
         Ok(LoginResponse {
             access_token: format!("token:{account_id}"),
             account_id,
+            kek_salt: None,
+            encrypted_dek: None,
         })
     }
 

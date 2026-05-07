@@ -55,6 +55,7 @@ export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps)
   const [serverUrl, setServerUrl] = useState(initial?.server_base_url ?? "http://localhost:8080");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<"login" | "register">("login");
   const [status, setStatus] = useState(initial?.is_logged_in ? "Connected" : "Not connected");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [errors, setErrors] = useState<SyncConnectionErrors>({});
@@ -67,9 +68,11 @@ export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps)
       return;
     }
 
-    setStatus("Connecting");
+    setStatus(mode === "register" ? "Creating account" : "Connecting");
     try {
-      const next = await api.loginSync(serverUrl.trim(), email.trim(), password);
+      const next = mode === "register"
+        ? await api.registerSync(serverUrl.trim(), email.trim(), password)
+        : await api.loginSync(serverUrl.trim(), email.trim(), password);
       onSaved(next);
       setStatus("Connected");
       setDialogOpen(false);
@@ -114,6 +117,23 @@ export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps)
                 <span aria-hidden="true">x</span>
               </button>
             </header>
+
+            <div className="connectionModeToggle">
+              <button
+                className={mode === "login" ? "connectionModeActive" : ""}
+                onClick={() => setMode("login")}
+                type="button"
+              >
+                Sign in
+              </button>
+              <button
+                className={mode === "register" ? "connectionModeActive" : ""}
+                onClick={() => setMode("register")}
+                type="button"
+              >
+                Create account
+              </button>
+            </div>
 
             <label className="connectionField">
               <span>Server URL</span>
@@ -160,7 +180,7 @@ export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps)
 
             <div className="connectionDialogActions">
               <button onClick={() => setDialogOpen(false)} type="button">Cancel</button>
-              <button type="submit">Connect</button>
+              <button type="submit">{mode === "register" ? "Create account" : "Connect"}</button>
             </div>
             <span className="syncSettingsStatus">{status}</span>
           </form>

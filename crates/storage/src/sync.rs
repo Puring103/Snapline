@@ -37,6 +37,10 @@ pub struct SyncState {
     pub access_token: Option<String>,
     pub last_sync_at: Option<DateTime<Utc>>,
     pub last_success_at: Option<DateTime<Utc>>,
+    /// base64 编码的 KEK 盐，用于重新派生 KEK 以解包 DEK。
+    pub kek_salt: Option<String>,
+    /// KEK 包裹后的 DEK，base64(nonce || ciphertext)，持久化以便下次启动时恢复。
+    pub encrypted_dek: Option<String>,
 }
 
 /// 初始化同步相关的数据库表（change_queue、sync_state）。
@@ -72,6 +76,8 @@ pub fn migrate_sync_tables(conn: &Connection) -> Result<()> {
         ",
     )?;
     ensure_column(conn, "change_queue", "account_id", "TEXT")?;
+    ensure_column(conn, "sync_state", "kek_salt", "TEXT")?;
+    ensure_column(conn, "sync_state", "encrypted_dek", "TEXT")?;
     conn.execute_batch(
         "
         CREATE INDEX IF NOT EXISTS idx_change_queue_account_queued_at
@@ -227,7 +233,8 @@ pub fn mark_change_failed(conn: &Connection, id: &str, error: &str) -> Result<()
 pub fn get_or_create_sync_state(conn: &Connection) -> Result<SyncState> {
     let existing = conn
         .query_row(
-            "SELECT account_id, device_id, server_base_url, server_cursor, access_token, last_sync_at, last_success_at
+            "SELECT account_id, device_id, server_base_url, server_cursor, access_token,
+                    last_sync_at, last_success_at, kek_salt, encrypted_dek
              FROM sync_state WHERE id = 1",
             [],
             row_to_sync_state,
@@ -249,6 +256,8 @@ pub fn get_or_create_sync_state(conn: &Connection) -> Result<SyncState> {
         access_token: None,
         last_sync_at: None,
         last_success_at: None,
+        kek_salt: None,
+        encrypted_dek: None,
     })
 }
 
@@ -256,8 +265,9 @@ pub fn get_or_create_sync_state(conn: &Connection) -> Result<SyncState> {
 pub fn save_sync_state(conn: &Connection, state: &SyncState) -> Result<()> {
     conn.execute(
         "INSERT INTO sync_state
-         (id, account_id, device_id, server_base_url, server_cursor, access_token, last_sync_at, last_success_at)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         (id, account_id, device_id, server_base_url, server_cursor, access_token,
+          last_sync_at, last_success_at, kek_salt, encrypted_dek)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(id) DO UPDATE SET
            account_id = excluded.account_id,
            device_id = excluded.device_id,
@@ -265,7 +275,9 @@ pub fn save_sync_state(conn: &Connection, state: &SyncState) -> Result<()> {
            server_cursor = excluded.server_cursor,
            access_token = excluded.access_token,
            last_sync_at = excluded.last_sync_at,
-           last_success_at = excluded.last_success_at",
+           last_success_at = excluded.last_success_at,
+           kek_salt = excluded.kek_salt,
+           encrypted_dek = excluded.encrypted_dek",
         params![
             state.account_id,
             state.device_id,
@@ -273,7 +285,9 @@ pub fn save_sync_state(conn: &Connection, state: &SyncState) -> Result<()> {
             state.server_cursor,
             state.access_token,
             state.last_sync_at.map(|time| time.to_rfc3339()),
-            state.last_success_at.map(|time| time.to_rfc3339())
+            state.last_success_at.map(|time| time.to_rfc3339()),
+            state.kek_salt,
+            state.encrypted_dek,
         ],
     )?;
     Ok(())
@@ -290,6 +304,8 @@ fn row_to_sync_state(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncState> {
         access_token: row.get(4)?,
         last_sync_at: last_sync_at.map(parse_time).transpose()?,
         last_success_at: last_success_at.map(parse_time).transpose()?,
+        kek_salt: row.get(7)?,
+        encrypted_dek: row.get(8)?,
     })
 }
 

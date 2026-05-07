@@ -5,7 +5,10 @@ use crate::protocol::{AssetUploadRequest, PushChange, PushChangeResult, PushRequ
 use crate::SyncApi;
 use anyhow::{Context, Result};
 use chrono::Utc;
-use snapline_domain::{Note, SyncPayload};
+use snapline_domain::{
+    crypto::{decrypt_field, encrypt_field},
+    Note, NoteChangePayload, SyncPayload,
+};
 use snapline_storage::NoteRepository;
 use std::{fs, path::Path};
 
@@ -22,6 +25,7 @@ pub struct ProcessReport {
 
 /// 将当前账户的待处理笔记变更批量推送到服务端（每次最多 25 条）。
 ///
+/// `dek` 不为 None 时，推送前加密 title 和 content_md；为 None 则明文推送（兼容旧账户）。
 /// 对于每条推送结果：
 /// - `Accepted`：更新本地 server_version 和游标，删除队列条目
 /// - `Conflict`：保存本地版本为冲突副本，覆写为服务端版本，删除队列条目
@@ -30,6 +34,7 @@ pub async fn push_pending_changes<A: SyncApi + Sync>(
     api: &A,
     token: &str,
     device_id: &str,
+    dek: Option<&[u8; 32]>,
 ) -> Result<ProcessReport> {
     let account_id = repo
         .get_or_create_sync_state()?
@@ -43,20 +48,27 @@ pub async fn push_pending_changes<A: SyncApi + Sync>(
             failed: 0,
         });
     }
+    let mut wire_changes = Vec::with_capacity(pending.len());
+    for item in &pending {
+        let payload = match (&item.payload, dek) {
+            (SyncPayload::Note(note_payload), Some(key)) => {
+                SyncPayload::Note(encrypt_note_payload(key, note_payload)?)
+            }
+            _ => item.payload.clone(),
+        };
+        wire_changes.push(PushChange {
+            queue_id: item.id.clone(),
+            note_id: item.note_id.clone(),
+            base_version: item.base_version,
+            payload,
+        });
+    }
     let response = api
         .push(
             token,
             PushRequest {
                 device_id: device_id.to_string(),
-                changes: pending
-                    .iter()
-                    .map(|item| PushChange {
-                        queue_id: item.id.clone(),
-                        note_id: item.note_id.clone(),
-                        base_version: item.base_version,
-                        payload: item.payload.clone(),
-                    })
-                    .collect(),
+                changes: wire_changes,
             },
         )
         .await?;
@@ -86,8 +98,12 @@ pub async fn push_pending_changes<A: SyncApi + Sync>(
                 // 将本地编辑版本另存为冲突副本，再用服务端版本覆写本地
                 if let Some(rejected_note) = local_note_from_pending(&pending, &queue_id, &note_id)
                 {
+                    let decrypted_server = match dek {
+                        Some(key) => decrypt_note(key, &server_note)?,
+                        None => server_note,
+                    };
                     repo.create_conflict_copy(&rejected_note, Utc::now())?;
-                    repo.apply_remote_note(&server_note)?;
+                    repo.apply_remote_note(&decrypted_server)?;
                 }
                 repo.delete_change(&queue_id)?;
                 report.conflicts += 1;
@@ -133,6 +149,7 @@ pub async fn upload_pending_assets<A: SyncApi + Sync>(
 
 /// 从服务端拉取增量变更并写入本地数据库。
 ///
+/// `dek` 不为 None 时，写入本地前解密 title 和 content_md。
 /// 来自当前设备的变更会被跳过（避免回显覆盖本地未提交内容）。
 /// 若本地对同一笔记有未推送的变更，则创建冲突副本后覆写。
 pub async fn pull_remote_changes<A: SyncApi + Sync>(
@@ -140,6 +157,7 @@ pub async fn pull_remote_changes<A: SyncApi + Sync>(
     api: &A,
     token: &str,
     device_id: &str,
+    dek: Option<&[u8; 32]>,
 ) -> Result<ProcessReport> {
     let state = repo.get_or_create_sync_state()?;
     let account_id = state
@@ -152,14 +170,18 @@ pub async fn pull_remote_changes<A: SyncApi + Sync>(
         if change.device_id == device_id {
             continue; // 跳过本设备推送产生的回显
         }
-        if repo.has_pending_note_change(Some(&account_id), &change.note.id)? {
+        let note = match dek {
+            Some(key) => decrypt_note(key, &change.note)?,
+            None => change.note.clone(),
+        };
+        if repo.has_pending_note_change(Some(&account_id), &note.id)? {
             // 本地有未推送变更，先保存副本再接受远端版本
-            let local_note = repo.get_note_for_owner(&change.note.id, Some(&account_id))?;
+            let local_note = repo.get_note_for_owner(&note.id, Some(&account_id))?;
             repo.create_conflict_copy(&local_note, Utc::now())?;
-            repo.delete_changes_for_note(Some(&account_id), &change.note.id)?;
+            repo.delete_changes_for_note(Some(&account_id), &note.id)?;
             conflicts += 1;
         }
-        repo.apply_remote_note(&change.note)?;
+        repo.apply_remote_note(&note)?;
         accepted += 1;
     }
     repo.update_sync_cursor_success(response.cursor, Utc::now())?;
@@ -197,6 +219,25 @@ fn local_note_from_pending(
     })
 }
 
+/// 加密笔记 payload 中的 title 和 content_md 字段。
+fn encrypt_note_payload(dek: &[u8; 32], payload: &NoteChangePayload) -> Result<NoteChangePayload> {
+    Ok(NoteChangePayload {
+        title: encrypt_field(dek, &payload.title)?,
+        content_md: encrypt_field(dek, &payload.content_md)?,
+        pinned: payload.pinned,
+        deleted_at: payload.deleted_at,
+    })
+}
+
+/// 解密从服务端接收到的笔记的 title 和 content_md 字段。
+fn decrypt_note(dek: &[u8; 32], note: &Note) -> Result<Note> {
+    Ok(Note {
+        title: decrypt_field(dek, &note.title)?,
+        content_md: decrypt_field(dek, &note.content_md)?,
+        ..note.clone()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,7 +266,7 @@ mod tests {
         .unwrap();
 
         let api = MockSyncApi::default();
-        let report = push_pending_changes(&repo, &api, "token:acct_a", "device-a")
+        let report = push_pending_changes(&repo, &api, "token:acct_a", "device-a", None)
             .await
             .unwrap();
 
@@ -306,7 +347,7 @@ mod tests {
         .await
         .unwrap();
 
-        let report = pull_remote_changes(&repo, &api, "token:acct_a", "device-a")
+        let report = pull_remote_changes(&repo, &api, "token:acct_a", "device-a", None)
             .await
             .unwrap();
 
@@ -353,7 +394,7 @@ mod tests {
         )
         .unwrap();
 
-        let report = push_pending_changes(&repo, &api, "token:acct_a", "device-b")
+        let report = push_pending_changes(&repo, &api, "token:acct_a", "device-b", None)
             .await
             .unwrap();
 
@@ -407,7 +448,7 @@ mod tests {
         .await
         .unwrap();
 
-        let report = pull_remote_changes(&repo, &api, "token:acct_a", "device-a")
+        let report = pull_remote_changes(&repo, &api, "token:acct_a", "device-a", None)
             .await
             .unwrap();
 
@@ -452,7 +493,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        let push_report = push_pending_changes(&repo, &api, "token:acct_a", "device-a")
+        let push_report = push_pending_changes(&repo, &api, "token:acct_a", "device-a", None)
             .await
             .unwrap();
         assert_eq!(push_report.accepted, 1);
@@ -460,7 +501,7 @@ mod tests {
         state.server_cursor = 0;
         repo.save_sync_state(&state).unwrap();
 
-        let pull_report = pull_remote_changes(&repo, &api, "token:acct_a", "device-a")
+        let pull_report = pull_remote_changes(&repo, &api, "token:acct_a", "device-a", None)
             .await
             .unwrap();
 

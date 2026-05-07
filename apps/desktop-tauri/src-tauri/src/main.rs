@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 use snapline_app_core::{AppCore, BootstrapState, SyncAccountState};
-use snapline_domain::{AssetRef, Note, NoteId, NoteSummary, SyncPayload};
+use snapline_domain::{crypto, AssetRef, Note, NoteChangePayload, NoteId, NoteSummary, SyncPayload};
 use snapline_platform::AppPaths;
 use snapline_sync_client::{
     protocol::{AssetUploadRequest, LoginRequest, PushChange, PushChangeResult, PushRequest},
@@ -357,6 +357,64 @@ fn get_sync_account_state(state: State<'_, AppState>) -> Result<SyncAccountState
 }
 
 #[tauri::command]
+async fn register_sync(
+    state: State<'_, AppState>,
+    server_base_url: String,
+    email: String,
+    password: String,
+) -> Result<LoginSyncResult, String> {
+    let (device_id, kek_salt, encrypted_dek) = {
+        let mut core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        let device_id = core
+            .sync_state()
+            .map_err(|err| err.to_string())?
+            .device_id;
+        let (kek_salt, encrypted_dek) = core
+            .generate_e2ee_material(&password)
+            .map_err(|err| err.to_string())?;
+        (device_id, kek_salt, encrypted_dek)
+    };
+    let api = HttpSyncApi::new(&server_base_url);
+    let response = api
+        .register(LoginRequest {
+            email: email.clone(),
+            password: password.clone(),
+            device_id,
+            device_name: "Snapline Desktop".to_string(),
+            kek_salt: Some(kek_salt),
+            encrypted_dek: Some(encrypted_dek),
+        })
+        .await
+        .map_err(|err| err.to_string())?;
+    let (account_state, anonymous_note_count) = {
+        let mut core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        let account_state = core
+            .save_sync_login(
+                &server_base_url,
+                &response.account_id,
+                &response.access_token,
+                None, // DEK already in memory from generate_e2ee_material
+                response.kek_salt.as_deref(),
+                response.encrypted_dek.as_deref(),
+            )
+            .map_err(|err| err.to_string())?;
+        let anonymous_note_count = core.anonymous_note_count().map_err(|err| err.to_string())?;
+        (account_state, anonymous_note_count)
+    };
+    import_snapshot_and_assets(&state, &api, &response.access_token).await?;
+    Ok(LoginSyncResult {
+        account: account_state,
+        anonymous_note_count,
+    })
+}
+
+#[tauri::command]
 async fn login_sync(
     state: State<'_, AppState>,
     server_base_url: String,
@@ -373,15 +431,17 @@ async fn login_sync(
     let api = HttpSyncApi::new(&server_base_url);
     let response = api
         .login(LoginRequest {
-            email,
-            password,
+            email: email.clone(),
+            password: password.clone(),
             device_id,
             device_name: "Snapline Desktop".to_string(),
+            kek_salt: None,
+            encrypted_dek: None,
         })
         .await
         .map_err(|err| err.to_string())?;
     let (account_state, anonymous_note_count) = {
-        let core = state
+        let mut core = state
             .core
             .lock()
             .map_err(|_| "app state lock poisoned".to_string())?;
@@ -390,6 +450,9 @@ async fn login_sync(
                 &server_base_url,
                 &response.account_id,
                 &response.access_token,
+                Some(&password),
+                response.kek_salt.as_deref(),
+                response.encrypted_dek.as_deref(),
             )
             .map_err(|err| err.to_string())?;
         let anonymous_note_count = core.anonymous_note_count().map_err(|err| err.to_string())?;
@@ -428,7 +491,7 @@ async fn sync_now(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 async fn run_sync_once(state: &AppState) -> Result<String, String> {
-    let (base_url, token, device_id, data_dir) = {
+    let (base_url, token, device_id, data_dir, dek) = {
         let core = state
             .core
             .lock()
@@ -437,7 +500,8 @@ async fn run_sync_once(state: &AppState) -> Result<String, String> {
             .sync_credentials()
             .map_err(|err| err.to_string())?
             .ok_or_else(|| "not logged in".to_string())?;
-        (base_url, token, device_id, core.data_dir().to_path_buf())
+        let dek = core.dek().copied();
+        (base_url, token, device_id, core.data_dir().to_path_buf(), dek)
     };
     let api = HttpSyncApi::new(base_url);
     let asset_items = {
@@ -476,20 +540,36 @@ async fn run_sync_once(state: &AppState) -> Result<String, String> {
             .map_err(|_| "app state lock poisoned".to_string())?;
         core.pending_sync_changes().map_err(|err| err.to_string())?
     };
+    let wire_changes: Result<Vec<PushChange>, String> = pending
+        .iter()
+        .map(|item| {
+            let payload = match (&item.payload, &dek) {
+                (SyncPayload::Note(note_payload), Some(key)) => {
+                    SyncPayload::Note(NoteChangePayload {
+                        title: crypto::encrypt_field(key, &note_payload.title)
+                            .map_err(|e| e.to_string())?,
+                        content_md: crypto::encrypt_field(key, &note_payload.content_md)
+                            .map_err(|e| e.to_string())?,
+                        pinned: note_payload.pinned,
+                        deleted_at: note_payload.deleted_at,
+                    })
+                }
+                _ => item.payload.clone(),
+            };
+            Ok(PushChange {
+                queue_id: item.id.clone(),
+                note_id: item.note_id.clone(),
+                base_version: item.base_version,
+                payload,
+            })
+        })
+        .collect();
     let push_response = api
         .push(
             &token,
             PushRequest {
                 device_id: device_id.clone(),
-                changes: pending
-                    .iter()
-                    .map(|item| PushChange {
-                        queue_id: item.id.clone(),
-                        note_id: item.note_id.clone(),
-                        base_version: item.base_version,
-                        payload: item.payload.clone(),
-                    })
-                    .collect(),
+                changes: wire_changes?,
             },
         )
         .await
@@ -527,7 +607,17 @@ async fn run_sync_once(state: &AppState) -> Result<String, String> {
                     {
                         core.create_conflict_copy(&rejected_note)
                             .map_err(|err| err.to_string())?;
-                        core.apply_remote_note(&server_note)
+                        let decrypted_server = match &dek {
+                            Some(key) => Note {
+                                title: crypto::decrypt_field(key, &server_note.title)
+                                    .map_err(|e| e.to_string())?,
+                                content_md: crypto::decrypt_field(key, &server_note.content_md)
+                                    .map_err(|e| e.to_string())?,
+                                ..server_note.clone()
+                            },
+                            None => server_note.clone(),
+                        };
+                        core.apply_remote_note(&decrypted_server)
                             .map_err(|err| err.to_string())?;
                     }
                     core.delete_sync_change(&queue_id)
@@ -565,20 +655,30 @@ async fn run_sync_once(state: &AppState) -> Result<String, String> {
             if change.device_id == device_id {
                 continue;
             }
+            let note = match &dek {
+                Some(key) => Note {
+                    title: crypto::decrypt_field(key, &change.note.title)
+                        .map_err(|e| e.to_string())?,
+                    content_md: crypto::decrypt_field(key, &change.note.content_md)
+                        .map_err(|e| e.to_string())?,
+                    ..change.note.clone()
+                },
+                None => change.note.clone(),
+            };
             if core
-                .has_pending_note_change(&change.note.id)
+                .has_pending_note_change(&note.id)
                 .map_err(|err| err.to_string())?
             {
                 let local_note = core
-                    .get_note(&change.note.id)
+                    .get_note(&note.id)
                     .map_err(|err| err.to_string())?;
                 core.create_conflict_copy(&local_note)
                     .map_err(|err| err.to_string())?;
-                core.delete_sync_changes_for_note(&change.note.id)
+                core.delete_sync_changes_for_note(&note.id)
                     .map_err(|err| err.to_string())?;
                 pull_conflicts += 1;
             }
-            core.apply_remote_note(&change.note)
+            core.apply_remote_note(&note)
                 .map_err(|err| err.to_string())?;
             pulled += 1;
         }
@@ -867,6 +967,7 @@ fn main() {
             get_open_shortcut,
             set_open_shortcut,
             get_sync_account_state,
+            register_sync,
             login_sync,
             anonymous_note_count,
             import_anonymous_notes,

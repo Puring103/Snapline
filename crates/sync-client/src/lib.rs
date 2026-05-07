@@ -15,6 +15,8 @@ use protocol::{
 /// 同步 API 的抽象接口，解耦业务逻辑与具体传输层。
 #[async_trait]
 pub trait SyncApi {
+    /// 注册新账户并获取 access token。
+    async fn register(&self, request: LoginRequest) -> Result<LoginResponse>;
     /// 登录并获取 access token。
     async fn login(&self, request: LoginRequest) -> Result<LoginResponse>;
     /// 将本地变更批量推送到服务端。
@@ -47,6 +49,18 @@ impl HttpSyncApi {
 
 #[async_trait]
 impl SyncApi for HttpSyncApi {
+    async fn register(&self, request: LoginRequest) -> Result<LoginResponse> {
+        Ok(self
+            .client
+            .post(format!("{}/auth/register", self.base_url))
+            .json(&request)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
+
     async fn login(&self, request: LoginRequest) -> Result<LoginResponse> {
         Ok(self
             .client

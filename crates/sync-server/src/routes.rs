@@ -32,12 +32,20 @@ pub struct RegisterRequest {
     pub password: String,
     pub device_id: String,
     pub device_name: String,
+    /// 注册时由客户端上传，登录时可为 None。
+    pub kek_salt: Option<String>,
+    pub encrypted_dek: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct AuthResponse {
     pub account_id: String,
     pub access_token: String,
+    /// 返回给客户端用于解包 DEK。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kek_salt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_dek: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,7 +71,8 @@ pub async fn login(
     Json(request): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let row = sqlx::query(
-        "SELECT id, password_hash FROM accounts WHERE email = $1 AND disabled_at IS NULL",
+        "SELECT id, password_hash, kek_salt, encrypted_dek
+         FROM accounts WHERE email = $1 AND disabled_at IS NULL",
     )
     .bind(&request.email)
     .fetch_optional(&state.pool)
@@ -72,6 +81,8 @@ pub async fn login(
     .ok_or((StatusCode::UNAUTHORIZED, "invalid credentials".to_string()))?;
     let account_id: String = row.get("id");
     let password_hash: String = row.get("password_hash");
+    let kek_salt: Option<String> = row.get("kek_salt");
+    let encrypted_dek: Option<String> = row.get("encrypted_dek");
     if !auth::verify_password(&request.password, &password_hash).map_err(internal_error)? {
         return Err((StatusCode::UNAUTHORIZED, "invalid credentials".to_string()));
     }
@@ -89,6 +100,8 @@ pub async fn login(
     Ok(Json(AuthResponse {
         account_id,
         access_token: token,
+        kek_salt,
+        encrypted_dek,
     }))
 }
 
@@ -253,9 +266,15 @@ async fn create_account_and_device(
     state: Arc<AppState>,
     request: RegisterRequest,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let account_id = create_account(&state.pool, &request.email, &request.password)
-        .await
-        .map_err(internal_error)?;
+    let account_id = create_account(
+        &state.pool,
+        &request.email,
+        &request.password,
+        request.kek_salt.as_deref(),
+        request.encrypted_dek.as_deref(),
+    )
+    .await
+    .map_err(internal_error)?;
     sqlx::query("INSERT INTO devices (id, account_id, name) VALUES ($1, $2, $3)")
         .bind(&request.device_id)
         .bind(&account_id)
@@ -267,6 +286,8 @@ async fn create_account_and_device(
     Ok(Json(AuthResponse {
         account_id,
         access_token: token,
+        kek_salt: request.kek_salt,
+        encrypted_dek: request.encrypted_dek,
     }))
 }
 
@@ -284,19 +305,30 @@ pub async fn bootstrap_first_account(pool: &PgPool, config: &Config) -> anyhow::
     ) else {
         return Ok(());
     };
-    create_account(pool, email, password).await?;
+    create_account(pool, email, password, None, None).await?;
     Ok(())
 }
 
-async fn create_account(pool: &PgPool, email: &str, password: &str) -> anyhow::Result<String> {
+async fn create_account(
+    pool: &PgPool,
+    email: &str,
+    password: &str,
+    kek_salt: Option<&str>,
+    encrypted_dek: Option<&str>,
+) -> anyhow::Result<String> {
     let account_id = Uuid::new_v4().to_string();
     let password_hash = auth::hash_password(password)?;
-    sqlx::query("INSERT INTO accounts (id, email, password_hash) VALUES ($1, $2, $3)")
-        .bind(&account_id)
-        .bind(email)
-        .bind(&password_hash)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "INSERT INTO accounts (id, email, password_hash, kek_salt, encrypted_dek)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(&account_id)
+    .bind(email)
+    .bind(&password_hash)
+    .bind(kek_salt)
+    .bind(encrypted_dek)
+    .execute(pool)
+    .await?;
     Ok(account_id)
 }
 

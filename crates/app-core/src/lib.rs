@@ -7,7 +7,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use snapline_domain::{
-    AssetId, AssetMetadata, AssetRef, AssetUploadPayload, Note, NoteChangePayload, NoteId,
+    crypto, AssetId, AssetMetadata, AssetRef, AssetUploadPayload, Note, NoteChangePayload, NoteId,
     NoteSummary, SyncOpType, SyncPayload,
 };
 use snapline_platform::AppPaths;
@@ -19,10 +19,12 @@ const OPEN_SHORTCUT_KEY: &str = "open_shortcut";
 /// 默认全局快捷键。
 const DEFAULT_OPEN_SHORTCUT: &str = "Ctrl+Shift+Space";
 
-/// 应用核心结构，持有数据库连接和路径信息。
+/// 应用核心结构，持有数据库连接、路径信息和内存中的数据加密密钥。
 pub struct AppCore {
     repo: NoteRepository,
     paths: AppPaths,
+    /// DEK（数据加密密钥），仅在内存中持有，从不落盘。登录/注册后设置。
+    dek: Option<[u8; 32]>,
 }
 
 /// 启动时一次性下发给前端的初始状态。
@@ -51,12 +53,12 @@ impl AppCore {
     pub fn open(paths: AppPaths) -> Result<Self> {
         fs::create_dir_all(&paths.data_dir)?;
         let repo = NoteRepository::open(&paths.db_path)?;
-        Ok(Self { repo, paths })
+        Ok(Self { repo, paths, dek: None })
     }
 
     /// 使用外部传入的 repo 构造 AppCore（测试用）。
     pub fn with_repo(paths: AppPaths, repo: NoteRepository) -> Self {
-        Self { repo, paths }
+        Self { repo, paths, dek: None }
     }
 
     /// 返回启动初始状态：笔记列表 + 空白草稿。草稿不写入数据库。
@@ -212,18 +214,49 @@ impl AppCore {
     }
 
     /// 登录成功后保存服务端地址、账户 ID 和 access token。
+    ///
+    /// 若服务端返回了 `kek_salt` 和 `encrypted_dek`，则用密码派生 KEK、解包 DEK 并保存至内存。
     pub fn save_sync_login(
-        &self,
+        &mut self,
         server_base_url: &str,
         account_id: &str,
         access_token: &str,
+        password: Option<&str>,
+        kek_salt: Option<&str>,
+        encrypted_dek: Option<&str>,
     ) -> Result<SyncAccountState> {
         let mut state = self.repo.get_or_create_sync_state()?;
         state.server_base_url = Some(server_base_url.to_string());
         state.account_id = Some(account_id.to_string());
         state.access_token = Some(access_token.to_string());
+        state.kek_salt = kek_salt.map(str::to_string);
+        state.encrypted_dek = encrypted_dek.map(str::to_string);
         self.repo.save_sync_state(&state)?;
+        // 若具备全部 E2EE 材料，立即解包 DEK 存入内存
+        if let (Some(pw), Some(salt_b64), Some(wrapped)) = (password, kek_salt, encrypted_dek) {
+            let salt = crypto::decode_salt(salt_b64)?;
+            let kek = crypto::derive_kek(pw, &salt)?;
+            self.dek = Some(crypto::unwrap_dek(&kek, wrapped)?);
+        }
         self.sync_account_state()
+    }
+
+    /// 注册新账户时生成 E2EE 材料，返回供上传的字段。
+    ///
+    /// 生成随机 DEK 和 kek_salt，用密码派生 KEK 包裹 DEK，将 DEK 存入内存。
+    /// 返回值 `(kek_salt_b64, encrypted_dek_b64)` 应随注册请求发送给服务端。
+    pub fn generate_e2ee_material(&mut self, password: &str) -> Result<(String, String)> {
+        let salt = crypto::generate_kek_salt();
+        let kek = crypto::derive_kek(password, &salt)?;
+        let dek = crypto::generate_dek();
+        let wrapped = crypto::wrap_dek(&kek, &dek)?;
+        self.dek = Some(dek);
+        Ok((crypto::encode_salt(&salt), wrapped))
+    }
+
+    /// 返回当前内存中的 DEK（供 processor 使用）。
+    pub fn dek(&self) -> Option<&[u8; 32]> {
+        self.dek.as_ref()
     }
 
     /// 获取当前登录账户 ID（未登录时返回 None）。
@@ -318,21 +351,31 @@ impl AppCore {
     }
 
     /// 将服务端快照批量应用到本地：若本地有未推送变更则先创建冲突副本。
+    ///
+    /// 若内存中持有 DEK，则在写入本地前对每条笔记解密。
     pub fn import_snapshot(&self, notes: &[Note], cursor: i64) -> Result<()> {
         let account_id = self
             .current_account_id()?
             .ok_or_else(|| anyhow::anyhow!("not logged in"))?;
         for note in notes {
+            let decrypted = match self.dek.as_ref() {
+                Some(key) => {
+                    let title = crypto::decrypt_field(key, &note.title)?;
+                    let content_md = crypto::decrypt_field(key, &note.content_md)?;
+                    std::borrow::Cow::Owned(Note { title, content_md, ..note.clone() })
+                }
+                None => std::borrow::Cow::Borrowed(note),
+            };
             if self
                 .repo
-                .has_pending_note_change(Some(&account_id), &note.id)?
+                .has_pending_note_change(Some(&account_id), &decrypted.id)?
             {
-                let local_note = self.repo.get_note_for_owner(&note.id, Some(&account_id))?;
+                let local_note = self.repo.get_note_for_owner(&decrypted.id, Some(&account_id))?;
                 self.repo.create_conflict_copy(&local_note, Utc::now())?;
                 self.repo
-                    .delete_changes_for_note(Some(&account_id), &note.id)?;
+                    .delete_changes_for_note(Some(&account_id), &decrypted.id)?;
             }
-            self.repo.apply_remote_note(note)?;
+            self.repo.apply_remote_note(&decrypted)?;
         }
         self.repo.update_sync_cursor_success(cursor, Utc::now())
     }
@@ -500,8 +543,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
-        let core = AppCore::with_repo(paths, repo);
-        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+        let mut core = AppCore::with_repo(paths, repo);
+        core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
             .unwrap();
         let note = core.create_note().unwrap();
 
@@ -518,8 +561,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
-        let core = AppCore::with_repo(paths, repo);
-        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+        let mut core = AppCore::with_repo(paths, repo);
+        core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
             .unwrap();
         let note = core.create_note().unwrap();
         core.save_note(&note.id, "Title", "# Title", false).unwrap();
@@ -540,8 +583,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
-        let core = AppCore::with_repo(paths, repo);
-        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+        let mut core = AppCore::with_repo(paths, repo);
+        core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
             .unwrap();
         let note = core.create_note().unwrap();
 
@@ -557,8 +600,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
-        let core = AppCore::with_repo(paths, repo);
-        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+        let mut core = AppCore::with_repo(paths, repo);
+        core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
             .unwrap();
         let mut note = snapline_domain::Note::draft(chrono::Utc::now());
         note.owner_account_id = Some("acct_a".to_string());
@@ -576,8 +619,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
-        let core = AppCore::with_repo(paths, repo);
-        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+        let mut core = AppCore::with_repo(paths, repo);
+        core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
             .unwrap();
         let note = core.create_note().unwrap();
         core.save_note(&note.id, "Local", "# Local", false).unwrap();
@@ -634,13 +677,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
-        let core = AppCore::with_repo(paths, repo);
+        let mut core = AppCore::with_repo(paths, repo);
 
         let local = core.create_note().unwrap();
         core.save_note(&local.id, "Local", "Local", false).unwrap();
         assert_eq!(core.bootstrap().unwrap().notes.len(), 1);
 
-        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+        core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
             .unwrap();
         assert!(core.bootstrap().unwrap().notes.is_empty());
 
@@ -653,11 +696,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
-        let core = AppCore::with_repo(paths, repo);
+        let mut core = AppCore::with_repo(paths, repo);
 
         let local = core.create_note().unwrap();
         core.save_note(&local.id, "Local", "Local", false).unwrap();
-        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+        core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
             .unwrap();
         core.import_anonymous_notes_to_current_account().unwrap();
 
@@ -673,7 +716,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
-        let core = AppCore::with_repo(paths, repo);
+        let mut core = AppCore::with_repo(paths, repo);
 
         let local = core.create_note().unwrap();
         core.save_note(&local.id, "Local", "Local", false).unwrap();
@@ -691,7 +734,7 @@ mod tests {
             )
             .unwrap();
 
-        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+        core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
             .unwrap();
         core.import_anonymous_notes_to_current_account().unwrap();
 
@@ -706,11 +749,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_data_dir(dir.path());
         let repo = NoteRepository::open_in_memory().unwrap();
-        let core = AppCore::with_repo(paths, repo);
+        let mut core = AppCore::with_repo(paths, repo);
 
         let local = core.create_note().unwrap();
         core.save_note(&local.id, "Local", "Local", false).unwrap();
-        core.save_sync_login("http://localhost:8080", "acct_a", "token")
+        core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
             .unwrap();
 
         assert!(core
