@@ -1,3 +1,4 @@
+/// 服务器配置：从环境变量中读取所有运行时参数。
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 

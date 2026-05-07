@@ -1,0 +1,2 @@
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS kek_salt TEXT;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS encrypted_dek TEXT

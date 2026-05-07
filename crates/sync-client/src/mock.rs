@@ -1,3 +1,4 @@
+/// 用于测试的内存 SyncApi 实现，模拟服务端的推送/拉取/快照行为。
 use crate::protocol::*;
 use crate::SyncApi;
 use anyhow::Result;
@@ -6,22 +7,31 @@ use chrono::Utc;
 use snapline_domain::{AssetUploadPayload, Note, SyncPayload};
 use std::sync::Mutex;
 
+/// 线程安全的内存同步后端，各字段均用 `Mutex` 保护。
 #[derive(Default)]
 pub struct MockSyncApi {
     notes: Mutex<Vec<Note>>,
+    /// 记录每条变更对应的设备 ID，用于拉取时填充 `RemoteChange.device_id`。
     change_devices: Mutex<Vec<(snapline_domain::NoteId, String)>>,
     assets: Mutex<Vec<AssetUploadPayload>>,
     asset_bytes: Mutex<Vec<(String, Vec<u8>)>>,
+    /// 全局单调递增游标，每接受一条变更时加 1。
     cursor: Mutex<i64>,
 }
 
 #[async_trait]
 impl SyncApi for MockSyncApi {
+    async fn register(&self, request: LoginRequest) -> Result<LoginResponse> {
+        self.login(request).await
+    }
+
     async fn login(&self, request: LoginRequest) -> Result<LoginResponse> {
         let account_id = format!("acct_{}", request.email);
         Ok(LoginResponse {
             access_token: format!("token:{account_id}"),
             account_id,
+            kek_salt: None,
+            encrypted_dek: None,
         })
     }
 
@@ -37,6 +47,7 @@ impl SyncApi for MockSyncApi {
                     note.id == change.note_id
                         && note.owner_account_id.as_deref() == Some(&account_id)
                 }) {
+                    // 版本号不匹配 → 冲突
                     if existing.server_version != change.base_version {
                         results.push(PushChangeResult::Conflict {
                             queue_id: change.queue_id,
@@ -62,6 +73,7 @@ impl SyncApi for MockSyncApi {
                         cursor: *cursor,
                     });
                 } else {
+                    // 新笔记：直接插入
                     let mut note = Note::draft(Utc::now());
                     note.id = change.note_id.clone();
                     note.title = payload.title;
@@ -157,6 +169,7 @@ impl SyncApi for MockSyncApi {
     }
 }
 
+/// 从 `token:acct_xxx` 格式的 Bearer token 中解析账户 ID。
 fn account_id_from_token(token: &str) -> Option<String> {
     token.strip_prefix("token:").map(str::to_string)
 }

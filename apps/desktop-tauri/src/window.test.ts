@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  forgetNoteWindow,
+  rememberNoteWindow,
   readAppRoute,
   revealExistingWindow,
   shouldDeferInitialNoteLoad,
@@ -75,5 +77,15 @@ describe("window routing", () => {
     await revealExistingWindow(existing);
 
     expect(calls).toEqual(["show", "unminimize", "setFocus"]);
+  });
+
+  it("remembers and clears the window label for a saved note", () => {
+    rememberNoteWindow("note-id", "note-draft-window");
+
+    expect(localStorage.getItem("snapline.noteWindow.note-id")).toBe("note-draft-window");
+
+    forgetNoteWindow("note-id");
+
+    expect(localStorage.getItem("snapline.noteWindow.note-id")).toBeNull();
   });
 });

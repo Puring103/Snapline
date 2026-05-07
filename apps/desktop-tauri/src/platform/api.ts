@@ -21,11 +21,13 @@ export const api = {
   getOpenShortcut: () => invoke<string>("get_open_shortcut"),
   setOpenShortcut: (shortcut: string) => invoke<string>("set_open_shortcut", { shortcut }),
   getSyncAccountState: () => invoke<SyncAccountState>("get_sync_account_state"),
+  registerSync: (serverBaseUrl: string, email: string, password: string) =>
+    invoke<LoginSyncResult>("register_sync", { serverBaseUrl, email, password }),
   loginSync: (serverBaseUrl: string, email: string, password: string) =>
     invoke<LoginSyncResult>("login_sync", { serverBaseUrl, email, password }),
   anonymousNoteCount: () => invoke<number>("anonymous_note_count"),
   importAnonymousNotes: () => invoke<NoteSummary[]>("import_anonymous_notes"),
   syncNow: () => invoke<string>("sync_now"),
-  openExternalUrl: (url: string) => invoke<string>("open_external_url", { url }),
   exportNoteAsMarkdown: (id: string) => invoke<string>("export_note_as_markdown", { id }),
+  openExternalUrl: (url: string) => invoke<string>("open_external_url", { url }),
 };

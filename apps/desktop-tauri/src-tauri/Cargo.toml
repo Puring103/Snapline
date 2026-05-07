@@ -23,8 +23,8 @@ tauri-runtime = "=2.10.1"
 tauri-runtime-wry = { version = "=2.10.1", default-features = false }
 tauri-utils = "=2.8.3"
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
-png = "0.17"
 dirs = "5"
+png = "0.17"
 uuid.workspace = true
 chrono.workspace = true
 tokio.workspace = true

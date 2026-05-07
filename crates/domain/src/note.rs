@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// 笔记的唯一标识符，基于 UUID v4。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NoteId(pub Uuid);
 
@@ -23,6 +24,11 @@ impl std::fmt::Display for NoteId {
     }
 }
 
+/// 笔记的完整数据模型。
+///
+/// `server_version` 为乐观锁版本号，初始为 0，每次服务端接受推送后递增。
+/// `owner_account_id` 为 None 表示匿名（本地）笔记，登录后迁移为账户笔记。
+/// `is_conflict_copy` 标记此笔记是同步冲突时自动保存的副本。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Note {
     pub id: NoteId,
@@ -31,19 +37,28 @@ pub struct Note {
     pub pinned: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// 软删除时间戳；不为 None 表示已删除。
     pub deleted_at: Option<DateTime<Utc>>,
+    /// 服务端版本号（乐观锁），本地草稿为 0。
     pub server_version: i64,
+    /// 最后修改此笔记的设备 ID（用于拉取时过滤自己的推送）。
     pub last_modified_by_device: Option<String>,
+    /// 是否为冲突副本。
     pub is_conflict_copy: bool,
+    /// 冲突副本的来源笔记 ID。
     pub source_note_id: Option<NoteId>,
+    /// 所属账户 ID；None 表示匿名本地笔记。
     pub owner_account_id: Option<String>,
 }
 
+/// 笔记列表中的摘要视图，仅包含展示所需的字段。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteSummary {
     pub id: NoteId,
     pub title: String,
+    /// 纯文本预览（已剥离 Markdown 标记，截断到 500 字符）。
     pub preview: String,
+    /// 保留 Markdown 标记的预览（不截断，用于富文本渲染）。
     pub preview_md: String,
     pub pinned: bool,
     pub updated_at: DateTime<Utc>,
@@ -53,6 +68,7 @@ pub struct NoteSummary {
 }
 
 impl Note {
+    /// 创建一个未持久化的空白草稿笔记。
     pub fn draft(now: DateTime<Utc>) -> Self {
         Self {
             id: NoteId::new(),
@@ -71,6 +87,9 @@ impl Note {
     }
 }
 
+/// 从 Markdown 内容中提取标题。
+///
+/// 取第一个 `# ` 开头的非空行作为标题；找不到则返回 `"Untitled"`。
 pub fn derive_title(content_md: &str) -> String {
     content_md
         .lines()
@@ -81,6 +100,9 @@ pub fn derive_title(content_md: &str) -> String {
         .unwrap_or_else(|| "Untitled".to_string())
 }
 
+/// 从 Markdown 内容中生成纯文本预览。
+///
+/// 跳过标题行和空行，剥离列表标记，最多取前 500 个字符。
 pub fn derive_preview(content_md: &str) -> String {
     let preview = content_md
         .lines()
@@ -99,6 +121,9 @@ pub fn derive_preview(content_md: &str) -> String {
         .to_string()
 }
 
+/// 从 Markdown 内容中生成保留标记的预览。
+///
+/// 只去掉标题行，保留其余所有 Markdown 标记，不截断——供前端渲染器使用。
 pub fn derive_preview_markdown(content_md: &str) -> String {
     let title_line_index = content_md
         .lines()
@@ -115,6 +140,7 @@ pub fn derive_preview_markdown(content_md: &str) -> String {
         .to_string()
 }
 
+/// 剥离行首的常见 Markdown 列表标记（`- `、`* `、`1. ` 等）。
 fn strip_markdown_markup(line: &str) -> String {
     line.trim_start_matches("- ")
         .trim_start_matches("* ")

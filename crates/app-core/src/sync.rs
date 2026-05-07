@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::Utc;
-use snapline_domain::{Note, NoteChangePayload, NoteId, SyncOpType, SyncPayload};
+use snapline_domain::{crypto, Note, NoteChangePayload, NoteId, SyncOpType, SyncPayload};
 
 use crate::{AppCore, SyncAccountState};
 
@@ -15,18 +15,44 @@ impl AppCore {
         })
     }
 
+    /// 若服务端返回了 `kek_salt` 和 `encrypted_dek`，则用密码派生 KEK、解包 DEK 并保存至内存。
     pub fn save_sync_login(
-        &self,
+        &mut self,
         server_base_url: &str,
         account_id: &str,
         access_token: &str,
+        password: Option<&str>,
+        kek_salt: Option<&str>,
+        encrypted_dek: Option<&str>,
     ) -> Result<SyncAccountState> {
         let mut state = self.repo.get_or_create_sync_state()?;
         state.server_base_url = Some(server_base_url.to_string());
         state.account_id = Some(account_id.to_string());
         state.access_token = Some(access_token.to_string());
+        state.kek_salt = kek_salt.map(str::to_string);
+        state.encrypted_dek = encrypted_dek.map(str::to_string);
         self.repo.save_sync_state(&state)?;
+        if let (Some(pw), Some(salt_b64), Some(wrapped)) = (password, kek_salt, encrypted_dek) {
+            let salt = crypto::decode_salt(salt_b64)?;
+            let kek = crypto::derive_kek(pw, &salt)?;
+            self.dek = Some(crypto::unwrap_dek(&kek, wrapped)?);
+        }
         self.sync_account_state()
+    }
+
+    /// 注册新账户时生成 E2EE 材料，返回 `(kek_salt_b64, encrypted_dek_b64)`。
+    pub fn generate_e2ee_material(&mut self, password: &str) -> Result<(String, String)> {
+        let salt = crypto::generate_kek_salt();
+        let kek = crypto::derive_kek(password, &salt)?;
+        let dek = crypto::generate_dek();
+        let wrapped = crypto::wrap_dek(&kek, &dek)?;
+        self.dek = Some(dek);
+        Ok((crypto::encode_salt(&salt), wrapped))
+    }
+
+    /// 返回当前内存中的 DEK（供 processor 使用）。
+    pub fn dek(&self) -> Option<&[u8; 32]> {
+        self.dek.as_ref()
     }
 
     pub(crate) fn current_account_id(&self) -> Result<Option<String>> {

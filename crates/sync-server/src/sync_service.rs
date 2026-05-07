@@ -1,3 +1,4 @@
+/// 同步业务逻辑：处理推送变更、拉取变更和快照查询。
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use snapline_domain::{
@@ -7,6 +8,9 @@ use snapline_sync_client::protocol::{PushChange, PushChangeResult, RemoteChange}
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
+/// 处理单条推送变更，在事务内执行乐观锁检查并写入 notes 和 change_log。
+///
+/// 若服务端当前版本与 `base_version` 不符，返回 `Conflict` 而不写入。
 pub async fn apply_push_change(
     tx: &mut Transaction<'_, Postgres>,
     account_id: &str,
@@ -35,6 +39,7 @@ pub async fn apply_push_change(
 
     let payload = match change.payload {
         SyncPayload::Note(payload) => payload,
+        // 资源上传通过专用接口处理，push 接口只处理笔记变更
         SyncPayload::Asset(_) => {
             return Ok(PushChangeResult::Accepted {
                 queue_id: change.queue_id,
@@ -75,6 +80,7 @@ pub async fn apply_push_change(
     })
 }
 
+/// 拉取指定游标之后的变更列表，通过 JOIN notes 获取完整笔记数据。
 pub async fn pull_changes(
     pool: &PgPool,
     account_id: &str,
@@ -105,6 +111,7 @@ pub async fn pull_changes(
         .collect()
 }
 
+/// 获取账户全量快照：所有笔记 + 所有资源元数据 + 当前游标。
 pub async fn snapshot(
     pool: &PgPool,
     account_id: &str,
@@ -144,6 +151,7 @@ pub async fn snapshot(
     Ok((cursor, notes, assets))
 }
 
+/// 将笔记写入（或更新）notes 表，所有字段使用 upsert 语义。
 async fn upsert_note(
     tx: &mut Transaction<'_, Postgres>,
     account_id: &str,
@@ -178,6 +186,7 @@ async fn upsert_note(
     Ok(())
 }
 
+/// 向 change_log 追加一条变更记录，返回自增游标值。
 async fn append_change_log(
     tx: &mut Transaction<'_, Postgres>,
     account_id: &str,
@@ -194,7 +203,7 @@ async fn append_change_log(
     )
     .bind(account_id)
     .bind(note_id)
-    .bind(op_type_to_str(&op_type))
+    .bind(op_type.as_str()) // 使用 domain 层统一的字符串表示，避免本地重复定义转换逻辑
     .bind(version)
     .bind(serde_json::to_value(payload)?)
     .bind(device_id)
@@ -203,19 +212,12 @@ async fn append_change_log(
     Ok(row.get("cursor"))
 }
 
+/// 根据笔记载荷判断操作类型（是删除还是更新）。
 fn note_payload_op_type(payload: &NoteChangePayload) -> SyncOpType {
     if payload.deleted_at.is_some() {
         SyncOpType::DeleteNote
     } else {
         SyncOpType::UpsertNote
-    }
-}
-
-fn op_type_to_str(op_type: &SyncOpType) -> &'static str {
-    match op_type {
-        SyncOpType::UpsertNote => "upsert_note",
-        SyncOpType::DeleteNote => "delete_note",
-        SyncOpType::AssetUpload => "asset_upload",
     }
 }
 
@@ -236,6 +238,7 @@ fn row_to_note(row: &sqlx::postgres::PgRow, note_id: &NoteId) -> Result<Note> {
     })
 }
 
+/// 从包含 JOIN 别名（`note_created_at`）的行构建 Note。
 fn joined_row_to_note(row: &sqlx::postgres::PgRow, note_id: NoteId) -> Result<Note> {
     Ok(Note {
         id: note_id,

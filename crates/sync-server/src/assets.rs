@@ -1,3 +1,4 @@
+/// 资源文件存储抽象：`AssetStore` trait 及本地文件系统实现。
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
