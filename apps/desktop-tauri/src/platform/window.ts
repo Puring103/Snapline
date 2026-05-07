@@ -1,4 +1,3 @@
-import { emit } from "@tauri-apps/api/event";
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
@@ -70,16 +69,30 @@ export async function openNoteWindow(noteId?: string | null, position?: PointerW
   const normalizedNoteId = noteId ?? null;
 
   if (normalizedNoteId) {
-    // 打开已有笔记：先关闭其他笔记窗口，再聚焦/新建
-    await emit("note-window-close-others", { keepNoteId: normalizedNoteId });
     const existing = await revealExistingNoteWindow(normalizedNoteId);
-    if (existing) return existing;
-    return openAppWindow("note", normalizedNoteId, position);
+    if (existing) {
+      await closeOtherNoteWindows(existing.label);
+      return existing;
+    }
   }
 
-  // 新建笔记：关闭所有其他笔记窗口，再开新窗口
-  await emit("note-window-close-others", { keepNoteId: "__new__" });
-  return openAppWindow("note", null, position);
+  const newWin = openAppWindow("note", normalizedNoteId, position);
+  // 关闭其他笔记窗口（不等待，避免阻塞新窗口创建）
+  void closeOtherNoteWindows(null);
+  return newWin;
+}
+
+async function closeOtherNoteWindows(keepLabel: string | null) {
+  try {
+    const all = await WebviewWindow.getAll();
+    await Promise.all(
+      all
+        .filter((w) => w.label !== keepLabel && w.label !== "list" && w.label !== "main")
+        .map((w) => w.close().catch(() => undefined)),
+    );
+  } catch {
+    // ignore ACL or window-already-closed errors
+  }
 }
 
 export function rememberNoteWindow(noteId: string, label: string) {

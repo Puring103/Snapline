@@ -1,16 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <rect width="1024" height="1024" rx="220" fill="#2f6f5a"/>
-  <g transform="translate(192, 160) scale(640, 640)" fill="none" stroke="#fffbe7" stroke-linecap="round" stroke-linejoin="round" stroke-width="0.12">
-    <!-- note body -->
-    <path d="M0.28 0.17h0.35l0.16 0.16v0.50c0 0.04-0.03 0.07-0.07 0.07H0.28c-0.04 0-0.07-0.03-0.07-0.07V0.24c0-0.04 0.03-0.07 0.07-0.07z"/>
-    <!-- folded corner -->
-    <path d="M0.63 0.17v0.13c0 0.02 0.02 0.04 0.04 0.04h0.13"/>
-    <!-- lines -->
-    <path d="M0.35 0.47h0.25"/>
-    <path d="M0.28 0.57h0.32"/>
-    <path d="M0.30 0.67h0.20"/>
-    <!-- left accent lines -->
-    <path d="M0.18 0.47h0.08"/>
-    <path d="M0.14 0.57h0.10"/>
-  </g>
+  <rect width="1024" height="1024" rx="220" fill="#f5f0e8"/>
+  <rect width="1024" height="1024" rx="220" fill="none" stroke="#d4c88a" stroke-width="24"/>
+  <!-- note body -->
+  <path d="M296 176h288l160 160v512a56 56 0 0 1-56 56H296a56 56 0 0 1-56-56V232a56 56 0 0 1 56-56z" fill="none" stroke="#3b3324" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- folded corner -->
+  <path d="M584 176v120a40 40 0 0 0 40 40h120" fill="none" stroke="#3b3324" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- content lines -->
+  <path d="M352 448h288" stroke="#3b3324" stroke-width="44" stroke-linecap="round"/>
+  <path d="M304 544h336" stroke="#3b3324" stroke-width="44" stroke-linecap="round"/>
+  <path d="M352 640h200" stroke="#3b3324" stroke-width="44" stroke-linecap="round"/>
+  <!-- left accent lines -->
+  <path d="M192 448h80" stroke="#3b3324" stroke-width="44" stroke-linecap="round"/>
+  <path d="M152 544h104" stroke="#3b3324" stroke-width="44" stroke-linecap="round"/>
 </svg>
