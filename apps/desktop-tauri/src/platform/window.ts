@@ -135,21 +135,12 @@ function openAppWindow(mode: AppWindowMode, noteId: string | null = null, positi
   if (noteId) params.set("noteId", noteId);
   const options = windowOptionsForMode(mode);
 
-  const win = new WebviewWindow(label, {
+  return new WebviewWindow(label, {
     url: `/?${params.toString()}`,
     title: mode === "list" ? "Snapline" : "Snapline Note",
     ...(position ? { position: new LogicalPosition(position.x + 12, position.y + 12) } : { center: true }),
     ...options,
   });
-
-  win.once("tauri://error", (event) => {
-    console.error("[snapline] window create error:", label, event.payload);
-  });
-  win.once("tauri://created", () => {
-    console.info("[snapline] window created:", label);
-  });
-
-  return win;
 }
 
 function buildWindowLabel(mode: AppWindowMode, noteId: string | null) {
