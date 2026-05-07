@@ -1,5 +1,8 @@
+import { emit } from "@tauri-apps/api/event";
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+
+export const CLOSE_OTHER_NOTES_EVENT = "snapline-close-other-note-windows";
 
 export type AppWindowMode = "list" | "note";
 
@@ -65,16 +68,27 @@ export interface PointerWindowPosition {
   y: number;
 }
 
-export function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
+export async function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
   const normalizedNoteId = noteId ?? null;
 
   if (normalizedNoteId) {
-    return revealExistingNoteWindow(normalizedNoteId).then((existing) => {
-      return existing ?? openAppWindow("note", normalizedNoteId, position);
-    });
+    const existing = await revealExistingNoteWindow(normalizedNoteId);
+    if (existing) {
+      scheduleCloseOtherNoteWindows(existing.label);
+      return existing;
+    }
   }
 
-  return openAppWindow("note", null, position);
+  const newWin = openAppWindow("note", normalizedNoteId, position);
+  scheduleCloseOtherNoteWindows(newWin.label);
+  return newWin;
+}
+
+function scheduleCloseOtherNoteWindows(keepLabel: string) {
+  // 延迟 400ms，等新窗口 webview 启动并挂好 listener 后再广播
+  setTimeout(() => {
+    void emit(CLOSE_OTHER_NOTES_EVENT, { keepLabel });
+  }, 400);
 }
 
 export function rememberNoteWindow(noteId: string, label: string) {
