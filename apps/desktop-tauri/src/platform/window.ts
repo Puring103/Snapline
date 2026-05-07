@@ -77,8 +77,7 @@ export async function openNoteWindow(noteId?: string | null, position?: PointerW
   }
 
   const newWin = openAppWindow("note", normalizedNoteId, position);
-  // 关闭其他笔记窗口（不等待，避免阻塞新窗口创建）
-  void closeOtherNoteWindows(null);
+  void closeOtherNoteWindows(newWin.label);
   return newWin;
 }
 
