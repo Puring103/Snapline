@@ -154,6 +154,7 @@ html[data-theme="dark"] .listShell {
 .editorShellFrame {
   width: 100%;
   max-width: none;
+  min-width: 300px;
 }
 
 .chromeBar {
@@ -161,9 +162,11 @@ html[data-theme="dark"] .listShell {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 0;
-  padding: 1px 0 8px;
+  margin: -8px -8px 0;
+  padding: 8px 8px 10px;
   border-bottom: 1px solid var(--line);
+  border-radius: 18px 18px 0 0;
+  background: color-mix(in srgb, var(--surface-soft) 70%, var(--surface));
   -webkit-app-region: drag;
   cursor: default;
 }
@@ -447,7 +450,15 @@ html[data-theme="dark"] .listShell {
   position: relative;
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editorScrollArea {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
+  position: relative;
 }
 
 .editorPreviewLayer {
@@ -691,9 +702,11 @@ html[data-theme="dark"] .markdownSurface .ProseMirror pre {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 4px 4px 8px;
-  margin-bottom: 0;
+  margin: -8px -8px 0;
+  padding: 8px 8px 10px;
   border-bottom: 1px solid var(--line);
+  border-radius: 18px 18px 0 0;
+  background: color-mix(in srgb, var(--surface-soft) 70%, var(--surface));
   -webkit-app-region: drag;
   cursor: default;
 }
@@ -1092,17 +1105,17 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   padding: 11px 11px 10px;
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface-soft) 60%, var(--surface));
+  border-radius: 15px 15px 0 0;
 }
 
-.settingsHeaderActions {
+.themeButtons {
   display: flex;
   gap: 4px;
-  flex: none;
 }
 
-.settingsHeaderActions .iconButton {
-  width: 28px;
-  height: 28px;
+.themeButtons .iconButton {
+  width: 30px;
+  height: 30px;
   border-radius: 8px;
 }
 
@@ -1227,12 +1240,16 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   display: flex;
   align-items: center;
   gap: 1px;
-  padding: 2px 0 6px;
-  border-bottom: 1px solid var(--note-line);
-  background: transparent;
+  padding: 4px 4px 4px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-soft) 70%, var(--surface));
   flex-wrap: nowrap;
   flex-shrink: 0;
   overflow: hidden;
+}
+
+.editorToolbarSpacer {
+  flex: 1;
 }
 
 .editorToolbarDivider {

@@ -24,9 +24,7 @@ import {
   MoreIcon,
   PinIcon,
   PlusIcon,
-  PreviewModeIcon,
   SettingsIcon,
-  SourceModeIcon,
 } from "./AppIcons";
 import { useThemeMode } from "../../hooks/theme";
 
@@ -480,13 +478,6 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
         </header>
 
         <section className="noteSurface">
-          <IconButton
-            label={editorMode === "preview" ? "Switch to source mode" : "Switch to preview mode"}
-            onClick={() => setEditorMode((mode) => toggleEditorMode(mode))}
-            variant="floating"
-          >
-            {editorMode === "preview" ? <SourceModeIcon /> : <PreviewModeIcon />}
-          </IconButton>
           {error ? (
             <div className="errorBanner">
               <span>{error}</span>
@@ -519,9 +510,9 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
               focusRequestId={focusRequestId}
               mode={editorMode}
               onBodyChange={handleBodyChange}
+              onModeToggle={() => setEditorMode((mode) => toggleEditorMode(mode))}
               onRequestImageSave={handleRequestImageSave}
               readOnly={deleted}
-              showToolbar={true}
             />
           </Suspense>
         </section>

@@ -35,9 +35,9 @@ interface EditorPaneProps {
   focusRequestId?: number;
   mode: EditorMode;
   onBodyChange: (bodyMarkdown: string) => void;
+  onModeToggle: () => void;
   onRequestImageSave: (bytes: number[]) => Promise<SavedAsset | null>;
   readOnly?: boolean;
-  showToolbar?: boolean;
 }
 
 export function EditorPane({
@@ -46,9 +46,9 @@ export function EditorPane({
   focusRequestId = 0,
   mode,
   onBodyChange,
+  onModeToggle,
   onRequestImageSave,
   readOnly = false,
-  showToolbar = true,
 }: EditorPaneProps) {
   const suppressNextUpdate = useRef(false);
   const editorRef = useRef<Editor | null>(null);
@@ -233,15 +233,17 @@ export function EditorPane({
 
   return (
     <div className="editorShell">
-      {showToolbar && mode === "preview" && !readOnly ? (
-        <EditorToolbar editor={editor} />
-      ) : null}
-      <div className={mode === "preview" ? "editorPreviewLayer" : "editorPreviewLayer hidden"}>
-        <EditorContent editor={editor} className="editorSurface markdownSurface" />
+      <div className="editorScrollArea">
+        <div className={mode === "preview" ? "editorPreviewLayer" : "editorPreviewLayer hidden"}>
+          <EditorContent editor={editor} className="editorSurface markdownSurface" />
+        </div>
+        {mode === "source" ? renderSourceEditor() : null}
+        {mode === "preview" && hasTransientImageSource(bodyMarkdown) ? (
+          <div className="editorHint">Uploading image...</div>
+        ) : null}
       </div>
-      {mode === "source" ? renderSourceEditor() : null}
-      {mode === "preview" && hasTransientImageSource(bodyMarkdown) ? (
-        <div className="editorHint">Uploading image...</div>
+      {!readOnly ? (
+        <EditorToolbar editor={mode === "preview" ? editor : null} mode={mode} onModeToggle={onModeToggle} />
       ) : null}
     </div>
   );
@@ -450,83 +452,94 @@ export function EditorPane({
   }
 }
 
-function EditorToolbar({ editor }: { editor: Editor | null }) {
-  if (!editor) return null;
-
+function EditorToolbar({ editor, mode, onModeToggle }: { editor: Editor | null; mode: EditorMode; onModeToggle: () => void }) {
   return (
     <div className="editorToolbar">
-      <ToolbarButton
-        active={editor.isActive("bold")}
-        label="Bold"
-        onClick={() => editor.chain().focus().toggleBold().run()}
-      >
-        <BoldIcon />
-      </ToolbarButton>
-      <ToolbarButton
-        active={editor.isActive("italic")}
-        label="Italic"
-        onClick={() => editor.chain().focus().toggleItalic().run()}
-      >
-        <ItalicIcon />
-      </ToolbarButton>
-      <ToolbarButton
-        active={editor.isActive("code")}
-        label="Inline code"
-        onClick={() => editor.chain().focus().toggleCode().run()}
-      >
-        <InlineCodeIcon />
-      </ToolbarButton>
+      {editor ? (
+        <>
+          <ToolbarButton
+            active={editor.isActive("bold")}
+            label="Bold"
+            onClick={() => editor.chain().focus().toggleBold().run()}
+          >
+            <BoldIcon />
+          </ToolbarButton>
+          <ToolbarButton
+            active={editor.isActive("italic")}
+            label="Italic"
+            onClick={() => editor.chain().focus().toggleItalic().run()}
+          >
+            <ItalicIcon />
+          </ToolbarButton>
+          <ToolbarButton
+            active={editor.isActive("code")}
+            label="Inline code"
+            onClick={() => editor.chain().focus().toggleCode().run()}
+          >
+            <InlineCodeIcon />
+          </ToolbarButton>
+          <div className="editorToolbarDivider" />
+          <ToolbarButton
+            active={editor.isActive("heading", { level: 1 })}
+            label="Heading 1"
+            onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+          >
+            <HeadingIcon level={1} />
+          </ToolbarButton>
+          <ToolbarButton
+            active={editor.isActive("heading", { level: 2 })}
+            label="Heading 2"
+            onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+          >
+            <HeadingIcon level={2} />
+          </ToolbarButton>
+          <div className="editorToolbarDivider" />
+          <ToolbarButton
+            active={editor.isActive("bulletList")}
+            label="Bullet list"
+            onClick={() => editor.chain().focus().toggleBulletList().run()}
+          >
+            <BulletListIcon />
+          </ToolbarButton>
+          <ToolbarButton
+            active={editor.isActive("orderedList")}
+            label="Ordered list"
+            onClick={() => editor.chain().focus().toggleOrderedList().run()}
+          >
+            <OrderedListIcon />
+          </ToolbarButton>
+          <ToolbarButton
+            active={editor.isActive("taskList")}
+            label="Task list"
+            onClick={() => editor.chain().focus().toggleTaskList().run()}
+          >
+            <TaskListIcon />
+          </ToolbarButton>
+          <div className="editorToolbarDivider" />
+          <ToolbarButton
+            active={editor.isActive("blockquote")}
+            label="Blockquote"
+            onClick={() => editor.chain().focus().toggleBlockquote().run()}
+          >
+            <BlockquoteIcon />
+          </ToolbarButton>
+          <ToolbarButton
+            active={editor.isActive("codeBlock")}
+            label="Code block"
+            onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+          >
+            <CodeBlockIcon />
+          </ToolbarButton>
+        </>
+      ) : null}
+      <div className="editorToolbarSpacer" />
       <div className="editorToolbarDivider" />
       <ToolbarButton
-        active={editor.isActive("heading", { level: 1 })}
-        label="Heading 1"
-        onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+        active={false}
+        label={mode === "preview" ? "Switch to source mode" : "Switch to preview mode"}
+        onClick={onModeToggle}
       >
-        <HeadingIcon level={1} />
-      </ToolbarButton>
-      <ToolbarButton
-        active={editor.isActive("heading", { level: 2 })}
-        label="Heading 2"
-        onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-      >
-        <HeadingIcon level={2} />
-      </ToolbarButton>
-      <div className="editorToolbarDivider" />
-      <ToolbarButton
-        active={editor.isActive("bulletList")}
-        label="Bullet list"
-        onClick={() => editor.chain().focus().toggleBulletList().run()}
-      >
-        <BulletListIcon />
-      </ToolbarButton>
-      <ToolbarButton
-        active={editor.isActive("orderedList")}
-        label="Ordered list"
-        onClick={() => editor.chain().focus().toggleOrderedList().run()}
-      >
-        <OrderedListIcon />
-      </ToolbarButton>
-      <ToolbarButton
-        active={editor.isActive("taskList")}
-        label="Task list"
-        onClick={() => editor.chain().focus().toggleTaskList().run()}
-      >
-        <TaskListIcon />
-      </ToolbarButton>
-      <div className="editorToolbarDivider" />
-      <ToolbarButton
-        active={editor.isActive("blockquote")}
-        label="Blockquote"
-        onClick={() => editor.chain().focus().toggleBlockquote().run()}
-      >
-        <BlockquoteIcon />
-      </ToolbarButton>
-      <ToolbarButton
-        active={editor.isActive("codeBlock")}
-        label="Code block"
-        onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-      >
-        <CodeBlockIcon />
+        {mode === "preview" ? <SourceModeToolbarIcon /> : <PreviewModeToolbarIcon />}
       </ToolbarButton>
     </div>
   );
@@ -598,6 +611,14 @@ function BlockquoteIcon() {
 
 function CodeBlockIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="M8 9l-3 3 3 3M16 9l3 3-3 3M13 8l-2 8"/></svg>;
+}
+
+function SourceModeToolbarIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7l-4 5 4 5M15 7l4 5-4 5M13 5l-2 14"/></svg>;
+}
+
+function PreviewModeToolbarIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12s3.5-6.5 8.5-6.5 8.5 6.5 8.5 6.5-3.5 6.5-8.5 6.5S3.5 12 3.5 12Z"/><path d="M12 9.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6Z"/></svg>;
 }
 
 function removeImageSource(editor: Editor, source: string) {

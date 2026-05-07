@@ -40,30 +40,7 @@ export function SettingsPanel({
             <div className="settingsTitle">Settings</div>
             <div className="settingsSub">Shortcut and appearance</div>
           </div>
-          <div className="settingsHeaderActions">
-            <IconButton
-              active={themeMode === "system"}
-              label="System theme"
-              onClick={() => onThemeModeChange("system")}
-            >
-              <ThemeSystemIcon />
-            </IconButton>
-            <IconButton
-              active={themeMode === "light"}
-              label="Light theme"
-              onClick={() => onThemeModeChange("light")}
-            >
-              <ThemeLightIcon />
-            </IconButton>
-            <IconButton
-              active={themeMode === "dark"}
-              label="Dark theme"
-              onClick={() => onThemeModeChange("dark")}
-            >
-              <ThemeDarkIcon />
-            </IconButton>
-            <IconButton label="Close settings" onClick={onClose}><CloseIcon /></IconButton>
-          </div>
+          <IconButton label="Close settings" onClick={onClose}><CloseIcon /></IconButton>
         </header>
 
         <div className="settingsPanelScroll">
@@ -98,6 +75,36 @@ export function SettingsPanel({
                 type="checkbox"
               />
             </label>
+          </div>
+
+          <div className="settingsGroup">
+            <div className="settingsGroupTitle">Appearance</div>
+            <div className="settingsField">
+              <span>Theme</span>
+              <div className="themeButtons">
+                <IconButton
+                  active={themeMode === "system"}
+                  label="System theme"
+                  onClick={() => onThemeModeChange("system")}
+                >
+                  <ThemeSystemIcon />
+                </IconButton>
+                <IconButton
+                  active={themeMode === "light"}
+                  label="Light theme"
+                  onClick={() => onThemeModeChange("light")}
+                >
+                  <ThemeLightIcon />
+                </IconButton>
+                <IconButton
+                  active={themeMode === "dark"}
+                  label="Dark theme"
+                  onClick={() => onThemeModeChange("dark")}
+                >
+                  <ThemeDarkIcon />
+                </IconButton>
+              </div>
+            </div>
           </div>
 
           <div className="settingsGroup">
