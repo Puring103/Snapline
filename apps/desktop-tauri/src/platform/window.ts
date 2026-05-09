@@ -1,5 +1,6 @@
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { api } from "./api";
 
 export const CLOSE_OTHER_NOTES_EVENT = "snapline-close-other-note-windows";
 export const FOCUS_EDITOR_EVENT = "snapline-focus-editor";
@@ -31,6 +32,7 @@ const LIST_WINDOW_LABEL = "list";
 export interface AppRoute {
   mode: AppWindowMode;
   noteId: string | null;
+  newDraft: boolean;
 }
 
 export function readAppRoute(): AppRoute {
@@ -39,6 +41,7 @@ export function readAppRoute(): AppRoute {
   return {
     mode,
     noteId: search.get("noteId"),
+    newDraft: search.get("newDraft") === "1",
   };
 }
 
@@ -71,28 +74,7 @@ export interface PointerWindowPosition {
 }
 
 export async function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
-  const normalizedNoteId = noteId ?? null;
-
-  if (normalizedNoteId === null) {
-    const existingDraftWindow = await WebviewWindow.getByLabel(DRAFT_WINDOW_LABEL);
-    if (existingDraftWindow) {
-      await revealExistingWindow(existingDraftWindow, position);
-      await existingDraftWindow.emit(FOCUS_EDITOR_EVENT);
-      return existingDraftWindow;
-    }
-  }
-
-  if (normalizedNoteId) {
-    const existing = await revealExistingNoteWindow(normalizedNoteId);
-    if (existing) {
-      void closeOtherNoteWindows(existing.label);
-      return existing;
-    }
-  }
-
-  const newWin = openAppWindow("note", normalizedNoteId, position);
-  void closeOtherNoteWindows(newWin.label);
-  return newWin;
+  return api.openNoteWindow(noteId ?? null, position);
 }
 
 async function closeOtherNoteWindows(keepLabel: string) {
@@ -137,7 +119,7 @@ export interface RevealableWindow {
 
 export async function revealExistingWindow(window: RevealableWindow, position?: PointerWindowPosition) {
   if (position && window.setPosition) {
-    await window.setPosition(new LogicalPosition(position.x + 12, position.y + 12));
+    await window.setPosition(new LogicalPosition(position.x, position.y));
   }
   await window.show();
   await window.unminimize();
@@ -168,12 +150,13 @@ function openAppWindow(mode: AppWindowMode, noteId: string | null = null, positi
   const label = buildWindowLabel(mode, noteId);
   const params = new URLSearchParams({ mode });
   if (noteId) params.set("noteId", noteId);
+  if (mode === "note" && noteId === null) params.set("newDraft", "1");
   const options = windowOptionsForMode(mode);
 
   return new WebviewWindow(label, {
     url: `/?${params.toString()}`,
     title: mode === "list" ? "Snapline" : "Snapline Note",
-    ...(position ? { position: new LogicalPosition(position.x + 12, position.y + 12) } : { center: true }),
+    ...(position ? { position: new LogicalPosition(position.x, position.y) } : { center: true }),
     ...options,
   });
 }
@@ -187,12 +170,16 @@ function buildWindowLabel(mode: AppWindowMode, noteId: string | null) {
     return `note-${noteId}`;
   }
 
-  if (WebviewWindow.getCurrent().label === DRAFT_WINDOW_LABEL) {
-    return DRAFT_WINDOW_LABEL;
+  const suffix = createWindowLabelSuffix();
+  return `${mode}-${suffix}`;
+}
+
+function createWindowLabelSuffix() {
+  if (typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID().replace(/-/g, "");
   }
 
-  const suffix = crypto.randomUUID().replace(/-/g, "");
-  return `${mode}-${suffix}`;
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 }
 
 function readRememberedNoteWindowLabel(noteId: string): string | null {

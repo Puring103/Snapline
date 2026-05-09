@@ -17,6 +17,22 @@ fn bootstrap_starts_with_a_blank_draft_note() {
 }
 
 #[test]
+fn bootstrap_uses_most_recent_saved_note_as_current() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = AppPaths::from_data_dir(dir.path());
+    let repo = NoteRepository::open_in_memory().unwrap();
+    let core = AppCore::with_repo(paths, repo);
+    let note = core.create_note().unwrap();
+    core.save_note(&note.id, "Recent", "Body", false).unwrap();
+
+    let state = core.bootstrap().unwrap();
+
+    assert_eq!(state.notes.len(), 1);
+    assert_eq!(state.current.id, note.id);
+    assert_eq!(state.current.title, "Recent");
+}
+
+#[test]
 fn bootstrap_does_not_persist_a_blank_draft_note() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
@@ -46,7 +62,7 @@ fn saves_png_asset_under_note_directory() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
+    let mut core = AppCore::with_repo(paths, repo);
     let note = core.create_note().unwrap();
 
     let asset = core.save_png_asset(&note.id, &[137, 80, 78, 71]).unwrap();
@@ -63,7 +79,7 @@ fn resolves_asset_urls_without_frontend_path_api() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
+    let mut core = AppCore::with_repo(paths, repo);
 
     let resolved = core.resolve_asset_url("assets/notes/example/image.png");
     assert!(resolved.starts_with("asset://localhost/"));
@@ -75,7 +91,7 @@ fn anonymous_save_does_not_enqueue_sync_change() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
+    let mut core = AppCore::with_repo(paths, repo);
     let note = core.create_note().unwrap();
 
     core.save_note(&note.id, "Title", "# Title", false).unwrap();
@@ -89,7 +105,7 @@ fn account_save_enqueues_upsert_change() {
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
     let core = AppCore::with_repo(paths, repo);
-    core.save_sync_login("http://localhost:8080", "acct_a", "token")
+    core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
     let note = core.create_note().unwrap();
 
@@ -107,7 +123,7 @@ fn set_note_title_enqueues_upsert_change() {
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
     let core = AppCore::with_repo(paths, repo);
-    core.save_sync_login("http://localhost:8080", "acct_a", "token")
+    core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
     let note = core.create_note().unwrap();
     core.save_note(&note.id, "Title", "# Title", false).unwrap();
@@ -128,8 +144,8 @@ fn save_png_asset_enqueues_asset_upload() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
-    core.save_sync_login("http://localhost:8080", "acct_a", "token")
+    let mut core = AppCore::with_repo(paths, repo);
+    core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
     let note = core.create_note().unwrap();
 
@@ -146,7 +162,7 @@ fn import_snapshot_applies_notes_and_updates_cursor() {
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
     let core = AppCore::with_repo(paths, repo);
-    core.save_sync_login("http://localhost:8080", "acct_a", "token")
+    core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
     let mut note = snapline_domain::Note::draft(chrono::Utc::now());
     note.owner_account_id = Some("acct_a".to_string());
@@ -165,7 +181,7 @@ fn import_snapshot_creates_conflict_copy_for_pending_local_changes() {
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
     let core = AppCore::with_repo(paths, repo);
-    core.save_sync_login("http://localhost:8080", "acct_a", "token")
+    core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
     let note = core.create_note().unwrap();
     core.save_note(&note.id, "Local", "# Local", false).unwrap();
@@ -192,7 +208,7 @@ fn save_remote_asset_uses_metadata_location() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
+    let mut core = AppCore::with_repo(paths, repo);
     let note_id = snapline_domain::NoteId::new();
     let asset = snapline_domain::AssetMetadata {
         id: snapline_domain::AssetId::new(),
@@ -218,13 +234,13 @@ fn bootstrap_shows_local_notes_when_logged_out_and_account_notes_when_logged_in(
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
+    let mut core = AppCore::with_repo(paths, repo);
 
     let local = core.create_note().unwrap();
     core.save_note(&local.id, "Local", "Local", false).unwrap();
     assert_eq!(core.bootstrap().unwrap().notes.len(), 1);
 
-    core.save_sync_login("http://localhost:8080", "acct_a", "token")
+    core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
     assert!(core.bootstrap().unwrap().notes.is_empty());
 
@@ -237,11 +253,11 @@ fn importing_anonymous_notes_enqueues_upserts_for_current_account() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
+    let mut core = AppCore::with_repo(paths, repo);
 
     let local = core.create_note().unwrap();
     core.save_note(&local.id, "Local", "Local", false).unwrap();
-    core.save_sync_login("http://localhost:8080", "acct_a", "token")
+    core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
     core.import_anonymous_notes_to_current_account().unwrap();
 
@@ -257,7 +273,7 @@ fn importing_anonymous_notes_removes_old_anonymous_queue_rows() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
+    let mut core = AppCore::with_repo(paths, repo);
 
     let local = core.create_note().unwrap();
     core.save_note(&local.id, "Local", "Local", false).unwrap();
@@ -275,7 +291,7 @@ fn importing_anonymous_notes_removes_old_anonymous_queue_rows() {
         )
         .unwrap();
 
-    core.save_sync_login("http://localhost:8080", "acct_a", "token")
+    core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
     core.import_anonymous_notes_to_current_account().unwrap();
 
@@ -290,11 +306,11 @@ fn logged_in_account_cannot_modify_anonymous_note_by_id() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
+    let mut core = AppCore::with_repo(paths, repo);
 
     let local = core.create_note().unwrap();
     core.save_note(&local.id, "Local", "Local", false).unwrap();
-    core.save_sync_login("http://localhost:8080", "acct_a", "token")
+    core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
 
     assert!(core

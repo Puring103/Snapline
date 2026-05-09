@@ -13,8 +13,9 @@ export function App() {
     startupLog("route_mounted", {
       mode: route.mode,
       has_note_id: route.noteId !== null,
+      new_draft: route.newDraft,
     });
-  }, [route.mode, route.noteId]);
+  }, [route.mode, route.noteId, route.newDraft]);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -24,5 +25,5 @@ export function App() {
     }
   }, []);
 
-  return route.mode === "list" ? <NotesListWindow /> : <NoteEditorWindow noteId={route.noteId} />;
+  return route.mode === "list" ? <NotesListWindow /> : <NoteEditorWindow newDraft={route.newDraft} noteId={route.noteId} />;
 }

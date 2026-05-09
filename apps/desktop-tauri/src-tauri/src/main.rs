@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use snapline_app_core::{AppCore, BootstrapState, SyncAccountState};
 use snapline_domain::{crypto, AssetRef, Note, NoteChangePayload, NoteId, NoteSummary, SyncPayload};
 use snapline_platform::AppPaths;
@@ -11,14 +11,18 @@ use snapline_sync_client::{
 use std::borrow::Cow;
 use std::sync::Mutex;
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, Position, RunEvent, State, WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, Position, RunEvent, State, WebviewUrl,
+    WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 const AUTOSTART_BACKGROUND_ARG: &str = "--background";
 const FOCUS_EDITOR_EVENT: &str = "snapline-focus-editor";
-const CURSOR_OFFSET: i32 = 12;
 const BACKGROUND_SYNC_INTERVAL_SECS: u64 = 60;
+const NOTE_WINDOW_WIDTH: f64 = 340.0;
+const NOTE_WINDOW_HEIGHT: f64 = 440.0;
+const NOTE_WINDOW_MIN_WIDTH: f64 = 300.0;
+const NOTE_WINDOW_MIN_HEIGHT: f64 = 260.0;
 
 struct AppState {
     core: Mutex<AppCore>,
@@ -155,6 +159,32 @@ fn resolve_asset_url(state: State<'_, AppState>, markdown_path: String) -> Resul
         .map_err(|_| "app state lock poisoned".to_string())?
         .resolve_asset_url(&markdown_path);
     Ok(resolved)
+}
+
+#[tauri::command]
+async fn open_note_window(
+    app: AppHandle,
+    note_id: Option<String>,
+    position: Option<WindowPosition>,
+) -> Result<String, String> {
+    if let Some(id) = note_id {
+        let _ = parse_note_id(&id)?;
+        let label = format!("note-{id}");
+        if let Some(window) = app.get_webview_window(&label) {
+            reveal_window(&window, position.as_ref())?;
+            close_other_note_windows(&app, &label);
+            return Ok(label);
+        }
+
+        let label = build_note_window(&app, &label, &format!("/?mode=note&noteId={id}"), position)?;
+        close_other_note_windows(&app, &label);
+        Ok(label)
+    } else {
+        let label = format!("note-{}", uuid::Uuid::new_v4().simple());
+        let label = build_note_window(&app, &label, "/?mode=note&newDraft=1", position)?;
+        close_other_note_windows(&app, &label);
+        Ok(label)
+    }
 }
 
 #[tauri::command]
@@ -824,9 +854,15 @@ fn position_near_cursor(cursor: CursorPoint, size: WindowSize, work_area: WorkAr
     let max_x = work_area.x + (work_area.width - size.width).max(0);
     let max_y = work_area.y + (work_area.height - size.height).max(0);
     WindowPoint {
-        x: (cursor.x + CURSOR_OFFSET).clamp(work_area.x, max_x),
-        y: (cursor.y + CURSOR_OFFSET).clamp(work_area.y, max_y),
+        x: cursor.x.clamp(work_area.x, max_x),
+        y: cursor.y.clamp(work_area.y, max_y),
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct WindowPosition {
+    x: f64,
+    y: f64,
 }
 
 fn hide_main_window(app: &tauri::AppHandle) {
@@ -873,6 +909,58 @@ fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
         let _ = window.emit(FOCUS_EDITOR_EVENT, ());
+    }
+}
+
+fn build_note_window(
+    app: &AppHandle,
+    label: &str,
+    url: &str,
+    position: Option<WindowPosition>,
+) -> Result<String, String> {
+    let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+        .title("Snapline Note")
+        .inner_size(NOTE_WINDOW_WIDTH, NOTE_WINDOW_HEIGHT)
+        .min_inner_size(NOTE_WINDOW_MIN_WIDTH, NOTE_WINDOW_MIN_HEIGHT)
+        .resizable(true)
+        .decorations(false);
+
+    builder = if let Some(position) = position {
+        builder.position(position.x, position.y)
+    } else {
+        builder.center()
+    };
+
+    let window = builder.build().map_err(|err| err.to_string())?;
+    reveal_window(&window, None)?;
+    Ok(label.to_string())
+}
+
+fn reveal_window(
+    window: &tauri::WebviewWindow,
+    position: Option<&WindowPosition>,
+) -> Result<(), String> {
+    if let Some(position) = position {
+        window
+            .set_position(Position::Logical(tauri::LogicalPosition {
+                x: position.x,
+                y: position.y,
+            }))
+            .map_err(|err| err.to_string())?;
+    }
+    window.show().map_err(|err| err.to_string())?;
+    window.unminimize().map_err(|err| err.to_string())?;
+    window.set_focus().map_err(|err| err.to_string())?;
+    let _ = window.emit(FOCUS_EDITOR_EVENT, ());
+    Ok(())
+}
+
+fn close_other_note_windows(app: &AppHandle, keep_label: &str) {
+    for (label, window) in app.webview_windows() {
+        if label != keep_label && label != "main" && label != "list" && label.starts_with("note-")
+        {
+            let _ = window.close();
+        }
     }
 }
 
@@ -966,6 +1054,7 @@ fn main() {
             read_local_image_file,
             read_clipboard_image_png,
             resolve_asset_url,
+            open_note_window,
             open_external_url,
             get_open_shortcut,
             set_open_shortcut,
@@ -1086,7 +1175,7 @@ mod tests {
 
         assert_eq!(
             position_near_cursor(CursorPoint { x: 240, y: 180 }, size, monitor),
-            WindowPoint { x: 252, y: 192 }
+            WindowPoint { x: 240, y: 180 }
         );
         assert_eq!(
             position_near_cursor(CursorPoint { x: 990, y: 740 }, size, monitor),

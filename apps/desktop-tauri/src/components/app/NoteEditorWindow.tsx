@@ -39,7 +39,7 @@ const LazyEditorPane = lazy(() => {
   });
 });
 
-export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
+export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; noteId: string | null }) {
   const windowLabel = useMemo(() => getCurrentWindow().label, []);
   const [session, setSession] = useState<ActiveSession>(() => createDraftSession());
   const [notePinned, setNotePinned] = useState(false);
@@ -48,7 +48,8 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   const [error, setError] = useState<string | null>(null);
   const [deleted, setDeleted] = useState(false);
   const [focusRequestId, setFocusRequestId] = useState(0);
-  const [noteLoadArmed, setNoteLoadArmed] = useState(noteId !== null);
+  const [reloadRequestId, setReloadRequestId] = useState(0);
+  const [noteLoadArmed, setNoteLoadArmed] = useState(noteId !== null || newDraft);
   const [editorMode, setEditorMode] = useState<EditorMode>(DEFAULT_EDITOR_MODE);
   const [chromeMenuOpen, setChromeMenuOpen] = useState(false);
   const [dataDir, setDataDir] = useState<string | null>(null);
@@ -72,7 +73,7 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   useEffect(() => {
     let cancelled = false;
 
-    if (noteId !== null) {
+    if (noteId !== null || newDraft) {
       setNoteLoadArmed(true);
       return () => {
         cancelled = true;
@@ -104,7 +105,7 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     return () => {
       cancelled = true;
     };
-  }, [noteId, windowLabel]);
+  }, [newDraft, noteId, windowLabel]);
 
   useEffect(() => {
     void api
@@ -144,8 +145,11 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
         setDataDir(bootstrapState.data_dir);
         if (next) {
           beginSessionFromNote(next);
-        } else {
+        } else if (newDraft) {
+          setDataDir(bootstrapState.data_dir);
           beginDraftSession();
+        } else {
+          beginSessionFromNote(bootstrapState.current);
         }
         setStatus("Draft");
       } catch (err) {
@@ -162,7 +166,7 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
       cancelled = true;
       clearSaveTimer();
     };
-  }, [noteId, noteLoadArmed]);
+  }, [newDraft, noteId, noteLoadArmed, reloadRequestId]);
 
   useEffect(() => {
     const currentId = session.id;
@@ -197,10 +201,8 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     void listen(FOCUS_EDITOR_EVENT, () => {
-      if (noteId === null) {
-        beginDraftSession();
-      }
       setNoteLoadArmed(true);
+      setReloadRequestId((current) => current + 1);
       setFocusRequestId((current) => current + 1);
     }).then((nextUnlisten) => {
       unlisten = nextUnlisten;
@@ -368,8 +370,14 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
     }
   }
 
-  function handleCreateNoteWindow(event?: MouseEvent<HTMLElement>) {
-    void openNoteWindow(null, pointerPositionFromEvent(event));
+  async function handleCreateNoteWindow(event?: MouseEvent<HTMLElement>) {
+    try {
+      setError(null);
+      await openNoteWindow(null, pointerPositionFromEvent(event));
+    } catch (err) {
+      setError(String(err));
+      setStatus("Error");
+    }
   }
 
   function handleOpenListWindow() {
@@ -446,7 +454,7 @@ export function NoteEditorWindow({ noteId }: { noteId: string | null }) {
                     <ListIcon />
                     <span>Notes</span>
                   </button>
-                  <button onClick={(event) => handleChromeMenuAction(() => handleCreateNoteWindow(event))} role="menuitem" type="button">
+                  <button onClick={(event) => handleChromeMenuAction(() => void handleCreateNoteWindow(event))} role="menuitem" type="button">
                     <PlusIcon />
                     <span>New</span>
                   </button>

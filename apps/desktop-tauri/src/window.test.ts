@@ -1,6 +1,46 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const webviewState = vi.hoisted(() => ({
+  all: [] as Array<{ close: () => Promise<void>; label: string }>,
+  byLabel: new Map<string, unknown>(),
+}));
+
+const invokeState = vi.hoisted(() => ({
+  calls: [] as Array<{ command: string; args: unknown }>,
+}));
+
+vi.mock("@tauri-apps/api/webviewWindow", () => {
+  class MockWebviewWindow {
+    label: string;
+    options: { url?: string };
+
+    constructor(label: string, options: { url?: string }) {
+      this.label = label;
+      this.options = options;
+    }
+
+    static getByLabel(label: string) {
+      return Promise.resolve(webviewState.byLabel.get(label) ?? null);
+    }
+
+    static getAll() {
+      return Promise.resolve(webviewState.all);
+    }
+  }
+
+  return { WebviewWindow: MockWebviewWindow };
+});
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (command: string, args: unknown) => {
+    invokeState.calls.push({ command, args });
+    return Promise.resolve("mock-window-label");
+  },
+}));
+
 import {
   forgetNoteWindow,
+  openNoteWindow,
   rememberNoteWindow,
   readAppRoute,
   revealExistingWindow,
@@ -10,10 +50,29 @@ import {
 } from "./platform/window";
 
 describe("window routing", () => {
+  beforeEach(() => {
+    webviewState.all = [];
+    webviewState.byLabel.clear();
+    invokeState.calls = [];
+    localStorage.clear();
+  });
+
   it("defaults to the note window route", () => {
     window.history.pushState({}, "", "/");
 
-    expect(readAppRoute()).toEqual({ mode: "note", noteId: null });
+    expect(readAppRoute()).toEqual({ mode: "note", noteId: null, newDraft: false });
+  });
+
+  it("reads explicit new draft note routes separately from startup restore routes", () => {
+    window.history.pushState({}, "", "/?mode=note&newDraft=1");
+
+    expect(readAppRoute()).toEqual({ mode: "note", noteId: null, newDraft: true });
+  });
+
+  it("keeps saved note routes from being treated as new drafts", () => {
+    window.history.pushState({}, "", "/?mode=note&noteId=note-id");
+
+    expect(readAppRoute()).toEqual({ mode: "note", noteId: "note-id", newDraft: false });
   });
 
   it("only defers note creation for the background main window", () => {
@@ -63,6 +122,9 @@ describe("window routing", () => {
   it("reveals an existing list window before focusing it", async () => {
     const calls: string[] = [];
     const existing = {
+      setPosition: async () => {
+        calls.push("setPosition");
+      },
       show: async () => {
         calls.push("show");
       },
@@ -74,9 +136,25 @@ describe("window routing", () => {
       },
     };
 
-    await revealExistingWindow(existing);
+    await revealExistingWindow(existing, { x: 100, y: 200 });
 
-    expect(calls).toEqual(["show", "unminimize", "setFocus"]);
+    expect(calls).toEqual(["setPosition", "show", "unminimize", "setFocus"]);
+  });
+
+  it("asks the backend to create an explicit new draft note window", async () => {
+    await openNoteWindow(null, { x: 100, y: 200 });
+
+    expect(invokeState.calls).toEqual([
+      { command: "open_note_window", args: { noteId: null, position: { x: 100, y: 200 } } },
+    ]);
+  });
+
+  it("asks the backend to open saved note windows by note id", async () => {
+    await openNoteWindow("saved-note-id");
+
+    expect(invokeState.calls).toEqual([
+      { command: "open_note_window", args: { noteId: "saved-note-id", position: undefined } },
+    ]);
   });
 
   it("remembers and clears the window label for a saved note", () => {

@@ -24,7 +24,11 @@ impl AppCore {
     pub fn bootstrap(&self) -> Result<BootstrapState> {
         let owner = self.current_account_id()?;
         let notes = self.repo.list_recent_for_owner(50, owner.as_deref())?;
-        let current = Note::draft(Utc::now());
+        let current = if let Some(note) = notes.first() {
+            self.repo.get_note_for_owner(&note.id, owner.as_deref())?
+        } else {
+            Note::draft(Utc::now())
+        };
         Ok(BootstrapState {
             notes,
             current,

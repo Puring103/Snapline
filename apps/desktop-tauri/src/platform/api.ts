@@ -30,4 +30,6 @@ export const api = {
   syncNow: () => invoke<string>("sync_now"),
   exportNoteAsMarkdown: (id: string) => invoke<string>("export_note_as_markdown", { id }),
   openExternalUrl: (url: string) => invoke<string>("open_external_url", { url }),
+  openNoteWindow: (noteId: string | null, position?: { x: number; y: number }) =>
+    invoke<string>("open_note_window", { noteId, position }),
 };
