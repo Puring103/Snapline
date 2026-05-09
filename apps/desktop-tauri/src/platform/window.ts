@@ -1,8 +1,8 @@
-import { emit } from "@tauri-apps/api/event";
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 export const CLOSE_OTHER_NOTES_EVENT = "snapline-close-other-note-windows";
+export const FOCUS_EDITOR_EVENT = "snapline-focus-editor";
 
 export type AppWindowMode = "list" | "note";
 
@@ -25,6 +25,8 @@ const LIST_WINDOW_OPTIONS = {
 } as const;
 
 const NOTE_WINDOW_LABEL_PREFIX = "snapline.noteWindow.";
+const DRAFT_WINDOW_LABEL = "main";
+const LIST_WINDOW_LABEL = "list";
 
 export interface AppRoute {
   mode: AppWindowMode;
@@ -53,7 +55,7 @@ export function shouldDeferInitialNoteLoad({
 }
 
 export function openListWindow() {
-  return WebviewWindow.getByLabel("list").then(async (existing) => {
+  return WebviewWindow.getByLabel(LIST_WINDOW_LABEL).then(async (existing) => {
     if (existing) {
       await revealExistingWindow(existing);
       return existing;
@@ -71,24 +73,39 @@ export interface PointerWindowPosition {
 export async function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
   const normalizedNoteId = noteId ?? null;
 
+  if (normalizedNoteId === null) {
+    const existingDraftWindow = await WebviewWindow.getByLabel(DRAFT_WINDOW_LABEL);
+    if (existingDraftWindow) {
+      await revealExistingWindow(existingDraftWindow, position);
+      await existingDraftWindow.emit(FOCUS_EDITOR_EVENT);
+      return existingDraftWindow;
+    }
+  }
+
   if (normalizedNoteId) {
     const existing = await revealExistingNoteWindow(normalizedNoteId);
     if (existing) {
-      scheduleCloseOtherNoteWindows(existing.label);
+      void closeOtherNoteWindows(existing.label);
       return existing;
     }
   }
 
   const newWin = openAppWindow("note", normalizedNoteId, position);
-  scheduleCloseOtherNoteWindows(newWin.label);
+  void closeOtherNoteWindows(newWin.label);
   return newWin;
 }
 
-function scheduleCloseOtherNoteWindows(keepLabel: string) {
-  // 延迟 400ms，等新窗口 webview 启动并挂好 listener 后再广播
-  setTimeout(() => {
-    void emit(CLOSE_OTHER_NOTES_EVENT, { keepLabel });
-  }, 400);
+async function closeOtherNoteWindows(keepLabel: string) {
+  try {
+    const all = await WebviewWindow.getAll();
+    await Promise.all(
+      all
+        .filter((w) => w.label !== keepLabel && w.label !== "main" && w.label !== "list" && w.label.startsWith("note-"))
+        .map((w) => w.close().catch(() => undefined)),
+    );
+  } catch {
+    // 忽略枚举失败，新窗口仍然能创建
+  }
 }
 
 export function rememberNoteWindow(noteId: string, label: string) {
@@ -115,9 +132,13 @@ export interface RevealableWindow {
   show: () => Promise<void>;
   unminimize: () => Promise<void>;
   setFocus: () => Promise<void>;
+  setPosition?: (position: LogicalPosition) => Promise<void>;
 }
 
-export async function revealExistingWindow(window: RevealableWindow) {
+export async function revealExistingWindow(window: RevealableWindow, position?: PointerWindowPosition) {
+  if (position && window.setPosition) {
+    await window.setPosition(new LogicalPosition(position.x + 12, position.y + 12));
+  }
   await window.show();
   await window.unminimize();
   await window.setFocus();
@@ -159,11 +180,15 @@ function openAppWindow(mode: AppWindowMode, noteId: string | null = null, positi
 
 function buildWindowLabel(mode: AppWindowMode, noteId: string | null) {
   if (mode === "list") {
-    return "list";
+    return LIST_WINDOW_LABEL;
   }
 
   if (noteId) {
     return `note-${noteId}`;
+  }
+
+  if (WebviewWindow.getCurrent().label === DRAFT_WINDOW_LABEL) {
+    return DRAFT_WINDOW_LABEL;
   }
 
   const suffix = crypto.randomUUID().replace(/-/g, "");
