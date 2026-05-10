@@ -1,31 +1,27 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod windows;
+
 use serde::{Deserialize, Serialize};
 use snapline_app_core::{AppCore, BootstrapState, SyncAccountState};
-use snapline_domain::{
-    crypto, AssetRef, MarkdownImageMapping, Note, NoteChangePayload, NoteId, NoteSummary,
-    SyncPayload,
-};
+use snapline_domain::{AssetRef, MarkdownImageMapping, Note, NoteId, NoteSummary};
 use snapline_platform::AppPaths;
 use snapline_sync_client::{
-    protocol::{AssetUploadRequest, LoginRequest, PushChange, PushChangeResult, PushRequest},
+    processor::{self, FullSyncContext, FullSyncReport},
+    protocol::LoginRequest,
     HttpSyncApi, SyncApi,
 };
 use std::borrow::Cow;
 use std::sync::Mutex;
-use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, Position, RunEvent, State, WebviewUrl,
-    WebviewWindowBuilder, WindowEvent,
-};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use windows::{
+    build_note_window, close_other_note_windows, hide_main_window, reveal_window, show_main_window,
+    WindowPosition,
+};
 
 const AUTOSTART_BACKGROUND_ARG: &str = "--background";
-const FOCUS_EDITOR_EVENT: &str = "snapline-focus-editor";
 const BACKGROUND_SYNC_INTERVAL_SECS: u64 = 60;
-const NOTE_WINDOW_WIDTH: f64 = 340.0;
-const NOTE_WINDOW_HEIGHT: f64 = 440.0;
-const NOTE_WINDOW_MIN_WIDTH: f64 = 300.0;
-const NOTE_WINDOW_MIN_HEIGHT: f64 = 260.0;
 
 struct AppState {
     core: Mutex<AppCore>,
@@ -77,6 +73,16 @@ struct SyncReport {
 }
 
 impl SyncReport {
+    fn from_full(report: FullSyncReport) -> Self {
+        Self::new(
+            report.uploaded_assets,
+            report.pushed,
+            report.pulled,
+            report.conflicts,
+            report.failed,
+        )
+    }
+
     fn new(
         uploaded_assets: usize,
         pushed: usize,
@@ -765,7 +771,7 @@ async fn sync_now(state: State<'_, AppState>) -> Result<SyncReport, String> {
 }
 
 async fn run_sync_once(state: &AppState) -> Result<SyncReport, String> {
-    let (base_url, token, device_id, data_dir, dek) = {
+    let (base_url, token, device_id, data_dir, db_path, dek) = {
         let core = state
             .core
             .lock()
@@ -774,229 +780,29 @@ async fn run_sync_once(state: &AppState) -> Result<SyncReport, String> {
             .sync_credentials()
             .map_err(|err| err.to_string())?
             .ok_or_else(|| "not logged in".to_string())?;
-        let dek = core.dek().copied();
         (
             base_url,
             token,
             device_id,
             core.data_dir().to_path_buf(),
-            dek,
+            core.db_path().to_path_buf(),
+            core.dek().copied(),
         )
     };
     let api = HttpSyncApi::new(base_url);
-    let asset_items = {
-        let core = state
-            .core
-            .lock()
-            .map_err(|_| "app state lock poisoned".to_string())?;
-        core.pending_sync_changes()
-            .map_err(|err| err.to_string())?
-            .into_iter()
-            .filter(|item| matches!(item.payload, SyncPayload::Asset(_)))
-            .collect::<Vec<_>>()
-    };
-    let mut uploaded_assets = 0;
-    for item in asset_items {
-        let SyncPayload::Asset(metadata) = item.payload else {
-            continue;
-        };
-        let bytes =
-            std::fs::read(data_dir.join(&metadata.markdown_path)).map_err(|err| err.to_string())?;
-        api.upload_asset(&token, AssetUploadRequest { metadata, bytes })
-            .await
-            .map_err(|err| err.to_string())?;
-        let core = state
-            .core
-            .lock()
-            .map_err(|_| "app state lock poisoned".to_string())?;
-        core.delete_sync_change(&item.id)
-            .map_err(|err| err.to_string())?;
-        uploaded_assets += 1;
-    }
-    let pending = {
-        let core = state
-            .core
-            .lock()
-            .map_err(|_| "app state lock poisoned".to_string())?;
-        core.pending_sync_changes().map_err(|err| err.to_string())?
-    };
-    let wire_changes: Result<Vec<PushChange>, String> = pending
-        .iter()
-        .map(|item| {
-            let payload = match (&item.payload, &dek) {
-                (SyncPayload::Note(note_payload), Some(key)) => {
-                    SyncPayload::Note(NoteChangePayload {
-                        title: crypto::encrypt_field(key, &note_payload.title)
-                            .map_err(|e| e.to_string())?,
-                        content_md: crypto::encrypt_field(key, &note_payload.content_md)
-                            .map_err(|e| e.to_string())?,
-                        pinned: note_payload.pinned,
-                        deleted_at: note_payload.deleted_at,
-                    })
-                }
-                _ => item.payload.clone(),
-            };
-            Ok(PushChange {
-                queue_id: item.id.clone(),
-                note_id: item.note_id.clone(),
-                base_version: item.base_version,
-                payload,
-            })
-        })
-        .collect();
-    let push_response = api
-        .push(
-            &token,
-            PushRequest {
-                device_id: device_id.clone(),
-                changes: wire_changes?,
-            },
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    let mut pushed = 0;
-    let mut push_conflicts = 0;
-    let mut max_cursor = 0;
-    {
-        let core = state
-            .core
-            .lock()
-            .map_err(|_| "app state lock poisoned".to_string())?;
-        for result in push_response.results {
-            match result {
-                PushChangeResult::Accepted {
-                    queue_id,
-                    note_id,
-                    server_version,
-                    cursor,
-                } => {
-                    core.update_note_server_version(&note_id, server_version)
-                        .map_err(|err| err.to_string())?;
-                    core.delete_sync_change(&queue_id)
-                        .map_err(|err| err.to_string())?;
-                    max_cursor = max_cursor.max(cursor);
-                    pushed += 1;
-                }
-                PushChangeResult::Conflict {
-                    queue_id,
-                    note_id,
-                    server_note,
-                } => {
-                    if let Some(rejected_note) =
-                        rejected_note_from_pending(&pending, &queue_id, &note_id)
-                    {
-                        core.create_conflict_copy(&rejected_note)
-                            .map_err(|err| err.to_string())?;
-                        let decrypted_server = match &dek {
-                            Some(key) => Note {
-                                title: crypto::decrypt_field(key, &server_note.title)
-                                    .map_err(|e| e.to_string())?,
-                                content_md: crypto::decrypt_field(key, &server_note.content_md)
-                                    .map_err(|e| e.to_string())?,
-                                ..server_note.clone()
-                            },
-                            None => server_note.clone(),
-                        };
-                        core.apply_remote_note(&decrypted_server)
-                            .map_err(|err| err.to_string())?;
-                    }
-                    core.delete_sync_change(&queue_id)
-                        .map_err(|err| err.to_string())?;
-                    push_conflicts += 1;
-                }
-            }
-        }
-        if max_cursor > 0 {
-            core.update_sync_cursor_success(max_cursor, chrono::Utc::now())
-                .map_err(|err| err.to_string())?;
-        }
-    }
-    let cursor = {
-        let core = state
-            .core
-            .lock()
-            .map_err(|_| "app state lock poisoned".to_string())?;
-        core.sync_state()
-            .map_err(|err| err.to_string())?
-            .server_cursor
-    };
-    let pull_response = api
-        .pull(&token, cursor)
-        .await
-        .map_err(|err| err.to_string())?;
-    let mut pulled = 0;
-    let mut pull_conflicts = 0;
-    {
-        let core = state
-            .core
-            .lock()
-            .map_err(|_| "app state lock poisoned".to_string())?;
-        for change in pull_response.changes {
-            if change.device_id == device_id {
-                continue;
-            }
-            let note = match &dek {
-                Some(key) => Note {
-                    title: crypto::decrypt_field(key, &change.note.title)
-                        .map_err(|e| e.to_string())?,
-                    content_md: crypto::decrypt_field(key, &change.note.content_md)
-                        .map_err(|e| e.to_string())?,
-                    ..change.note.clone()
-                },
-                None => change.note.clone(),
-            };
-            if core
-                .has_pending_note_change(&note.id)
-                .map_err(|err| err.to_string())?
-            {
-                let local_note = core.get_note(&note.id).map_err(|err| err.to_string())?;
-                core.create_conflict_copy(&local_note)
-                    .map_err(|err| err.to_string())?;
-                core.delete_sync_changes_for_note(&note.id)
-                    .map_err(|err| err.to_string())?;
-                pull_conflicts += 1;
-            }
-            core.apply_remote_note(&note)
-                .map_err(|err| err.to_string())?;
-            pulled += 1;
-        }
-        core.update_sync_cursor_success(pull_response.cursor, chrono::Utc::now())
-            .map_err(|err| err.to_string())?;
-    };
-    import_snapshot_and_assets(state, &api, &token).await?;
-    Ok(SyncReport::new(
-        uploaded_assets,
-        pushed,
-        pulled,
-        push_conflicts + pull_conflicts,
-        0,
-    ))
-}
-
-fn rejected_note_from_pending(
-    pending: &[snapline_storage::ChangeQueueItem],
-    queue_id: &str,
-    note_id: &NoteId,
-) -> Option<Note> {
-    let item = pending.iter().find(|item| item.id == queue_id)?;
-    let SyncPayload::Note(payload) = &item.payload else {
-        return None;
-    };
-    let now = chrono::Utc::now();
-    Some(Note {
-        id: note_id.clone(),
-        title: payload.title.clone(),
-        content_md: payload.content_md.clone(),
-        pinned: payload.pinned,
-        created_at: now,
-        updated_at: now,
-        deleted_at: payload.deleted_at,
-        server_version: item.base_version,
-        last_modified_by_device: None,
-        is_conflict_copy: false,
-        source_note_id: None,
-        owner_account_id: item.account_id.clone(),
-    })
+    let report = processor::run_full_sync_from_path(
+        &db_path,
+        &api,
+        FullSyncContext {
+            token: &token,
+            device_id: &device_id,
+            data_dir: &data_dir,
+            dek: dek.as_ref(),
+        },
+    )
+    .await
+    .map_err(|err| err.to_string())?;
+    Ok(SyncReport::from_full(report))
 }
 
 async fn import_snapshot_and_assets(
@@ -1066,145 +872,6 @@ fn register_open_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String>
             }
         })
         .map_err(|err| err.to_string())
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CursorPoint {
-    x: i32,
-    y: i32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct WindowPoint {
-    x: i32,
-    y: i32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct WindowSize {
-    width: i32,
-    height: i32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct WorkArea {
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-}
-
-fn position_near_cursor(cursor: CursorPoint, size: WindowSize, work_area: WorkArea) -> WindowPoint {
-    let max_x = work_area.x + (work_area.width - size.width).max(0);
-    let max_y = work_area.y + (work_area.height - size.height).max(0);
-    WindowPoint {
-        x: cursor.x.clamp(work_area.x, max_x),
-        y: cursor.y.clamp(work_area.y, max_y),
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct WindowPosition {
-    x: f64,
-    y: f64,
-}
-
-fn hide_main_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
-    }
-}
-
-fn show_main_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        if let Ok(cursor) = app.cursor_position() {
-            if let Ok(Some(monitor)) = app.monitor_from_point(cursor.x, cursor.y) {
-                let work_area = monitor.work_area();
-                let size = window
-                    .outer_size()
-                    .map(|size| WindowSize {
-                        width: size.width as i32,
-                        height: size.height as i32,
-                    })
-                    .unwrap_or(WindowSize {
-                        width: 420,
-                        height: 560,
-                    });
-                let next_position = position_near_cursor(
-                    CursorPoint {
-                        x: cursor.x.round() as i32,
-                        y: cursor.y.round() as i32,
-                    },
-                    size,
-                    WorkArea {
-                        x: work_area.position.x,
-                        y: work_area.position.y,
-                        width: work_area.size.width as i32,
-                        height: work_area.size.height as i32,
-                    },
-                );
-                let _ = window.set_position(Position::Physical(PhysicalPosition {
-                    x: next_position.x,
-                    y: next_position.y,
-                }));
-            }
-        }
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-        let _ = window.emit(FOCUS_EDITOR_EVENT, ());
-    }
-}
-
-fn build_note_window(
-    app: &AppHandle,
-    label: &str,
-    url: &str,
-    position: Option<WindowPosition>,
-) -> Result<String, String> {
-    let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
-        .title("Snapline Note")
-        .inner_size(NOTE_WINDOW_WIDTH, NOTE_WINDOW_HEIGHT)
-        .min_inner_size(NOTE_WINDOW_MIN_WIDTH, NOTE_WINDOW_MIN_HEIGHT)
-        .resizable(true)
-        .decorations(false);
-
-    builder = if let Some(position) = position {
-        builder.position(position.x, position.y)
-    } else {
-        builder.center()
-    };
-
-    let window = builder.build().map_err(|err| err.to_string())?;
-    reveal_window(&window, None)?;
-    Ok(label.to_string())
-}
-
-fn reveal_window(
-    window: &tauri::WebviewWindow,
-    position: Option<&WindowPosition>,
-) -> Result<(), String> {
-    if let Some(position) = position {
-        window
-            .set_position(Position::Logical(tauri::LogicalPosition {
-                x: position.x,
-                y: position.y,
-            }))
-            .map_err(|err| err.to_string())?;
-    }
-    window.show().map_err(|err| err.to_string())?;
-    window.unminimize().map_err(|err| err.to_string())?;
-    window.set_focus().map_err(|err| err.to_string())?;
-    let _ = window.emit(FOCUS_EDITOR_EVENT, ());
-    Ok(())
-}
-
-fn close_other_note_windows(app: &AppHandle, keep_label: &str) {
-    for (label, window) in app.webview_windows() {
-        if label != keep_label && label != "main" && label != "list" && label.starts_with("note-") {
-            let _ = window.close();
-        }
-    }
 }
 
 fn main() {
@@ -1414,28 +1081,5 @@ mod tests {
             encode_clipboard_image_as_png(test_image_data(1, 1, vec![255, 0, 0, 255])).unwrap();
 
         assert_eq!(&png[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
-    }
-
-    #[test]
-    fn places_opened_window_near_cursor_within_monitor_bounds() {
-        let monitor = WorkArea {
-            x: 100,
-            y: 50,
-            width: 900,
-            height: 700,
-        };
-        let size = WindowSize {
-            width: 360,
-            height: 480,
-        };
-
-        assert_eq!(
-            position_near_cursor(CursorPoint { x: 240, y: 180 }, size, monitor),
-            WindowPoint { x: 240, y: 180 }
-        );
-        assert_eq!(
-            position_near_cursor(CursorPoint { x: 990, y: 740 }, size, monitor),
-            WindowPoint { x: 640, y: 270 }
-        );
     }
 }

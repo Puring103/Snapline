@@ -4451,6 +4451,7 @@ dependencies = [
  "serde",
  "serde_json",
  "snapline-domain",
+ "snapline-platform",
  "snapline-storage",
  "tempfile",
  "tokio",

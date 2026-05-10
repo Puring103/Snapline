@@ -32,4 +32,8 @@ impl AppCore {
     pub fn data_dir(&self) -> &std::path::Path {
         &self.paths.data_dir
     }
+
+    pub fn db_path(&self) -> &std::path::Path {
+        &self.paths.db_path
+    }
 }
