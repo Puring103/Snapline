@@ -4,6 +4,41 @@ use directories::ProjectDirs;
 use snapline_domain::{AssetId, NoteId};
 use std::path::{Path, PathBuf};
 
+pub fn is_allowed_markdown_asset_path(markdown_path: &str) -> bool {
+    markdown_path.starts_with("assets/")
+        && !markdown_path.contains('\\')
+        && !markdown_path
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+}
+
+pub fn is_allowed_external_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    !url.chars()
+        .any(|character| character == '\r' || character == '\n')
+        && (lower.starts_with("http://")
+            || lower.starts_with("https://")
+            || lower.starts_with("mailto:"))
+}
+
+pub fn markdown_export_filename(title: &str) -> String {
+    if title.trim().is_empty() {
+        return "Untitled.md".to_string();
+    }
+
+    let safe: String = title
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("{}.md", safe.trim())
+}
+
 /// 应用数据目录及数据库路径的集合。
 ///
 /// 通过 `AppPaths::resolve()` 获取系统标准位置（如 Windows 的 `%APPDATA%\Snapline`），
@@ -90,6 +125,40 @@ mod tests {
         assert_eq!(
             paths.markdown_asset_path(&note_id, &asset_id, "png"),
             format!("assets/notes/{}/{}.png", note_id, asset_id)
+        );
+    }
+
+    #[test]
+    fn validates_internal_markdown_asset_paths() {
+        assert!(super::is_allowed_markdown_asset_path(
+            "assets/notes/note-id/image-id.png"
+        ));
+        assert!(!super::is_allowed_markdown_asset_path("../snapline.db"));
+        assert!(!super::is_allowed_markdown_asset_path(
+            "assets/../snapline.db"
+        ));
+        assert!(!super::is_allowed_markdown_asset_path(
+            "C:/Users/wtl/image.png"
+        ));
+        assert!(!super::is_allowed_markdown_asset_path(
+            "assets\\notes\\note-id\\image-id.png"
+        ));
+    }
+
+    #[test]
+    fn validates_external_urls() {
+        assert!(super::is_allowed_external_url("https://example.com"));
+        assert!(super::is_allowed_external_url("mailto:a@example.com"));
+        assert!(!super::is_allowed_external_url("file:///etc/passwd"));
+        assert!(!super::is_allowed_external_url("https://example.com\nbad"));
+    }
+
+    #[test]
+    fn derives_markdown_export_filename() {
+        assert_eq!(super::markdown_export_filename(""), "Untitled.md");
+        assert_eq!(
+            super::markdown_export_filename("Daily: note/one"),
+            "Daily_ note_one.md"
         );
     }
 }

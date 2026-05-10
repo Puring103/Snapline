@@ -1,19 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   BoldIcon,
+  BlockquoteIcon,
+  CodeBlockIcon,
   HeadingIcon,
   IconButton,
+  InlineCodeIcon,
+  ItalicIcon,
   ListIcon,
   LogoIcon,
   MenuIcon,
+  OrderedListIcon,
   PinIcon,
   PlusIcon,
   PreviewIcon,
   SearchIcon,
   SettingsIcon,
+  SourceIcon,
   SyncIcon,
-  TrashIcon,
-  WriteIcon,
+  TaskListIcon,
+  ThemeDarkIcon,
+  ThemeLightIcon,
+  ThemeSystemIcon,
 } from "./icons";
 import { loadLastNoteId, loadNotes, loadTheme, saveLastNoteId, saveNotes, saveTheme } from "./storage";
 import type { EditorMode, Note, ThemeMode } from "./types";
@@ -104,7 +112,8 @@ function useKeyboardOffset() {
 export function AndroidApp() {
   const [notes, setNotes] = useState<Note[]>(() => sortNotes(loadNotes().filter(hasMeaningfulContent)));
   const [theme, setTheme] = useState<ThemeMode>(loadTheme);
-  const [editorMode, setEditorMode] = useState<EditorMode>("write");
+  const [resolvedTheme, setResolvedTheme] = useState<"dark" | "light">("dark");
+  const [editorMode, setEditorMode] = useState<EditorMode>("source");
   const [query, setQuery] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -124,8 +133,19 @@ export function AndroidApp() {
   }, [notes, query]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+
+    function applyTheme() {
+      const nextTheme = theme === "system" ? (media.matches ? "dark" : "light") : theme;
+      document.documentElement.dataset.theme = nextTheme;
+      document.documentElement.dataset.themeMode = theme;
+      setResolvedTheme(nextTheme);
+    }
+
+    applyTheme();
     saveTheme(theme);
+    media.addEventListener("change", applyTheme);
+    return () => media.removeEventListener("change", applyTheme);
   }, [theme]);
 
   useEffect(() => {
@@ -152,13 +172,13 @@ export function AndroidApp() {
   function createNote() {
     const next = blankDraft();
     setDraft(next);
-    setEditorMode("write");
+    setEditorMode("source");
     setSidebarOpen(false);
   }
 
   function openNote(note: Note) {
     setDraft(note);
-    setEditorMode("write");
+    setEditorMode("source");
     setSidebarOpen(false);
   }
 
@@ -166,17 +186,39 @@ export function AndroidApp() {
     setNotes((current) => current.filter((note) => note.id !== draft.id));
     const next = notes.filter((note) => note.id !== draft.id)[0] ?? blankDraft();
     setDraft(next);
-    setEditorMode("write");
+    setEditorMode("source");
   }
 
-  function insertMarkup(kind: "heading" | "bold" | "list") {
+  function togglePinned(note: Note) {
+    const nextPinned = !note.pinned;
+    if (note.id === draft.id) {
+      updateDraft({ pinned: nextPinned });
+      return;
+    }
+    setNotes((current) => sortNotes(current.map((item) => (
+      item.id === note.id ? { ...item, pinned: nextPinned, updatedAt: Date.now() } : item
+    ))));
+  }
+
+  function insertMarkup(kind: "bold" | "italic" | "code" | "h1" | "h2" | "bullet" | "ordered" | "task" | "quote" | "codeBlock") {
     const suffix = draft.body && !draft.body.endsWith("\n") ? "\n" : "";
-    const addition = kind === "heading" ? "# " : kind === "bold" ? "**粗体**" : "- ";
+    const addition = {
+      bold: "**粗体**",
+      italic: "*斜体*",
+      code: "`代码`",
+      h1: "# ",
+      h2: "## ",
+      bullet: "- ",
+      ordered: "1. ",
+      task: "- [ ] ",
+      quote: "> ",
+      codeBlock: "```\n\n```",
+    }[kind];
     updateDraft({ body: `${draft.body}${suffix}${addition}` });
   }
 
   return (
-    <div className="phoneApp">
+    <div className="phoneApp" data-theme-mode={theme} data-mobile-theme={resolvedTheme}>
       <main className="screen">
         <section className="editorView">
           <header className="editorTopBar">
@@ -193,7 +235,7 @@ export function AndroidApp() {
             <IconButton label="设置" onClick={() => setSettingsOpen(true)}><SettingsIcon /></IconButton>
           </header>
 
-          {editorMode === "write" ? (
+          {editorMode === "source" ? (
             <textarea
               className="bodyEditor"
               value={draft.body}
@@ -211,15 +253,28 @@ export function AndroidApp() {
             style={{ transform: `translateY(-${keyboardOffset}px)` }}
             aria-label="编辑工具栏"
           >
-            <IconButton active={editorMode === "write"} label="编辑" onClick={() => setEditorMode("write")}><WriteIcon /></IconButton>
-            <IconButton active={editorMode === "preview"} label="预览" onClick={() => setEditorMode("preview")}><PreviewIcon /></IconButton>
-            <IconButton active={draft.pinned} label={draft.pinned ? "取消置顶" : "置顶"} onClick={() => updateDraft({ pinned: !draft.pinned })}><PinIcon /></IconButton>
-            <IconButton label="标题" onClick={() => insertMarkup("heading")}><HeadingIcon /></IconButton>
             <IconButton label="粗体" onClick={() => insertMarkup("bold")}><BoldIcon /></IconButton>
-            <IconButton label="列表" onClick={() => insertMarkup("list")}><ListIcon /></IconButton>
-            <IconButton label="新建" onClick={createNote}><PlusIcon /></IconButton>
-            <IconButton danger label="删除" onClick={deleteDraft}><TrashIcon /></IconButton>
+            <IconButton label="斜体" onClick={() => insertMarkup("italic")}><ItalicIcon /></IconButton>
+            <IconButton label="行内代码" onClick={() => insertMarkup("code")}><InlineCodeIcon /></IconButton>
+            <div className="toolbarDivider" />
+            <IconButton label="一级标题" onClick={() => insertMarkup("h1")}><HeadingIcon /></IconButton>
+            <IconButton label="二级标题" onClick={() => insertMarkup("h2")}><HeadingIcon /></IconButton>
+            <div className="toolbarDivider" />
+            <IconButton label="无序列表" onClick={() => insertMarkup("bullet")}><ListIcon /></IconButton>
+            <IconButton label="有序列表" onClick={() => insertMarkup("ordered")}><OrderedListIcon /></IconButton>
+            <IconButton label="任务列表" onClick={() => insertMarkup("task")}><TaskListIcon /></IconButton>
+            <div className="toolbarDivider" />
+            <IconButton label="引用" onClick={() => insertMarkup("quote")}><BlockquoteIcon /></IconButton>
+            <IconButton label="代码块" onClick={() => insertMarkup("codeBlock")}><CodeBlockIcon /></IconButton>
+            <div className="toolbarSpacer" />
+            <div className="toolbarDivider" />
+            <IconButton label={editorMode === "preview" ? "源码" : "预览"} onClick={() => setEditorMode((mode) => mode === "preview" ? "source" : "preview")}>
+              {editorMode === "preview" ? <SourceIcon /> : <PreviewIcon />}
+            </IconButton>
           </nav>
+          <button className="newNoteFab" onClick={createNote} type="button" aria-label="新建笔记" title="新建笔记">
+            <PlusIcon />
+          </button>
         </section>
       </main>
 
@@ -232,7 +287,6 @@ export function AndroidApp() {
                 <h1>Snapline</h1>
                 <p>{notes.length} 条笔记</p>
               </div>
-              <IconButton label="新建笔记" onClick={createNote}><PlusIcon /></IconButton>
             </header>
 
             <label className="searchBox">
@@ -242,23 +296,21 @@ export function AndroidApp() {
 
             <div className="noteFeed">
               {visibleNotes.map((note) => (
-                <button
+                <article
                   className={["noteRow", note.id === draft.id ? "selected" : "", note.pinned ? "pinned" : ""].filter(Boolean).join(" ")}
                   key={note.id}
-                  onClick={() => openNote(note)}
-                  type="button"
                 >
-                  <div className="noteRowHeader">
+                  <button className="noteRowOpen" onClick={() => openNote(note)} type="button">
                     <div className="noteRowTitleBlock">
                       <div className="noteRowTitleRow">
                         <span className="noteRowTitle">{note.title.trim() || "Untitled"}</span>
-                        {note.pinned ? <PinIcon /> : null}
                       </div>
                       <span className="noteRowTime">{formatTime(note.updatedAt)}</span>
                     </div>
-                  </div>
-                  <p className="noteRowPreview">{previewText(note)}</p>
-                </button>
+                    <p className="noteRowPreview">{previewText(note)}</p>
+                  </button>
+                  <IconButton active={note.pinned} label={note.pinned ? "取消收藏" : "收藏"} onClick={() => togglePinned(note)}><PinIcon /></IconButton>
+                </article>
               ))}
               {visibleNotes.length === 0 ? <div className="emptyState">没有匹配的笔记</div> : null}
             </div>
@@ -277,8 +329,9 @@ export function AndroidApp() {
             <section className="settingsGroup">
               <h3>外观</h3>
               <div className="segmented">
-                <button className={theme === "dark" ? "selected" : ""} onClick={() => setTheme("dark")} type="button">暗色</button>
-                <button className={theme === "light" ? "selected" : ""} onClick={() => setTheme("light")} type="button">浅色</button>
+                <button className={theme === "system" ? "selected" : ""} onClick={() => setTheme("system")} type="button"><ThemeSystemIcon />系统</button>
+                <button className={theme === "dark" ? "selected" : ""} onClick={() => setTheme("dark")} type="button"><ThemeDarkIcon />暗色</button>
+                <button className={theme === "light" ? "selected" : ""} onClick={() => setTheme("light")} type="button"><ThemeLightIcon />浅色</button>
               </div>
             </section>
             <section className="settingsGroup">

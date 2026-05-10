@@ -8,6 +8,7 @@ mod sync;
 
 pub use app::AppCore;
 pub use bootstrap::{BootstrapState, SyncAccountState};
+pub use notes::SaveDraftSessionResult;
 
 #[cfg(test)]
 mod tests;

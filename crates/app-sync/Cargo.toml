@@ -1,0 +1,12 @@
+[package]
+name = "snapline-app-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+snapline-app-core = { path = "../app-core" }
+snapline-domain = { path = "../domain" }
+snapline-sync-client = { path = "../sync-client" }

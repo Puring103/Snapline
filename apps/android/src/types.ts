@@ -6,5 +6,5 @@ export interface Note {
   updatedAt: number;
 }
 
-export type EditorMode = "write" | "preview";
-export type ThemeMode = "dark" | "light";
+export type EditorMode = "source" | "preview";
+export type ThemeMode = "system" | "dark" | "light";

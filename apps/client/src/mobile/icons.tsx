@@ -41,8 +41,44 @@ export function PreviewIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12s3.5-6.5 8.5-6.5 8.5 6.5 8.5 6.5-3.5 6.5-8.5 6.5S3.5 12 3.5 12Z" /><path d="M12 9.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6Z" /></svg>;
 }
 
-export function WriteIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l11-11a2.8 2.8 0 0 0-4-4L4 16v4Z" /><path d="M13.5 6.5l4 4" /></svg>;
+export function SourceIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7l-4 5 4 5" /><path d="M15 7l4 5-4 5" /><path d="M13 5l-2 14" /></svg>;
+}
+
+export function ItalicIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 5h-9M14 19H5M15 5 9 19" /></svg>;
+}
+
+export function InlineCodeIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8 5 12l4 4M15 8l4 4-4 4" /></svg>;
+}
+
+export function OrderedListIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h10M10 12h10M10 18h10" /><path d="M4 6h1M4 12h1M4 18h1" /></svg>;
+}
+
+export function TaskListIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="5" height="5" rx="1" /><path d="m4.4 7.5 1 1 2-2" /><path d="M10 7.5h10M10 12.5h10M10 17.5h10" /><rect x="3" y="10" width="5" height="5" rx="1" /><rect x="3" y="15" width="5" height="5" rx="1" /></svg>;
+}
+
+export function BlockquoteIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h12M3 12h10M3 16h8" /><path d="M20 7c-2.5 1-2.5 3.5-2.5 3.5H20v4h-4V11c0-3 2-5 4-6l.5 2z" /></svg>;
+}
+
+export function CodeBlockIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="3" /><path d="m8 9-3 3 3 3M16 9l3 3-3 3M13 8l-2 8" /></svg>;
+}
+
+export function ThemeSystemIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2.5" /><path d="M8 21h8M12 18v3M3 12h18" /></svg>;
+}
+
+export function ThemeLightIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" /></svg>;
+}
+
+export function ThemeDarkIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z" /></svg>;
 }
 
 export function SyncIcon() {

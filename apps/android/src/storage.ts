@@ -49,7 +49,8 @@ export function saveLastNoteId(id: string | null) {
 }
 
 export function loadTheme(): ThemeMode {
-  return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+  const theme = localStorage.getItem(THEME_KEY);
+  return theme === "dark" || theme === "light" || theme === "system" ? theme : "system";
 }
 
 export function saveTheme(theme: ThemeMode) {
