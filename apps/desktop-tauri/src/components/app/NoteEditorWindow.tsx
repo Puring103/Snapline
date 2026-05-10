@@ -13,7 +13,6 @@ import {
   isSessionDirty,
   type ActiveSession,
 } from "../../features/sync/session";
-import { splitStoredNoteMarkdown } from "../../features/editor/markdown";
 import type { LoginSyncResult, Note, SavedAsset, SyncAccountState } from "../../types";
 import { SettingsPanel } from "./SettingsPanel";
 import { EditorLoadingState } from "./EditorLoadingState";
@@ -247,7 +246,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
 
   async function beginSessionFromNote(note: Note) {
     clearSaveTimer();
-    const { title, body_md } = splitStoredNoteMarkdown(note.title, note.content_md);
+    const { title, body_md } = await api.splitStoredNoteMarkdown(note.title, note.content_md);
     setSession({
       kind: noteId ? "existing" : "draft",
       id: note.id,
@@ -291,15 +290,19 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
       setError(null);
       setStatus("Saving");
 
-      const prepared = await api.prepareDraftForSave(snapshot.title, snapshot.bodyMd);
-      const noteIdToSave = snapshot.id ?? (await api.createNote()).id;
-      const saved = await api.saveNote(
-        noteIdToSave,
-        prepared.title,
-        prepared.body_md,
-        notePinnedRef.current,
-      );
+      const result = await api.saveDraftSession({
+        id: snapshot.id,
+        title: snapshot.title,
+        body_md: snapshot.bodyMd,
+        pinned: notePinnedRef.current,
+      });
 
+      if (result.skipped || !result.note) {
+        setStatus("Draft");
+        return null;
+      }
+
+      const saved = result.note;
       setSession({
         kind: "existing",
         id: saved.id,

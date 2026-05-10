@@ -1,11 +1,11 @@
 import { FormEvent, useState } from "react";
 import { api } from "../platform/api";
-import type { LoginSyncResult, SyncAccountState } from "../types";
+import type { LoginSyncResult, SyncAccountState, SyncReport } from "../types";
 
 interface SyncSettingsProps {
   initial: SyncAccountState | null;
   onSaved: (result: LoginSyncResult) => void;
-  onSyncNow: () => Promise<string>;
+  onSyncNow: () => Promise<SyncReport>;
 }
 
 interface SyncConnectionFields {
@@ -86,7 +86,7 @@ export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps)
     setStatus("Syncing");
     try {
       const report = await onSyncNow();
-      setStatus(report.includes("conflicts=0") ? "Synced" : "Conflict");
+      setStatus(report.has_conflicts ? "Conflict" : "Synced");
     } catch (err) {
       setStatus(String(err));
     }

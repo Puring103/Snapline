@@ -8,7 +8,9 @@ import type {
   MarkdownImageMapping,
   Note,
   NoteSummary,
+  SaveDraftResult,
   SyncAccountState,
+  SyncReport,
 } from "../types";
 
 export const api = {
@@ -18,6 +20,8 @@ export const api = {
   composeDraftMarkdown: (title: string, bodyMd: string) =>
     invoke<string>("compose_draft_markdown", { title, bodyMd }),
   splitDraftMarkdown: (markdown: string) => invoke<DraftParts>("split_draft_markdown", { markdown }),
+  splitStoredNoteMarkdown: (storedTitle: string, markdown: string) =>
+    invoke<DraftParts>("split_stored_note_markdown", { storedTitle, markdown }),
   prepareDraftForSave: (title: string, bodyMd: string) =>
     invoke<DraftParts>("prepare_draft_for_save", { title, bodyMd }),
   normalizeMarkdown: (markdown: string) => invoke<string>("normalize_markdown", { markdown }),
@@ -30,6 +34,12 @@ export const api = {
   getNoteSummary: (id: string) => invoke<NoteSummary>("get_note_summary", { id }),
   saveNote: (id: string, title: string, contentMd: string, pinned: boolean) =>
     invoke<Note>("save_note", { id, title, contentMd, pinned }),
+  saveDraftSession: (request: {
+    id: string | null;
+    title: string;
+    body_md: string;
+    pinned: boolean;
+  }) => invoke<SaveDraftResult>("save_draft_session", { request }),
   setNotePinned: (id: string, pinned: boolean) => invoke<Note>("set_note_pinned", { id, pinned }),
   deleteNote: (id: string) => invoke<NoteSummary[]>("delete_note", { id }),
   savePngAsset: (noteId: string, bytes: number[]) =>
@@ -53,7 +63,7 @@ export const api = {
     invoke<LoginSyncResult>("login_sync", { serverBaseUrl, email, password }),
   anonymousNoteCount: () => invoke<number>("anonymous_note_count"),
   importAnonymousNotes: () => invoke<NoteSummary[]>("import_anonymous_notes"),
-  syncNow: () => invoke<string>("sync_now"),
+  syncNow: () => invoke<SyncReport>("sync_now"),
   exportNoteAsMarkdown: (id: string) => invoke<string>("export_note_as_markdown", { id }),
   openExternalUrl: (url: string) => invoke<string>("open_external_url", { url }),
   openNoteWindow: (noteId: string | null, position?: { x: number; y: number }) =>

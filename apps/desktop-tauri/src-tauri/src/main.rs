@@ -51,6 +51,55 @@ struct HydratedMarkdownDto {
     mappings: Vec<MarkdownImageMapping>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct SaveDraftRequest {
+    id: Option<String>,
+    title: String,
+    body_md: String,
+    pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SaveDraftResult {
+    note: Option<Note>,
+    skipped: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SyncReport {
+    uploaded_assets: usize,
+    pushed: usize,
+    pulled: usize,
+    conflicts: usize,
+    failed: usize,
+    has_conflicts: bool,
+    detail: String,
+}
+
+impl SyncReport {
+    fn new(
+        uploaded_assets: usize,
+        pushed: usize,
+        pulled: usize,
+        conflicts: usize,
+        failed: usize,
+    ) -> Self {
+        let detail = format!(
+            "uploaded_assets={}, pushed={}, pulled={}, conflicts={}, failed={}",
+            uploaded_assets, pushed, pulled, conflicts, failed
+        );
+        Self {
+            uploaded_assets,
+            pushed,
+            pulled,
+            conflicts,
+            failed,
+            has_conflicts: conflicts > 0,
+            detail,
+        }
+    }
+}
+
 #[tauri::command]
 fn log_startup(state: State<'_, AppState>, message: String) {
     if state.startup_logging_enabled {
@@ -98,7 +147,10 @@ fn get_note(state: State<'_, AppState>, id: String) -> Result<Note, String> {
 }
 
 #[tauri::command]
-fn derive_title_from_markdown(state: State<'_, AppState>, markdown: String) -> Result<String, String> {
+fn derive_title_from_markdown(
+    state: State<'_, AppState>,
+    markdown: String,
+) -> Result<String, String> {
     Ok(state
         .core
         .lock()
@@ -129,6 +181,23 @@ fn split_draft_markdown(
         .lock()
         .map_err(|_| "app state lock poisoned".to_string())?
         .split_draft_markdown(&markdown);
+    Ok(DraftPartsDto {
+        title: parts.title,
+        body_md: parts.body_md,
+    })
+}
+
+#[tauri::command]
+fn split_stored_note_markdown(
+    state: State<'_, AppState>,
+    stored_title: String,
+    markdown: String,
+) -> Result<DraftPartsDto, String> {
+    let parts = state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .split_stored_note_markdown(&stored_title, &markdown);
     Ok(DraftPartsDto {
         title: parts.title,
         body_md: parts.body_md,
@@ -243,6 +312,38 @@ fn save_note(
         .map_err(|err| err.to_string());
     eprintln!("snapline.save_note_ms={}", started.elapsed().as_millis());
     result
+}
+
+#[tauri::command]
+fn save_draft_session(
+    state: State<'_, AppState>,
+    request: SaveDraftRequest,
+) -> Result<SaveDraftResult, String> {
+    let core = state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?;
+
+    if !core.has_meaningful_draft_content(&request.title, &request.body_md) {
+        return Ok(SaveDraftResult {
+            note: None,
+            skipped: true,
+        });
+    }
+
+    let prepared = core.prepare_draft_for_save(&request.title, &request.body_md);
+    let note_id = match request.id {
+        Some(id) => parse_note_id(&id)?,
+        None => core.create_note().map_err(|err| err.to_string())?.id,
+    };
+    let note = core
+        .save_note(&note_id, &prepared.title, &prepared.body_md, request.pinned)
+        .map_err(|err| err.to_string())?;
+
+    Ok(SaveDraftResult {
+        note: Some(note),
+        skipped: false,
+    })
 }
 
 #[tauri::command]
@@ -659,11 +760,11 @@ fn import_anonymous_notes(state: State<'_, AppState>) -> Result<Vec<NoteSummary>
 }
 
 #[tauri::command]
-async fn sync_now(state: State<'_, AppState>) -> Result<String, String> {
+async fn sync_now(state: State<'_, AppState>) -> Result<SyncReport, String> {
     run_sync_once(state.inner()).await
 }
 
-async fn run_sync_once(state: &AppState) -> Result<String, String> {
+async fn run_sync_once(state: &AppState) -> Result<SyncReport, String> {
     let (base_url, token, device_id, data_dir, dek) = {
         let core = state
             .core
@@ -863,13 +964,12 @@ async fn run_sync_once(state: &AppState) -> Result<String, String> {
             .map_err(|err| err.to_string())?;
     };
     import_snapshot_and_assets(state, &api, &token).await?;
-    Ok(format!(
-        "uploaded_assets={}, pushed={}, pulled={}, conflicts={}, failed={}",
+    Ok(SyncReport::new(
         uploaded_assets,
         pushed,
         pulled,
         push_conflicts + pull_conflicts,
-        0
+        0,
     ))
 }
 
@@ -1189,6 +1289,7 @@ fn main() {
             derive_title_from_markdown,
             compose_draft_markdown,
             split_draft_markdown,
+            split_stored_note_markdown,
             prepare_draft_for_save,
             normalize_markdown,
             hydrate_markdown_assets,
@@ -1197,6 +1298,7 @@ fn main() {
             get_note,
             get_note_summary,
             save_note,
+            save_draft_session,
             set_note_title,
             set_note_pinned,
             delete_note,
@@ -1208,6 +1310,7 @@ fn main() {
             open_note_window,
             asset_url_from_markdown_path,
             markdown_path_from_asset_url,
+            export_note_as_markdown,
             open_external_url,
             get_open_shortcut,
             set_open_shortcut,

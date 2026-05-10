@@ -1,32 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
-  assetUrlFromMarkdownPath,
   codeBlockLanguageClass,
-  composeDraftMarkdown,
   markdownTextFromClipboard,
   imageMarkdown,
   hasTransientImageSource,
-  normalizeMarkdown,
   markdownPathFromAssetUrl,
-  previewMarkdownFromMarkdown,
   replaceMarkdownImageSource,
   rewriteMarkdownImageSources,
-  splitDraftMarkdown,
-  splitStoredNoteMarkdown,
   stripTransientImageSources,
-  titleFromMarkdown,
 } from "./features/editor/markdown";
 
 describe("markdown helpers", () => {
-  it("normalizes line endings and trims trailing whitespace", () => {
-    expect(normalizeMarkdown("# A\r\nBody\n\n")).toBe("# A\nBody");
-  });
-
-  it("derives a title from the first visible markdown line", () => {
-    expect(titleFromMarkdown("\n## Heading\n# Primary\nBody")).toBe("Primary");
-    expect(titleFromMarkdown("   \n")).toBe("Untitled");
-  });
-
   it("renders markdown image references", () => {
     expect(imageMarkdown("assets/notes/note/image.png")).toBe(
       "![](assets/notes/note/image.png)",
@@ -51,41 +35,17 @@ describe("markdown helpers", () => {
 
   it("rewrites markdown image sources through a mapper", () => {
     expect(
-      rewriteMarkdownImageSources("![](assets/notes/note/image.png)", assetUrlFromMarkdownPath),
+      rewriteMarkdownImageSources(
+        "![](assets/notes/note/image.png)",
+        (source) => `asset://localhost/${source}`,
+      ),
     ).toBe("![](asset://localhost/assets/notes/note/image.png)");
-  });
-
-  it("leaves remote and transient image sources unchanged when hydrating editor markdown", () => {
-    expect(assetUrlFromMarkdownPath("https://example.com/image.png")).toBe(
-      "https://example.com/image.png",
-    );
-    expect(assetUrlFromMarkdownPath("blob:temporary-image")).toBe("blob:temporary-image");
   });
 
   it("round-trips asset urls back to markdown paths", () => {
     expect(
       markdownPathFromAssetUrl("asset://localhost/assets/notes/note/image.png"),
     ).toBe("assets/notes/note/image.png");
-  });
-
-  it("composes and splits draft markdown", () => {
-    const draft = composeDraftMarkdown("Title", "Body line");
-    expect(draft).toBe("# Title\n\nBody line");
-    expect(splitDraftMarkdown(draft)).toEqual({ title: "Title", body_md: "Body line" });
-  });
-
-  it("splits stored note markdown into title and body when stored markdown repeats the title", () => {
-    expect(splitStoredNoteMarkdown("Stored title", "# Stored title\n\nFirst line\nSecond line")).toEqual({
-      title: "Stored title",
-      body_md: "First line\nSecond line",
-    });
-  });
-
-  it("keeps stored markdown intact when the body does not repeat the title", () => {
-    expect(splitStoredNoteMarkdown("第一步", "1. 第一步\n2. 第二步\n3. 第三步")).toEqual({
-      title: "第一步",
-      body_md: "1. 第一步\n2. 第二步\n3. 第三步",
-    });
   });
 
   it("detects transient pasted image sources", () => {
@@ -120,32 +80,6 @@ describe("markdown helpers", () => {
         },
       }),
     ).toBe("## Plain");
-  });
-
-  it("keeps full markdown previews for rich note rows", () => {
-    const source = [
-      "# Title",
-      "",
-      "- Parent",
-      "  - Child",
-      "",
-      "```ts",
-      "  const value = 1;",
-      "```",
-      "",
-      "| A | B |",
-      "| --- | --- |",
-      "| 1 | 2 |",
-      "",
-      "x".repeat(620),
-    ].join("\n");
-
-    const preview = previewMarkdownFromMarkdown(source);
-    expect(preview).not.toContain("# Title");
-    expect(preview).toContain("  - Child");
-    expect(preview).toContain("  const value = 1;");
-    expect(preview).toContain("| A | B |");
-    expect(preview.length).toBeGreaterThan(500);
   });
 
   it("normalizes code block language classes for highlighting", () => {

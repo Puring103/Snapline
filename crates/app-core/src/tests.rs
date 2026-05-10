@@ -271,7 +271,7 @@ fn rust_markdown_helpers_round_trip_draft_content() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let mut core = AppCore::with_repo(paths, repo);
+    let core = AppCore::with_repo(paths, repo);
 
     let markdown = core.compose_draft_markdown("Title", "Body line");
     assert_eq!(markdown, "# Title\n\nBody line");
@@ -279,6 +279,9 @@ fn rust_markdown_helpers_round_trip_draft_content() {
     let parts = core.split_draft_markdown(&markdown);
     assert_eq!(parts.title, "Title");
     assert_eq!(parts.body_md, "Body line");
+    let stored = core.split_stored_note_markdown("Title", "# Title\n\nBody line");
+    assert_eq!(stored.title, "Title");
+    assert_eq!(stored.body_md, "Body line");
     assert_eq!(
         core.asset_url_from_markdown_path("assets/notes/example/image.png"),
         "asset://localhost/assets/notes/example/image.png"
@@ -287,7 +290,10 @@ fn rust_markdown_helpers_round_trip_draft_content() {
         core.markdown_path_from_asset_url("asset://localhost/assets/notes/example/image.png"),
         "assets/notes/example/image.png"
     );
-    assert_eq!(core.derive_title_from_markdown("\n## Heading\n# Primary\nBody"), "Primary");
+    assert_eq!(
+        core.derive_title_from_markdown("\n## Heading\n# Primary\nBody"),
+        "Primary"
+    );
     assert_eq!(core.normalize_markdown("# A\r\nBody\n\n"), "# A\nBody");
 }
 

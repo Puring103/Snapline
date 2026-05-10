@@ -48,6 +48,14 @@ pub fn compose_draft_markdown(title: &str, body_md: &str) -> String {
     }
 }
 
+pub fn has_meaningful_draft_content(title: &str, body_md: &str) -> bool {
+    let normalized_title = normalize_markdown(title).trim().to_string();
+    let normalized_body = normalize_markdown(body_md);
+
+    (!normalized_title.is_empty() && normalized_title != "Untitled")
+        || !normalized_body.trim().is_empty()
+}
+
 pub fn split_draft_markdown(markdown: &str) -> DraftParts {
     let normalized = normalize_markdown(markdown);
     let lines = normalized.lines().collect::<Vec<_>>();
@@ -67,12 +75,63 @@ pub fn split_draft_markdown(markdown: &str) -> DraftParts {
         .copied()
         .collect::<Vec<_>>();
 
-    if body_lines.first().is_some_and(|line| line.trim().is_empty()) {
+    if body_lines
+        .first()
+        .is_some_and(|line| line.trim().is_empty())
+    {
         body_lines.remove(0);
     }
 
     DraftParts {
         title,
+        body_md: normalize_markdown(&body_lines.join("\n")),
+    }
+}
+
+pub fn split_stored_note_markdown(stored_title: &str, markdown: &str) -> DraftParts {
+    let normalized_title = normalize_title(stored_title);
+    let normalized_markdown = normalize_markdown(markdown);
+
+    if normalized_markdown.is_empty() {
+        return DraftParts {
+            title: normalized_title,
+            body_md: String::new(),
+        };
+    }
+
+    let lines = normalized_markdown.lines().collect::<Vec<_>>();
+    let first_visible_line_index = lines.iter().position(|line| !line.trim().is_empty());
+
+    let Some(first_visible_line_index) = first_visible_line_index else {
+        return DraftParts {
+            title: normalized_title,
+            body_md: String::new(),
+        };
+    };
+
+    let first_visible_title = normalize_title(lines[first_visible_line_index]);
+    if first_visible_title != normalized_title {
+        return DraftParts {
+            title: normalized_title,
+            body_md: normalized_markdown,
+        };
+    }
+
+    let mut body_lines = lines[..first_visible_line_index]
+        .iter()
+        .chain(lines[first_visible_line_index + 1..].iter())
+        .copied()
+        .collect::<Vec<_>>();
+
+    if body_lines
+        .first()
+        .is_some_and(|line| line.trim().is_empty())
+    {
+        body_lines.remove(0);
+    }
+
+    DraftParts {
+        title: normalized_title,
         body_md: normalize_markdown(&body_lines.join("\n")),
     }
 }
@@ -118,7 +177,10 @@ pub fn hydrate_markdown_assets(markdown: &str) -> HydratedMarkdown {
         }
     });
 
-    HydratedMarkdown { markdown: hydrated, mappings }
+    HydratedMarkdown {
+        markdown: hydrated,
+        mappings,
+    }
 }
 
 pub fn restore_markdown_asset_sources(markdown: &str, mappings: &[MarkdownImageMapping]) -> String {
@@ -148,9 +210,10 @@ fn normalize_title(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        asset_url_from_markdown_path, compose_draft_markdown, hydrate_markdown_assets,
-        markdown_path_from_asset_url, normalize_markdown, restore_markdown_asset_sources,
-        rewrite_markdown_image_sources, split_draft_markdown, DraftParts, MarkdownImageMapping,
+        asset_url_from_markdown_path, compose_draft_markdown, has_meaningful_draft_content,
+        hydrate_markdown_assets, markdown_path_from_asset_url, normalize_markdown,
+        restore_markdown_asset_sources, rewrite_markdown_image_sources, split_draft_markdown,
+        split_stored_note_markdown, DraftParts, MarkdownImageMapping,
     };
 
     #[test]
@@ -207,9 +270,42 @@ mod tests {
     }
 
     #[test]
+    fn detects_meaningful_draft_content() {
+        assert!(!has_meaningful_draft_content("Untitled", ""));
+        assert!(!has_meaningful_draft_content("   ", "   "));
+        assert!(has_meaningful_draft_content("Idea", ""));
+        assert!(has_meaningful_draft_content("Untitled", "Body"));
+    }
+
+    #[test]
+    fn splits_stored_note_markdown_when_body_repeats_title() {
+        assert_eq!(
+            split_stored_note_markdown("Stored title", "# Stored title\n\nFirst line\nSecond line"),
+            DraftParts {
+                title: "Stored title".to_string(),
+                body_md: "First line\nSecond line".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn keeps_stored_markdown_intact_when_body_does_not_repeat_title() {
+        assert_eq!(
+            split_stored_note_markdown("第一步", "1. 第一步\n2. 第二步\n3. 第三步"),
+            DraftParts {
+                title: "第一步".to_string(),
+                body_md: "1. 第一步\n2. 第二步\n3. 第三步".to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn rewrites_markdown_image_sources() {
         assert_eq!(
-            rewrite_markdown_image_sources("![](assets/notes/note/image.png)", asset_url_from_markdown_path),
+            rewrite_markdown_image_sources(
+                "![](assets/notes/note/image.png)",
+                asset_url_from_markdown_path
+            ),
             "![](asset://localhost/assets/notes/note/image.png)"
         );
     }

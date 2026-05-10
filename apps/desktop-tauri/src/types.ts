@@ -71,9 +71,24 @@ export interface SyncAccountState {
   is_logged_in: boolean;
 }
 
+export interface SaveDraftResult {
+  note: Note | null;
+  skipped: boolean;
+}
+
 export interface LoginSyncResult {
   account: SyncAccountState;
   anonymous_note_count: number;
+}
+
+export interface SyncReport {
+  uploaded_assets: number;
+  pushed: number;
+  pulled: number;
+  conflicts: number;
+  failed: number;
+  has_conflicts: boolean;
+  detail: string;
 }
 
 export interface SyncStatusState {

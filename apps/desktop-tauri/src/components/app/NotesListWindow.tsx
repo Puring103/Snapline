@@ -20,7 +20,7 @@ import { openNoteWindow, shouldStartWindowDrag } from "../../platform/window";
 import { importPromptText } from "../SyncSettings";
 import { useThemeMode } from "../../hooks/theme";
 import { deleteConfirmationFor, sortNotes, upsertNote } from "../../features/sync/session";
-import type { LoginSyncResult, NoteSummary, SyncAccountState, SyncStatusState } from "../../types";
+import type { LoginSyncResult, NoteSummary, SyncAccountState, SyncReport, SyncStatusState } from "../../types";
 
 const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
 
@@ -94,9 +94,11 @@ export function NotesListWindow() {
     let unlistenStatus: (() => void) | null = null;
     let unlistenError: (() => void) | null = null;
 
-    void listen<string>("sync-status", (event) => {
-      const hasConflict = !event.payload.includes("conflicts=0");
-      setSyncStatus({ label: hasConflict ? "Conflict" : "Synced", detail: event.payload });
+    void listen<SyncReport>("sync-status", (event) => {
+      setSyncStatus({
+        label: event.payload.has_conflicts ? "Conflict" : "Synced",
+        detail: event.payload.detail,
+      });
       void refreshNotes(true);
     }).then((unlisten) => {
       unlistenStatus = unlisten;
@@ -209,12 +211,11 @@ export function NotesListWindow() {
     }
   }
 
-  async function handleSyncNow(): Promise<string> {
+  async function handleSyncNow(): Promise<SyncReport> {
     setSyncStatus({ label: "Syncing", detail: null });
     try {
       const report = await api.syncNow();
-      const hasConflict = !report.includes("conflicts=0");
-      setSyncStatus({ label: hasConflict ? "Conflict" : "Synced", detail: report });
+      setSyncStatus({ label: report.has_conflicts ? "Conflict" : "Synced", detail: report.detail });
       await refreshNotes(true);
       return report;
     } catch (err) {

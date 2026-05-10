@@ -115,10 +115,7 @@ export function SettingsPanel({
               <SyncSettings
                 initial={syncAccount}
                 onSaved={onSyncSaved}
-                onSyncNow={async () => {
-                  const report = await api.syncNow();
-                  return report;
-                }}
+                onSyncNow={() => api.syncNow()}
               />
             </div>
           </div>

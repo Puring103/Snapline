@@ -1,7 +1,8 @@
 use snapline_domain::{
-    asset_url_from_markdown_path, compose_draft_markdown, derive_title, hydrate_markdown_assets,
-    markdown_path_from_asset_url, normalize_markdown, restore_markdown_asset_sources,
-    split_draft_markdown, DraftParts, HydratedMarkdown, MarkdownImageMapping,
+    asset_url_from_markdown_path, compose_draft_markdown, derive_title,
+    has_meaningful_draft_content, hydrate_markdown_assets, markdown_path_from_asset_url,
+    normalize_markdown, restore_markdown_asset_sources, split_draft_markdown,
+    split_stored_note_markdown, DraftParts, HydratedMarkdown, MarkdownImageMapping,
 };
 
 use crate::AppCore;
@@ -19,9 +20,17 @@ impl AppCore {
         split_draft_markdown(markdown)
     }
 
+    pub fn split_stored_note_markdown(&self, stored_title: &str, markdown: &str) -> DraftParts {
+        split_stored_note_markdown(stored_title, markdown)
+    }
+
     pub fn prepare_draft_for_save(&self, title: &str, body_md: &str) -> DraftParts {
         let markdown = compose_draft_markdown(title, body_md);
         split_draft_markdown(&markdown)
+    }
+
+    pub fn has_meaningful_draft_content(&self, title: &str, body_md: &str) -> bool {
+        has_meaningful_draft_content(title, body_md)
     }
 
     pub fn normalize_markdown(&self, markdown: &str) -> String {

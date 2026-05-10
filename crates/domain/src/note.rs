@@ -169,7 +169,9 @@ fn strip_markdown_markup(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_preview, derive_preview_markdown, derive_title, summarize_note, Note, NoteId};
+    use super::{
+        derive_preview, derive_preview_markdown, derive_title, summarize_note, Note, NoteId,
+    };
     use chrono::Utc;
 
     #[test]

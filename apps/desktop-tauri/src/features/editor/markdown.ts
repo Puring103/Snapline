@@ -18,44 +18,8 @@ export function markdownTextFromClipboard(clipboardData: { getData: (type: strin
   return plainText;
 }
 
-export function titleFromMarkdown(markdown: string): string {
-  const firstHeading = normalizeMarkdown(markdown)
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.startsWith("# "));
-
-  if (!firstHeading) {
-    return "Untitled";
-  }
-
-  const strippedHeading = firstHeading.replace(/^#\s+/, "").trim();
-  return strippedHeading.length > 0 ? strippedHeading : "Untitled";
-}
-
 export function titleFromMarkdownViaRust(markdown: string): Promise<string> {
   return api.deriveTitleFromMarkdown(markdown);
-}
-
-export function previewFromMarkdown(markdown: string): string {
-  return normalizeMarkdown(markdown)
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("# "))
-    .map((line) => line.replace(/^(-|\*|\d+\.)\s+/, "").trim())
-    .filter(Boolean)
-    .join("\n")
-    .slice(0, 500)
-    .trim();
-}
-
-export function previewMarkdownFromMarkdown(markdown: string): string {
-  const lines = normalizeMarkdown(markdown).split("\n");
-  const titleLineIndex = lines.findIndex((line) => line.trim().startsWith("# "));
-  const previewLines = titleLineIndex === -1
-    ? lines
-    : lines.filter((_line, index) => index !== titleLineIndex);
-
-  return previewLines.join("\n").trim();
 }
 
 export function replaceMarkdownImageSource(
@@ -105,7 +69,7 @@ export function rewriteMarkdownImageSources(
   });
 }
 
-export function assetUrlFromMarkdownPath(markdownPath: string): string {
+function assetUrlFromMarkdownPath(markdownPath: string): string {
   if (!markdownPath.startsWith("assets/")) {
     return markdownPath;
   }
@@ -144,93 +108,17 @@ export function stripTransientImageSources(markdown: string): string {
   return markdown.replace(/!\[[^\]]*]\((blob:|data:)[^)]+\)/g, "");
 }
 
-export function composeDraftMarkdown(title: string, bodyMd: string): string {
-  const safeTitle = normalizeTitle(title);
-  const normalizedBody = normalizeMarkdown(bodyMd);
-
-  if (normalizedBody.length === 0) {
-    return `# ${safeTitle}`;
-  }
-
-  return [`# ${safeTitle}`, "", normalizedBody].join("\n");
-}
-
 export function composeDraftMarkdownViaRust(title: string, bodyMd: string): Promise<string> {
   return api.composeDraftMarkdown(title, bodyMd);
-}
-
-export function splitDraftMarkdown(markdown: string): { title: string; body_md: string } {
-  const normalized = normalizeMarkdown(markdown);
-  const lines = normalized.split("\n");
-  const firstVisibleLineIndex = lines.findIndex((line) => line.trim().length > 0);
-
-  if (firstVisibleLineIndex === -1) {
-    return { title: "Untitled", body_md: "" };
-  }
-
-  const title = normalizeTitle(lines[firstVisibleLineIndex]);
-  const bodyLines = [
-    ...lines.slice(0, firstVisibleLineIndex),
-    ...lines.slice(firstVisibleLineIndex + 1),
-  ];
-
-  if (bodyLines[0]?.trim().length === 0) {
-    bodyLines.shift();
-  }
-
-  return {
-    title,
-    body_md: normalizeMarkdown(bodyLines.join("\n")),
-  };
 }
 
 export function splitDraftMarkdownViaRust(markdown: string): Promise<{ title: string; body_md: string }> {
   return api.splitDraftMarkdown(markdown);
 }
 
-export function splitStoredNoteMarkdown(
+export function splitStoredNoteMarkdownViaRust(
   storedTitle: string,
   markdown: string,
-): { title: string; body_md: string } {
-  const normalizedTitle = normalizeTitle(storedTitle);
-  const normalizedMarkdown = normalizeMarkdown(markdown);
-
-  if (normalizedMarkdown.length === 0) {
-    return { title: normalizedTitle, body_md: "" };
-  }
-
-  const lines = normalizedMarkdown.split("\n");
-  const firstVisibleLineIndex = lines.findIndex((line) => line.trim().length > 0);
-
-  if (firstVisibleLineIndex === -1) {
-    return { title: normalizedTitle, body_md: "" };
-  }
-
-  const firstVisibleTitle = normalizeTitle(lines[firstVisibleLineIndex]);
-  if (firstVisibleTitle !== normalizedTitle) {
-    return { title: normalizedTitle, body_md: normalizedMarkdown };
-  }
-
-  const bodyLines = [
-    ...lines.slice(0, firstVisibleLineIndex),
-    ...lines.slice(firstVisibleLineIndex + 1),
-  ];
-
-  if (bodyLines[0]?.trim().length === 0) {
-    bodyLines.shift();
-  }
-
-  return {
-    title: normalizedTitle,
-    body_md: normalizeMarkdown(bodyLines.join("\n")),
-  };
-}
-
-function normalizeTitle(title: string): string {
-  const trimmed = normalizeMarkdown(title).trim();
-  if (trimmed.length === 0) {
-    return "Untitled";
-  }
-
-  return trimmed.replace(/^#+\s*/, "").trim() || "Untitled";
+): Promise<{ title: string; body_md: string }> {
+  return api.splitStoredNoteMarkdown(storedTitle, markdown);
 }
