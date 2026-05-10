@@ -97,7 +97,7 @@
   position: relative;
   min-height: 100dvh;
   overflow: hidden;
-  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  background: color-mix(in srgb, var(--bg) 92%, var(--surface));
 }
 
 .editorView {
@@ -107,33 +107,55 @@
   padding: max(8px, env(safe-area-inset-top)) 12px 0;
 }
 
-.editorTopBar,
 .drawerHeader {
-  min-height: 54px;
+  min-height: 52px;
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 0 -12px;
   padding: 0 12px 8px;
   border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface-soft) 80%, var(--surface));
+  background: color-mix(in srgb, var(--surface-soft) 70%, var(--bg));
 }
 
-.titleInput {
+.mobileRoot .editorTopBar {
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 40px 40px;
+  align-items: center;
+  gap: 6px;
+  margin: 0 -12px;
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-soft) 70%, var(--bg));
+}
+
+.mobileRoot .titleInput {
+  width: 100%;
+  max-width: none;
   min-width: 0;
-  height: 44px;
-  flex: 1;
+  height: 40px;
+  padding: 0 6px;
   border: 0;
+  border-radius: 8px;
   outline: 0;
   background: transparent;
   color: var(--text);
-  font-size: 19px;
+  font-size: 17px;
   font-weight: 700;
 }
 
-.iconButton {
+.mobileRoot .titleInput:focus {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+  box-shadow: none;
+}
+
+.mobileRoot .iconButton {
   width: 40px;
   height: 40px;
+  min-width: 40px;
+  min-height: 40px;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
@@ -143,17 +165,17 @@
   color: var(--icon);
 }
 
-.iconButton:active,
-.iconButton.active {
+.mobileRoot .iconButton:active,
+.mobileRoot .iconButton.active {
   border-color: var(--line);
   background: var(--surface);
 }
 
-.iconButton.active {
+.mobileRoot .iconButton.active {
   color: var(--pin-active);
 }
 
-.iconButton.danger {
+.mobileRoot .iconButton.danger {
   color: var(--danger);
 }
 
@@ -164,47 +186,6 @@
   color: var(--accent);
   fill: color-mix(in srgb, var(--accent-soft) 55%, transparent);
   stroke: var(--accent);
-}
-
-.bodyEditor,
-.previewPane {
-  width: 100%;
-  flex: 1;
-  min-height: 0;
-  padding: 18px 2px 92px;
-  border: 0;
-  outline: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  background: transparent;
-  color: var(--text);
-  font-size: 17px;
-  line-height: 1.58;
-  resize: none;
-}
-
-.bodyEditor::placeholder {
-  color: color-mix(in srgb, var(--muted) 74%, transparent);
-}
-
-.previewPane h1 {
-  margin: 0 0 14px;
-  font-size: 25px;
-  line-height: 1.22;
-}
-
-.previewPane h2 {
-  margin: 20px 0 10px;
-  font-size: 20px;
-}
-
-.previewPane p,
-.previewPane ul {
-  margin: 0 0 12px;
-}
-
-.previewPane li {
-  margin: 5px 0;
 }
 
 .muted,
@@ -218,39 +199,90 @@
   font-size: 14px;
 }
 
-.bottomToolbar {
-  position: fixed;
+.mobileEditorHost {
+  --keyboard-offset: 0px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  margin: 0 -12px;
+  overflow: hidden;
+}
+
+.mobileEditorHost .editorShell {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.mobileEditorHost .editorScrollArea {
+  padding: 0 12px;
+  padding-bottom: calc(58px + var(--keyboard-offset) + env(safe-area-inset-bottom));
+  transition: padding-bottom 140ms ease;
+  overscroll-behavior: contain;
+  scroll-padding-bottom: calc(118px + var(--keyboard-offset));
+}
+
+.mobileEditorHost .editorSurface {
+  padding: 16px 0 calc(42dvh + 70px + var(--keyboard-offset));
+}
+
+.mobileEditorHost .editorLoadingSurface,
+.mobileEditorHost .markdownSurface .ProseMirror {
+  min-height: calc(100dvh - 108px - 52px - var(--keyboard-offset));
+  font-size: 17px;
+  line-height: 1.54;
+}
+
+.mobileEditorHost .editorSourceSurface {
+  display: block;
+  height: calc(100dvh - 108px - 52px - var(--keyboard-offset));
+  padding-bottom: calc(42dvh + 78px + var(--keyboard-offset));
+  overflow-y: auto;
+  scroll-padding-bottom: calc(118px + var(--keyboard-offset));
+}
+
+.mobileEditorHost .markdownSurface .ProseMirror {
+  padding-bottom: calc(42dvh + 72px + var(--keyboard-offset));
+}
+
+.mobileEditorHost .editorToolbar {
+  position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 9;
-  min-height: 58px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 7px 10px calc(7px + env(safe-area-inset-bottom));
+  min-height: 46px;
+  gap: 1px;
+  justify-content: center;
+  overflow: hidden;
+  padding: 5px 5px calc(5px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
-  background: color-mix(in srgb, var(--bg) 70%, var(--surface-soft));
+  background: color-mix(in srgb, var(--bg) 86%, var(--surface-soft));
+  transform: translateY(calc(-1 * var(--keyboard-offset)));
   transition: transform 140ms ease;
-  scrollbar-width: none;
 }
 
-.bottomToolbar::-webkit-scrollbar {
+.mobileEditorHost .editorToolbarDivider {
+  height: 15px;
+  margin: 0 1px;
+}
+
+.mobileEditorHost .editorToolbarSpacer {
   display: none;
 }
 
-.bottomToolbar .iconButton {
-  width: 44px;
-  height: 44px;
-  border-color: color-mix(in srgb, var(--line) 70%, transparent);
-  border-radius: 11px;
-  background: var(--surface);
+.mobileEditorHost .editorToolbarBtn {
+  width: clamp(26px, 7.6vw, 34px);
+  height: 32px;
+  border-radius: 8px;
 }
 
-.drawerBackdrop,
-.sheetBackdrop {
+.mobileEditorHost .editorToolbarBtn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.drawerBackdrop {
   position: fixed;
   inset: 0;
   z-index: 20;
@@ -264,7 +296,7 @@
 }
 
 .notesDrawer {
-  width: min(88vw, 380px);
+  width: min(92vw, 390px);
   height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -322,22 +354,25 @@
 }
 
 .noteFeed {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-bottom: 16px;
+  padding-bottom: 12px;
 }
 
 .noteRow {
   position: relative;
   width: 100%;
   min-height: 82px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  align-items: start;
+  gap: 8px;
   padding: 12px;
-  text-align: left;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -361,14 +396,18 @@
   background: var(--pin-active);
 }
 
-.noteRowHeader {
-  display: flex;
-  gap: 8px;
+.noteRowOpen {
+  min-width: 0;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
 }
 
 .noteRowTitleBlock {
   min-width: 0;
-  flex: 1;
 }
 
 .noteRowTitleRow {
@@ -377,11 +416,16 @@
   gap: 6px;
 }
 
-.noteRowTitleRow svg {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
+.noteRow .iconButton {
+  width: 36px;
+  height: 36px;
+  color: var(--muted);
+}
+
+.noteRow .iconButton.active {
   color: var(--pin-active);
+  background: var(--pin-active-bg);
+  border-color: color-mix(in srgb, var(--pin-active) 56%, var(--line));
 }
 
 .noteRowTitle {
@@ -411,49 +455,59 @@
   -webkit-line-clamp: 2;
 }
 
-.sheetBackdrop {
-  display: flex;
-  align-items: flex-end;
+.drawerSettings {
+  flex: 0 0 auto;
+  margin: 12px -12px calc(-1 * max(12px, env(safe-area-inset-bottom)));
+  padding: 12px 12px max(14px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-soft) 64%, var(--surface));
 }
 
-.settingsSheet {
+.drawerSettingsTrigger {
   width: 100%;
-  max-height: 86dvh;
-  padding: 8px 16px calc(18px + env(safe-area-inset-bottom));
-  border: 1px solid var(--line);
-  border-width: 1px 0 0;
-  border-radius: 18px 18px 0 0;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-}
-
-.sheetHandle {
-  width: 44px;
-  height: 5px;
-  margin: 0 auto 12px;
-  border-radius: 999px;
-  background: var(--line-strong);
-}
-
-.settingsSheet header {
+  min-height: 44px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: 8px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 800;
+  text-align: left;
 }
 
-.settingsSheet h2,
-.settingsSheet h3,
-.settingsSheet p {
+.drawerSettingsTrigger span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drawerSettingsTrigger svg {
+  width: 18px;
+  height: 18px;
+}
+
+.drawerSettingsChevron {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.drawerSettingsPanel {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.drawerSettings h3 {
   margin: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 
-.settingsSheet h2 {
-  font-size: 19px;
-}
-
-.settingsSheet header button,
 .primaryAction,
 .segmented button {
   min-height: 42px;
@@ -462,31 +516,9 @@
   background: var(--surface-soft);
 }
 
-.settingsSheet header button {
-  padding: 0 14px;
-  color: var(--accent);
-}
-
-.settingsGroup {
-  display: grid;
-  gap: 10px;
-  padding: 14px 0;
-  border-top: 1px solid var(--line);
-}
-
-.settingsGroup h3 {
-  font-size: 14px;
-}
-
-.settingsGroup p {
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
 .segmented {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -497,6 +529,129 @@
   justify-content: center;
   gap: 8px;
   padding: 0 12px;
+}
+
+.syncSettings {
+  display: grid;
+  gap: 8px;
+}
+
+.syncSettingsSummary {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.syncSettingsActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.syncSettings button,
+.connectionDialogActions button {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.connectionDialogBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: end center;
+  padding: 14px;
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.connectionDialog {
+  width: min(100%, 360px);
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.connectionDialogHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.connectionDialogTitle {
+  font-weight: 800;
+}
+
+.connectionDialogSub,
+.connectionField,
+.connectionFieldError,
+.syncSettingsStatus,
+.syncSettingsServer {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dialogIconButton {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.connectionModeToggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.connectionModeToggle button {
+  border-color: transparent;
+  background: transparent;
+}
+
+.connectionModeToggle .connectionModeActive {
+  background: var(--surface);
+  color: var(--accent);
+}
+
+.connectionField {
+  display: grid;
+  gap: 5px;
+}
+
+.connectionField input {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 10px;
+  background: var(--surface-soft);
+  color: var(--text);
+  outline: none;
+}
+
+.connectionDialogActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.segmented button svg {
+  width: 18px;
+  height: 18px;
 }
 
 .segmented button.selected,
@@ -524,7 +679,7 @@
     background: var(--bg);
   }
 
-  .bottomToolbar {
+  .mobileEditorHost .editorToolbar {
     position: absolute;
   }
 }

@@ -1,22 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import {
-  BoldIcon,
-  HeadingIcon,
-  IconButton,
-  ListIcon,
-  LogoIcon,
-  MenuIcon,
-  PinIcon,
-  PlusIcon,
-  PreviewIcon,
-  SearchIcon,
-  SettingsIcon,
-  SyncIcon,
-  TrashIcon,
-  WriteIcon,
-} from "./icons";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { EditorPane } from "../components/EditorPane";
+import { SyncSettings } from "../components/SyncSettings";
+import { api } from "../platform/api";
+import { IconButton, ListIcon, LogoIcon, PinIcon, PlusIcon, PreviewModeIcon, SettingsIcon, SourceModeIcon, ThemeDarkIcon, ThemeLightIcon, ThemeSystemIcon } from "../components/app/AppIcons";
+import { SearchIcon } from "./icons";
 import { loadLastNoteId, loadNotes, loadTheme, saveLastNoteId, saveNotes, saveTheme } from "./storage";
 import type { EditorMode, Note, ThemeMode } from "./types";
+import type { LoginSyncResult, SavedAsset, SyncAccountState } from "../types";
 import "./mobile.css";
 
 function nowId() {
@@ -56,46 +46,52 @@ function previewText(note: Note) {
   return note.body.replace(/[#*_`>-]/g, "").replace(/\s+/g, " ").trim() || "No preview";
 }
 
-function renderMarkdown(markdown: string) {
-  return markdown
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter(Boolean)
-    .map((block, index) => {
-      if (block.startsWith("# ")) return <h1 key={index}>{block.slice(2)}</h1>;
-      if (block.startsWith("## ")) return <h2 key={index}>{block.slice(3)}</h2>;
-      if (block.startsWith("- ")) {
-        return (
-          <ul key={index}>
-            {block.split("\n").map((item, itemIndex) => (
-              <li key={itemIndex}>{item.replace(/^- /, "")}</li>
-            ))}
-          </ul>
-        );
-      }
-      return <p key={index}>{block}</p>;
-    });
-}
-
 function useKeyboardOffset() {
   const [offset, setOffset] = useState(0);
 
   useEffect(() => {
     const viewport = window.visualViewport;
-    if (!viewport) return;
-    const activeViewport = viewport;
+    const initialHeight = Math.max(
+      window.screen?.height || 0,
+      window.outerHeight || 0,
+      window.innerHeight,
+      document.documentElement.clientHeight,
+    );
 
     function updateOffset() {
-      const hiddenHeight = Math.max(0, window.innerHeight - activeViewport.height - activeViewport.offsetTop);
-      setOffset(hiddenHeight);
+      const activeTag = document.activeElement?.tagName;
+      const editing = activeTag === "TEXTAREA" || activeTag === "INPUT" || Boolean(document.activeElement?.closest("[contenteditable='true']"));
+      if (!viewport) {
+        setOffset(0);
+        return;
+      }
+
+      const layoutHeight = Math.max(
+        document.documentElement.clientHeight,
+        window.innerHeight,
+      );
+      const visualBottom = viewport.height + viewport.offsetTop;
+      const viewportHiddenHeight = Math.max(0, layoutHeight - visualBottom);
+      const resizedHiddenHeight = editing ? Math.max(0, initialHeight - window.innerHeight) : 0;
+      const fallbackKeyboardHeight = editing ? Math.round(window.innerHeight * 0.38) : 0;
+      const hiddenHeight = Math.max(viewportHiddenHeight, resizedHiddenHeight, fallbackKeyboardHeight);
+      setOffset(hiddenHeight > 24 ? Math.round(hiddenHeight) : 0);
     }
 
     updateOffset();
-    activeViewport.addEventListener("resize", updateOffset);
-    activeViewport.addEventListener("scroll", updateOffset);
+    viewport?.addEventListener("resize", updateOffset);
+    viewport?.addEventListener("scroll", updateOffset);
+    window.addEventListener("resize", updateOffset);
+    window.addEventListener("orientationchange", updateOffset);
+    document.addEventListener("focusin", updateOffset);
+    document.addEventListener("focusout", updateOffset);
     return () => {
-      activeViewport.removeEventListener("resize", updateOffset);
-      activeViewport.removeEventListener("scroll", updateOffset);
+      viewport?.removeEventListener("resize", updateOffset);
+      viewport?.removeEventListener("scroll", updateOffset);
+      window.removeEventListener("resize", updateOffset);
+      window.removeEventListener("orientationchange", updateOffset);
+      document.removeEventListener("focusin", updateOffset);
+      document.removeEventListener("focusout", updateOffset);
     };
   }, []);
 
@@ -105,10 +101,12 @@ function useKeyboardOffset() {
 export function AndroidApp() {
   const [notes, setNotes] = useState<Note[]>(() => sortNotes(loadNotes().filter(hasMeaningfulContent)));
   const [theme, setTheme] = useState<ThemeMode>(loadTheme);
-  const [editorMode, setEditorMode] = useState<EditorMode>("write");
+  const [resolvedTheme, setResolvedTheme] = useState<"dark" | "light">("dark");
+  const [editorMode, setEditorMode] = useState<EditorMode>("source");
   const [query, setQuery] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsExpanded, setSettingsExpanded] = useState(false);
+  const [syncAccount, setSyncAccount] = useState<SyncAccountState | null>(null);
   const keyboardOffset = useKeyboardOffset();
 
   const [draft, setDraft] = useState<Note>(() => {
@@ -125,9 +123,24 @@ export function AndroidApp() {
   }, [notes, query]);
 
   useEffect(() => {
-    document.documentElement.dataset.mobileTheme = theme;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+
+    function applyTheme() {
+      const nextTheme = theme === "system" ? (media.matches ? "dark" : "light") : theme;
+      document.documentElement.dataset.mobileTheme = nextTheme;
+      document.documentElement.dataset.mobileThemeMode = theme;
+      setResolvedTheme(nextTheme);
+    }
+
+    applyTheme();
     saveTheme(theme);
+    media.addEventListener("change", applyTheme);
+    return () => media.removeEventListener("change", applyTheme);
   }, [theme]);
+
+  useEffect(() => {
+    void api.getSyncAccountState().then(setSyncAccount).catch(() => setSyncAccount(null));
+  }, []);
 
   useEffect(() => {
     saveNotes(sortNotes(notes.filter(hasMeaningfulContent)));
@@ -153,13 +166,13 @@ export function AndroidApp() {
   function createNote() {
     const next = blankDraft();
     setDraft(next);
-    setEditorMode("write");
+    setEditorMode("source");
     setSidebarOpen(false);
   }
 
   function openNote(note: Note) {
     setDraft(note);
-    setEditorMode("write");
+    setEditorMode("source");
     setSidebarOpen(false);
   }
 
@@ -167,22 +180,35 @@ export function AndroidApp() {
     setNotes((current) => current.filter((note) => note.id !== draft.id));
     const next = notes.filter((note) => note.id !== draft.id)[0] ?? blankDraft();
     setDraft(next);
-    setEditorMode("write");
+    setEditorMode("source");
   }
 
-  function insertMarkup(kind: "heading" | "bold" | "list") {
-    const suffix = draft.body && !draft.body.endsWith("\n") ? "\n" : "";
-    const addition = kind === "heading" ? "# " : kind === "bold" ? "**粗体**" : "- ";
-    updateDraft({ body: `${draft.body}${suffix}${addition}` });
+  function togglePinned(note: Note) {
+    const nextPinned = !note.pinned;
+    if (note.id === draft.id) {
+      updateDraft({ pinned: nextPinned });
+      return;
+    }
+    setNotes((current) => sortNotes(current.map((item) => (
+      item.id === note.id ? { ...item, pinned: nextPinned, updatedAt: Date.now() } : item
+    ))));
+  }
+
+  function handleSyncSaved(result: LoginSyncResult) {
+    setSyncAccount(result.account);
+  }
+
+  async function handleRequestImageSave(_bytes: number[]): Promise<SavedAsset | null> {
+    return null;
   }
 
   return (
-    <div className="mobileRoot" data-mobile-theme={theme}>
+    <div className="mobileRoot" data-mobile-theme={resolvedTheme} data-theme-mode={theme}>
     <div className="phoneApp">
       <main className="screen">
         <section className="editorView">
           <header className="editorTopBar">
-            <IconButton label="打开列表" onClick={() => setSidebarOpen(true)}><MenuIcon /></IconButton>
+            <IconButton label="打开列表" onClick={() => setSidebarOpen(true)}><ListIcon /></IconButton>
             <input
               className="titleInput"
               value={draft.title}
@@ -192,36 +218,27 @@ export function AndroidApp() {
               }}
               placeholder="Untitled"
             />
-            <IconButton label="设置" onClick={() => setSettingsOpen(true)}><SettingsIcon /></IconButton>
+            <IconButton label={editorMode === "preview" ? "源码" : "预览"} onClick={() => setEditorMode((mode) => mode === "preview" ? "source" : "preview")}>
+              {editorMode === "preview" ? <SourceModeIcon /> : <PreviewModeIcon />}
+            </IconButton>
+            <IconButton label="新建笔记" onClick={createNote}><PlusIcon /></IconButton>
           </header>
 
-          {editorMode === "write" ? (
-            <textarea
-              className="bodyEditor"
-              value={draft.body}
-              onChange={(event) => updateDraft({ body: event.target.value })}
-              placeholder="写点什么..."
-            />
-          ) : (
-            <article className="previewPane">
-              {draft.body.trim() ? renderMarkdown(draft.body) : <p className="muted">空白笔记</p>}
-            </article>
-          )}
-
-          <nav
-            className="bottomToolbar"
-            style={{ transform: `translateY(-${keyboardOffset}px)` }}
-            aria-label="编辑工具栏"
+          <section
+            className="mobileEditorHost"
+            style={{
+              "--keyboard-offset": `${keyboardOffset}px`,
+            } as CSSProperties}
           >
-            <IconButton active={editorMode === "write"} label="编辑" onClick={() => setEditorMode("write")}><WriteIcon /></IconButton>
-            <IconButton active={editorMode === "preview"} label="预览" onClick={() => setEditorMode("preview")}><PreviewIcon /></IconButton>
-            <IconButton active={draft.pinned} label={draft.pinned ? "取消置顶" : "置顶"} onClick={() => updateDraft({ pinned: !draft.pinned })}><PinIcon /></IconButton>
-            <IconButton label="标题" onClick={() => insertMarkup("heading")}><HeadingIcon /></IconButton>
-            <IconButton label="粗体" onClick={() => insertMarkup("bold")}><BoldIcon /></IconButton>
-            <IconButton label="列表" onClick={() => insertMarkup("list")}><ListIcon /></IconButton>
-            <IconButton label="新建" onClick={createNote}><PlusIcon /></IconButton>
-            <IconButton danger label="删除" onClick={deleteDraft}><TrashIcon /></IconButton>
-          </nav>
+            <EditorPane
+              bodyMarkdown={draft.body}
+              mode={editorMode}
+              onBodyChange={(body) => updateDraft({ body })}
+              onModeToggle={() => setEditorMode((mode) => mode === "preview" ? "source" : "preview")}
+              onRequestImageSave={handleRequestImageSave}
+              showModeToggle={false}
+            />
+          </section>
         </section>
       </main>
 
@@ -234,7 +251,7 @@ export function AndroidApp() {
                 <h1>Snapline</h1>
                 <p>{notes.length} 条笔记</p>
               </div>
-              <IconButton label="新建笔记" onClick={createNote}><PlusIcon /></IconButton>
+              <IconButton label="关闭列表" onClick={() => setSidebarOpen(false)}><ListIcon /></IconButton>
             </header>
 
             <label className="searchBox">
@@ -244,49 +261,51 @@ export function AndroidApp() {
 
             <div className="noteFeed">
               {visibleNotes.map((note) => (
-                <button
+                <article
                   className={["noteRow", note.id === draft.id ? "selected" : "", note.pinned ? "pinned" : ""].filter(Boolean).join(" ")}
                   key={note.id}
-                  onClick={() => openNote(note)}
-                  type="button"
                 >
-                  <div className="noteRowHeader">
+                  <button className="noteRowOpen" onClick={() => openNote(note)} type="button">
                     <div className="noteRowTitleBlock">
                       <div className="noteRowTitleRow">
                         <span className="noteRowTitle">{note.title.trim() || "Untitled"}</span>
-                        {note.pinned ? <PinIcon /> : null}
                       </div>
                       <span className="noteRowTime">{formatTime(note.updatedAt)}</span>
                     </div>
-                  </div>
-                  <p className="noteRowPreview">{previewText(note)}</p>
-                </button>
+                    <p className="noteRowPreview">{previewText(note)}</p>
+                  </button>
+                  <IconButton active={note.pinned} label={note.pinned ? "取消收藏" : "收藏"} onClick={() => togglePinned(note)}><PinIcon /></IconButton>
+                </article>
               ))}
               {visibleNotes.length === 0 ? <div className="emptyState">没有匹配的笔记</div> : null}
             </div>
-          </aside>
-        </div>
-      ) : null}
 
-      {settingsOpen ? (
-        <div className="sheetBackdrop" onClick={() => setSettingsOpen(false)}>
-          <aside className="settingsSheet" onClick={(event) => event.stopPropagation()}>
-            <div className="sheetHandle" />
-            <header>
-              <h2>设置</h2>
-              <button onClick={() => setSettingsOpen(false)} type="button">完成</button>
-            </header>
-            <section className="settingsGroup">
-              <h3>外观</h3>
-              <div className="segmented">
-                <button className={theme === "dark" ? "selected" : ""} onClick={() => setTheme("dark")} type="button">暗色</button>
-                <button className={theme === "light" ? "selected" : ""} onClick={() => setTheme("light")} type="button">浅色</button>
-              </div>
-            </section>
-            <section className="settingsGroup">
-              <h3>同步</h3>
-              <p>账号登录、手动同步、冲突处理和匿名笔记导入会在接入 Android 原生层后复用桌面端同步核心。</p>
-              <button className="primaryAction" type="button"><SyncIcon />连接同步服务器</button>
+            <section className="drawerSettings">
+              <button
+                aria-expanded={settingsExpanded}
+                className="drawerSettingsTrigger"
+                onClick={() => setSettingsExpanded((open) => !open)}
+                type="button"
+              >
+                <span><SettingsIcon />设置</span>
+                <span className="drawerSettingsChevron" aria-hidden="true">{settingsExpanded ? "收起" : "打开"}</span>
+              </button>
+              {settingsExpanded ? (
+                <div className="drawerSettingsPanel">
+                  <h3>外观</h3>
+                  <div className="segmented">
+                    <button className={theme === "system" ? "selected" : ""} onClick={() => setTheme("system")} type="button"><ThemeSystemIcon />系统</button>
+                    <button className={theme === "dark" ? "selected" : ""} onClick={() => setTheme("dark")} type="button"><ThemeDarkIcon />暗色</button>
+                    <button className={theme === "light" ? "selected" : ""} onClick={() => setTheme("light")} type="button"><ThemeLightIcon />浅色</button>
+                  </div>
+                  <h3>同步</h3>
+                  <SyncSettings
+                    initial={syncAccount}
+                    onSaved={handleSyncSaved}
+                    onSyncNow={() => api.syncNow()}
+                  />
+                </div>
+              ) : null}
             </section>
           </aside>
         </div>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import cliSchema from "@tauri-apps/cli/config.schema.json";
 import mainCapability from "../src-tauri/capabilities/main.json";
+import androidConfig from "../src-tauri/tauri.android.conf.json";
 import config from "../src-tauri/tauri.conf.json";
 import linuxConfig from "../src-tauri/tauri.linux.conf.json";
 
@@ -31,6 +32,17 @@ describe("tauri security config", () => {
 
   it("builds AppImage and deb packages on Linux", () => {
     expect(linuxConfig.bundle.targets).toEqual(["appimage", "deb"]);
+  });
+
+  it("opens the Android build with the mobile route", () => {
+    expect(androidConfig.app.windows[0]).toMatchObject({
+      url: "/?mode=android",
+      width: 430,
+      height: 860,
+      minWidth: 320,
+      minHeight: 640,
+      decorations: false,
+    });
   });
 
   it("builds Windows and Linux desktop packages across platform configs", () => {

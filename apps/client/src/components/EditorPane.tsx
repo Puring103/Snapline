@@ -38,6 +38,7 @@ interface EditorPaneProps {
   onModeToggle: () => void;
   onRequestImageSave: (bytes: number[]) => Promise<SavedAsset | null>;
   readOnly?: boolean;
+  showModeToggle?: boolean;
 }
 
 export function EditorPane({
@@ -49,6 +50,7 @@ export function EditorPane({
   onModeToggle,
   onRequestImageSave,
   readOnly = false,
+  showModeToggle = true,
 }: EditorPaneProps) {
   const suppressNextUpdate = useRef(false);
   const editorRef = useRef<Editor | null>(null);
@@ -243,7 +245,12 @@ export function EditorPane({
         ) : null}
       </div>
       {!readOnly ? (
-        <EditorToolbar editor={mode === "preview" ? editor : null} mode={mode} onModeToggle={onModeToggle} />
+        <EditorToolbar
+          editor={mode === "preview" ? editor : null}
+          mode={mode}
+          onModeToggle={onModeToggle}
+          showModeToggle={showModeToggle}
+        />
       ) : null}
     </div>
   );
@@ -452,7 +459,21 @@ export function EditorPane({
   }
 }
 
-function EditorToolbar({ editor, mode, onModeToggle }: { editor: Editor | null; mode: EditorMode; onModeToggle: () => void }) {
+function EditorToolbar({
+  editor,
+  mode,
+  onModeToggle,
+  showModeToggle,
+}: {
+  editor: Editor | null;
+  mode: EditorMode;
+  onModeToggle: () => void;
+  showModeToggle: boolean;
+}) {
+  if (!editor && !showModeToggle) {
+    return null;
+  }
+
   return (
     <div className="editorToolbar">
       {editor ? (
@@ -532,15 +553,19 @@ function EditorToolbar({ editor, mode, onModeToggle }: { editor: Editor | null; 
           </ToolbarButton>
         </>
       ) : null}
-      <div className="editorToolbarSpacer" />
-      <div className="editorToolbarDivider" />
-      <ToolbarButton
-        active={false}
-        label={mode === "preview" ? "Switch to source mode" : "Switch to preview mode"}
-        onClick={onModeToggle}
-      >
-        {mode === "preview" ? <SourceModeToolbarIcon /> : <PreviewModeToolbarIcon />}
-      </ToolbarButton>
+      {showModeToggle ? (
+        <>
+          <div className="editorToolbarSpacer" />
+          <div className="editorToolbarDivider" />
+          <ToolbarButton
+            active={false}
+            label={mode === "preview" ? "Switch to source mode" : "Switch to preview mode"}
+            onClick={onModeToggle}
+          >
+            {mode === "preview" ? <SourceModeToolbarIcon /> : <PreviewModeToolbarIcon />}
+          </ToolbarButton>
+        </>
+      ) : null}
     </div>
   );
 }
