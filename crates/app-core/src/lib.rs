@@ -1,6 +1,7 @@
 mod app;
 mod assets;
 mod bootstrap;
+mod markdown;
 mod notes;
 mod settings;
 mod sync;

@@ -200,8 +200,9 @@ export function NotesListWindow() {
 
     try {
       setError(null);
-      const saved = await api.setNotePinned(noteId, !(current.pinned ?? false));
-      setNotes((existing) => upsertNote(existing, saved));
+      await api.setNotePinned(noteId, !(current.pinned ?? false));
+      const summary = await api.getNoteSummary(noteId);
+      setNotes((existing) => upsertNote(existing, summary));
     } catch (err) {
       setError(String(err));
       setStatus("Error");

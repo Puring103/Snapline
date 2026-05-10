@@ -54,6 +54,16 @@ export interface DraftParts {
   body_md: string;
 }
 
+export interface MarkdownImageMapping {
+  display_source: string;
+  markdown_path: string;
+}
+
+export interface HydratedMarkdown {
+  markdown: string;
+  mappings: MarkdownImageMapping[];
+}
+
 export interface SyncAccountState {
   account_id: string | null;
   device_id: string;

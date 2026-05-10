@@ -46,7 +46,7 @@ describe("session helpers", () => {
         { id: "a", title: "Old", preview: "old", preview_md: "old", updated_at: "2024-01-01T00:00:00Z", pinned: false },
         { id: "b", title: "Pinned", preview: "pinned", preview_md: "pinned", updated_at: "2024-01-02T00:00:00Z", pinned: true },
       ],
-      { id: "a", title: "New", content_md: "# New\n- **Body**", updated_at: "2024-01-03T00:00:00Z", pinned: true } as never,
+      { id: "a", title: "New", preview: "**Body**", preview_md: "- **Body**", updated_at: "2024-01-03T00:00:00Z", pinned: true },
     );
 
     expect(notes.map((note) => note.id)).toEqual(["a", "b"]);

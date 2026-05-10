@@ -7,6 +7,7 @@ import { startupLog } from "../../platform/startupLog";
 import { openListWindow, openNoteWindow, shouldDeferInitialNoteLoad, shouldStartWindowDrag } from "../../platform/window";
 import { webviewAssetUrlFromFilesystemPath } from "../../features/assets/assetUrl";
 import { DEFAULT_EDITOR_MODE, toggleEditorMode, type EditorMode } from "../../features/editor/editorMode";
+import { splitDraftMarkdownViaRust } from "../../features/editor/markdown";
 import {
   createDraftSession,
   hasMeaningfulDraftContent,
@@ -144,12 +145,11 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
 
         setDataDir(bootstrapState.data_dir);
         if (next) {
-          beginSessionFromNote(next);
+          await beginSessionFromNote(next);
         } else if (newDraft) {
-          setDataDir(bootstrapState.data_dir);
           beginDraftSession();
         } else {
-          beginSessionFromNote(bootstrapState.current);
+          await beginSessionFromNote(bootstrapState.current);
         }
         setStatus("Draft");
       } catch (err) {
@@ -245,13 +245,14 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
     return () => clearSaveTimer();
   }, [deleted, session]);
 
-  function beginSessionFromNote(note: Note) {
+  async function beginSessionFromNote(note: Note) {
     clearSaveTimer();
+    const parts = await splitDraftMarkdownViaRust(note.content_md).catch(() => null);
     setSession({
       kind: noteId ? "existing" : "draft",
       id: note.id,
-      title: note.title,
-      bodyMd: note.content_md,
+      title: parts?.title ?? note.title,
+      bodyMd: parts?.body_md ?? note.content_md,
       persistedTitle: note.title,
       persistedBodyMd: note.content_md,
     });
@@ -290,8 +291,14 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
       setError(null);
       setStatus("Saving");
 
+      const prepared = await api.prepareDraftForSave(snapshot.title, snapshot.bodyMd);
       const noteIdToSave = snapshot.id ?? (await api.createNote()).id;
-      const saved = await api.saveNote(noteIdToSave, snapshot.title, snapshot.bodyMd, notePinnedRef.current);
+      const saved = await api.saveNote(
+        noteIdToSave,
+        prepared.title,
+        prepared.body_md,
+        notePinnedRef.current,
+      );
 
       setSession({
         kind: "existing",

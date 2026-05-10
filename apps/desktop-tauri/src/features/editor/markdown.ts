@@ -1,3 +1,5 @@
+import { api } from "../../platform/api";
+
 export function normalizeMarkdown(markdown: string): string {
   return markdown.replace(/\r\n/g, "\n").trimEnd();
 }
@@ -28,6 +30,10 @@ export function titleFromMarkdown(markdown: string): string {
 
   const strippedHeading = firstHeading.replace(/^#\s+/, "").trim();
   return strippedHeading.length > 0 ? strippedHeading : "Untitled";
+}
+
+export function titleFromMarkdownViaRust(markdown: string): Promise<string> {
+  return api.deriveTitleFromMarkdown(markdown);
 }
 
 export function previewFromMarkdown(markdown: string): string {
@@ -107,9 +113,17 @@ export function assetUrlFromMarkdownPath(markdownPath: string): string {
   return `asset://localhost/${markdownPath}`;
 }
 
+export function assetUrlFromMarkdownPathViaRust(markdownPath: string): Promise<string> {
+  return api.assetUrlFromMarkdownPath(markdownPath);
+}
+
 export function markdownPathFromAssetUrl(assetUrl: string): string {
   const prefix = "asset://localhost/";
   return assetUrl.startsWith(prefix) ? assetUrl.slice(prefix.length) : assetUrl;
+}
+
+export function markdownPathFromAssetUrlViaRust(assetUrl: string): Promise<string> {
+  return api.markdownPathFromAssetUrl(assetUrl);
 }
 
 export function codeBlockLanguageClass(language: string | null | undefined): string | null {
@@ -141,6 +155,10 @@ export function composeDraftMarkdown(title: string, bodyMd: string): string {
   return [`# ${safeTitle}`, "", normalizedBody].join("\n");
 }
 
+export function composeDraftMarkdownViaRust(title: string, bodyMd: string): Promise<string> {
+  return api.composeDraftMarkdown(title, bodyMd);
+}
+
 export function splitDraftMarkdown(markdown: string): { title: string; body_md: string } {
   const normalized = normalizeMarkdown(markdown);
   const lines = normalized.split("\n");
@@ -164,6 +182,10 @@ export function splitDraftMarkdown(markdown: string): { title: string; body_md: 
     title,
     body_md: normalizeMarkdown(bodyLines.join("\n")),
   };
+}
+
+export function splitDraftMarkdownViaRust(markdown: string): Promise<{ title: string; body_md: string }> {
+  return api.splitDraftMarkdown(markdown);
 }
 
 function normalizeTitle(title: string): string {

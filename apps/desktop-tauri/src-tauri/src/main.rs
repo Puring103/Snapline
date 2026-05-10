@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 use snapline_app_core::{AppCore, BootstrapState, SyncAccountState};
-use snapline_domain::{crypto, AssetRef, Note, NoteChangePayload, NoteId, NoteSummary, SyncPayload};
+use snapline_domain::{
+    crypto, AssetRef, MarkdownImageMapping, Note, NoteChangePayload, NoteId, NoteSummary,
+    SyncPayload,
+};
 use snapline_platform::AppPaths;
 use snapline_sync_client::{
     protocol::{AssetUploadRequest, LoginRequest, PushChange, PushChangeResult, PushRequest},
@@ -34,6 +37,18 @@ struct AppState {
 struct LoginSyncResult {
     account: SyncAccountState,
     anonymous_note_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DraftPartsDto {
+    title: String,
+    body_md: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct HydratedMarkdownDto {
+    markdown: String,
+    mappings: Vec<MarkdownImageMapping>,
 }
 
 #[tauri::command]
@@ -79,6 +94,134 @@ fn get_note(state: State<'_, AppState>, id: String) -> Result<Note, String> {
         .lock()
         .map_err(|_| "app state lock poisoned".to_string())?
         .get_note(&id)
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn derive_title_from_markdown(state: State<'_, AppState>, markdown: String) -> Result<String, String> {
+    Ok(state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .derive_title_from_markdown(&markdown))
+}
+
+#[tauri::command]
+fn compose_draft_markdown(
+    state: State<'_, AppState>,
+    title: String,
+    body_md: String,
+) -> Result<String, String> {
+    Ok(state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .compose_draft_markdown(&title, &body_md))
+}
+
+#[tauri::command]
+fn split_draft_markdown(
+    state: State<'_, AppState>,
+    markdown: String,
+) -> Result<DraftPartsDto, String> {
+    let parts = state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .split_draft_markdown(&markdown);
+    Ok(DraftPartsDto {
+        title: parts.title,
+        body_md: parts.body_md,
+    })
+}
+
+#[tauri::command]
+fn prepare_draft_for_save(
+    state: State<'_, AppState>,
+    title: String,
+    body_md: String,
+) -> Result<DraftPartsDto, String> {
+    let parts = state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .prepare_draft_for_save(&title, &body_md);
+    Ok(DraftPartsDto {
+        title: parts.title,
+        body_md: parts.body_md,
+    })
+}
+
+#[tauri::command]
+fn normalize_markdown(state: State<'_, AppState>, markdown: String) -> Result<String, String> {
+    Ok(state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .normalize_markdown(&markdown))
+}
+
+#[tauri::command]
+fn asset_url_from_markdown_path(
+    state: State<'_, AppState>,
+    markdown_path: String,
+) -> Result<String, String> {
+    Ok(state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .asset_url_from_markdown_path(&markdown_path))
+}
+
+#[tauri::command]
+fn markdown_path_from_asset_url(
+    state: State<'_, AppState>,
+    asset_url: String,
+) -> Result<String, String> {
+    Ok(state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .markdown_path_from_asset_url(&asset_url))
+}
+
+#[tauri::command]
+fn hydrate_markdown_assets(
+    state: State<'_, AppState>,
+    markdown: String,
+) -> Result<HydratedMarkdownDto, String> {
+    let hydrated = state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .hydrate_markdown_assets(&markdown);
+    Ok(HydratedMarkdownDto {
+        markdown: hydrated.markdown,
+        mappings: hydrated.mappings,
+    })
+}
+
+#[tauri::command]
+fn restore_markdown_asset_sources(
+    state: State<'_, AppState>,
+    markdown: String,
+    mappings: Vec<MarkdownImageMapping>,
+) -> Result<String, String> {
+    Ok(state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .restore_markdown_asset_sources(&markdown, &mappings))
+}
+
+#[tauri::command]
+fn get_note_summary(state: State<'_, AppState>, id: String) -> Result<NoteSummary, String> {
+    let id = parse_note_id(&id)?;
+    state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .get_note_summary(&id)
         .map_err(|err| err.to_string())
 }
 
@@ -1043,8 +1186,16 @@ fn main() {
             log_startup,
             launched_in_background,
             bootstrap,
+            derive_title_from_markdown,
+            compose_draft_markdown,
+            split_draft_markdown,
+            prepare_draft_for_save,
+            normalize_markdown,
+            hydrate_markdown_assets,
+            restore_markdown_asset_sources,
             create_note,
             get_note,
+            get_note_summary,
             save_note,
             set_note_title,
             set_note_pinned,
@@ -1055,6 +1206,8 @@ fn main() {
             read_clipboard_image_png,
             resolve_asset_url,
             open_note_window,
+            asset_url_from_markdown_path,
+            markdown_path_from_asset_url,
             open_external_url,
             get_open_shortcut,
             set_open_shortcut,

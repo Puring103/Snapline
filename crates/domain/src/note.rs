@@ -87,6 +87,20 @@ impl Note {
     }
 }
 
+pub fn summarize_note(note: &Note) -> NoteSummary {
+    NoteSummary {
+        id: note.id.clone(),
+        title: note.title.clone(),
+        preview: derive_preview(&note.content_md),
+        preview_md: derive_preview_markdown(&note.content_md),
+        pinned: note.pinned,
+        updated_at: note.updated_at,
+        is_conflict_copy: note.is_conflict_copy,
+        source_note_id: note.source_note_id.clone(),
+        owner_account_id: note.owner_account_id.clone(),
+    }
+}
+
 /// 从 Markdown 内容中提取标题。
 ///
 /// 取第一个 `# ` 开头的非空行作为标题；找不到则返回 `"Untitled"`。
@@ -155,7 +169,8 @@ fn strip_markdown_markup(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_preview, derive_preview_markdown, derive_title, NoteId};
+    use super::{derive_preview, derive_preview_markdown, derive_title, summarize_note, Note, NoteId};
+    use chrono::Utc;
 
     #[test]
     fn default_note_id_generates_uuid() {
@@ -205,5 +220,30 @@ mod tests {
         assert!(preview.contains("  - Child"));
         assert!(preview.contains("  const value = 1;"));
         assert!(preview.len() > 500);
+    }
+
+    #[test]
+    fn summarizes_note_using_domain_preview_derivations() {
+        let now = Utc::now();
+        let note = Note {
+            id: NoteId::new(),
+            title: "Title".to_string(),
+            content_md: "# Title\n\n- Body".to_string(),
+            pinned: true,
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+            server_version: 0,
+            last_modified_by_device: None,
+            is_conflict_copy: false,
+            source_note_id: None,
+            owner_account_id: None,
+        };
+
+        let summary = summarize_note(&note);
+        assert_eq!(summary.title, "Title");
+        assert_eq!(summary.preview, "Body");
+        assert_eq!(summary.preview_md, "- Body");
+        assert!(summary.pinned);
     }
 }

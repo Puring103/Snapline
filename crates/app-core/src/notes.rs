@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::Utc;
-use snapline_domain::{Note, NoteId, NoteSummary, SyncOpType};
+use snapline_domain::{summarize_note, Note, NoteId, NoteSummary, SyncOpType};
 
 use crate::AppCore;
 
@@ -13,6 +13,11 @@ impl AppCore {
     pub fn get_note(&self, id: &NoteId) -> Result<Note> {
         let owner = self.current_account_id()?;
         self.repo.get_note_for_owner(id, owner.as_deref())
+    }
+
+    pub fn get_note_summary(&self, id: &NoteId) -> Result<NoteSummary> {
+        let note = self.get_note(id)?;
+        Ok(summarize_note(&note))
     }
 
     pub fn save_note(

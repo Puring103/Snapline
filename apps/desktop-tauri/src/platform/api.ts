@@ -1,11 +1,33 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AssetRef, BootstrapState, LoginSyncResult, Note, NoteSummary, SyncAccountState } from "../types";
+import type {
+  AssetRef,
+  BootstrapState,
+  DraftParts,
+  HydratedMarkdown,
+  LoginSyncResult,
+  MarkdownImageMapping,
+  Note,
+  NoteSummary,
+  SyncAccountState,
+} from "../types";
 
 export const api = {
   launchedInBackground: () => invoke<boolean>("launched_in_background"),
   bootstrap: () => invoke<BootstrapState>("bootstrap"),
+  deriveTitleFromMarkdown: (markdown: string) => invoke<string>("derive_title_from_markdown", { markdown }),
+  composeDraftMarkdown: (title: string, bodyMd: string) =>
+    invoke<string>("compose_draft_markdown", { title, bodyMd }),
+  splitDraftMarkdown: (markdown: string) => invoke<DraftParts>("split_draft_markdown", { markdown }),
+  prepareDraftForSave: (title: string, bodyMd: string) =>
+    invoke<DraftParts>("prepare_draft_for_save", { title, bodyMd }),
+  normalizeMarkdown: (markdown: string) => invoke<string>("normalize_markdown", { markdown }),
+  hydrateMarkdownAssets: (markdown: string) =>
+    invoke<HydratedMarkdown>("hydrate_markdown_assets", { markdown }),
+  restoreMarkdownAssetSources: (markdown: string, mappings: MarkdownImageMapping[]) =>
+    invoke<string>("restore_markdown_asset_sources", { markdown, mappings }),
   createNote: () => invoke<Note>("create_note"),
   getNote: (id: string) => invoke<Note>("get_note", { id }),
+  getNoteSummary: (id: string) => invoke<NoteSummary>("get_note_summary", { id }),
   saveNote: (id: string, title: string, contentMd: string, pinned: boolean) =>
     invoke<Note>("save_note", { id, title, contentMd, pinned }),
   setNotePinned: (id: string, pinned: boolean) => invoke<Note>("set_note_pinned", { id, pinned }),
@@ -18,6 +40,10 @@ export const api = {
     invoke<number[]>("read_local_image_file", { path }),
   readClipboardImagePng: () =>
     invoke<number[] | null>("read_clipboard_image_png"),
+  assetUrlFromMarkdownPath: (markdownPath: string) =>
+    invoke<string>("asset_url_from_markdown_path", { markdownPath }),
+  markdownPathFromAssetUrl: (assetUrl: string) =>
+    invoke<string>("markdown_path_from_asset_url", { assetUrl }),
   getOpenShortcut: () => invoke<string>("get_open_shortcut"),
   setOpenShortcut: (shortcut: string) => invoke<string>("set_open_shortcut", { shortcut }),
   getSyncAccountState: () => invoke<SyncAccountState>("get_sync_account_state"),

@@ -1,5 +1,4 @@
-import type { Note, NoteSummary } from "../../types";
-import { previewFromMarkdown, previewMarkdownFromMarkdown } from "../editor/markdown";
+import type { NoteSummary } from "../../types";
 
 export interface ActiveSession {
   kind: "draft" | "existing";
@@ -48,16 +47,9 @@ export function sortNotes(notes: NoteSummary[]): NoteSummary[] {
   });
 }
 
-export function upsertNote(notes: NoteSummary[], note: Note): NoteSummary[] {
+export function upsertNote(notes: NoteSummary[], note: NoteSummary): NoteSummary[] {
   return sortNotes([
-    {
-      id: note.id,
-      title: note.title,
-      preview: previewFromMarkdown((note as Partial<Note>).content_md ?? ""),
-      preview_md: previewMarkdownFromMarkdown((note as Partial<Note>).content_md ?? ""),
-      updated_at: note.updated_at,
-      pinned: note.pinned,
-    },
+    note,
     ...notes.filter((existing) => existing.id !== note.id),
   ]);
 }

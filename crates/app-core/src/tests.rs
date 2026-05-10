@@ -104,7 +104,7 @@ fn account_save_enqueues_upsert_change() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
+    let mut core = AppCore::with_repo(paths, repo);
     core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
     let note = core.create_note().unwrap();
@@ -122,7 +122,7 @@ fn set_note_title_enqueues_upsert_change() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
+    let mut core = AppCore::with_repo(paths, repo);
     core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
     let note = core.create_note().unwrap();
@@ -161,7 +161,7 @@ fn import_snapshot_applies_notes_and_updates_cursor() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
+    let mut core = AppCore::with_repo(paths, repo);
     core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
     let mut note = snapline_domain::Note::draft(chrono::Utc::now());
@@ -180,7 +180,7 @@ fn import_snapshot_creates_conflict_copy_for_pending_local_changes() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let core = AppCore::with_repo(paths, repo);
+    let mut core = AppCore::with_repo(paths, repo);
     core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
         .unwrap();
     let note = core.create_note().unwrap();
@@ -246,6 +246,78 @@ fn bootstrap_shows_local_notes_when_logged_out_and_account_notes_when_logged_in(
 
     core.import_anonymous_notes_to_current_account().unwrap();
     assert_eq!(core.bootstrap().unwrap().notes.len(), 1);
+}
+
+#[test]
+fn get_note_summary_uses_rust_side_preview_derivation() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = AppPaths::from_data_dir(dir.path());
+    let repo = NoteRepository::open_in_memory().unwrap();
+    let core = AppCore::with_repo(paths, repo);
+    let note = core.create_note().unwrap();
+
+    core.save_note(&note.id, "Title", "# Title\n\n- **Body**", true)
+        .unwrap();
+
+    let summary = core.get_note_summary(&note.id).unwrap();
+    assert_eq!(summary.title, "Title");
+    assert_eq!(summary.preview, "**Body**");
+    assert_eq!(summary.preview_md, "- **Body**");
+    assert!(summary.pinned);
+}
+
+#[test]
+fn rust_markdown_helpers_round_trip_draft_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = AppPaths::from_data_dir(dir.path());
+    let repo = NoteRepository::open_in_memory().unwrap();
+    let mut core = AppCore::with_repo(paths, repo);
+
+    let markdown = core.compose_draft_markdown("Title", "Body line");
+    assert_eq!(markdown, "# Title\n\nBody line");
+
+    let parts = core.split_draft_markdown(&markdown);
+    assert_eq!(parts.title, "Title");
+    assert_eq!(parts.body_md, "Body line");
+    assert_eq!(
+        core.asset_url_from_markdown_path("assets/notes/example/image.png"),
+        "asset://localhost/assets/notes/example/image.png"
+    );
+    assert_eq!(
+        core.markdown_path_from_asset_url("asset://localhost/assets/notes/example/image.png"),
+        "assets/notes/example/image.png"
+    );
+    assert_eq!(core.derive_title_from_markdown("\n## Heading\n# Primary\nBody"), "Primary");
+    assert_eq!(core.normalize_markdown("# A\r\nBody\n\n"), "# A\nBody");
+}
+
+#[test]
+fn prepare_draft_for_save_normalizes_title_and_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = AppPaths::from_data_dir(dir.path());
+    let repo = NoteRepository::open_in_memory().unwrap();
+    let core = AppCore::with_repo(paths, repo);
+
+    let parts = core.prepare_draft_for_save("## Title  ", "Body\r\n\r\n");
+    assert_eq!(parts.title, "Title");
+    assert_eq!(parts.body_md, "Body");
+}
+
+#[test]
+fn rust_markdown_asset_hydration_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = AppPaths::from_data_dir(dir.path());
+    let repo = NoteRepository::open_in_memory().unwrap();
+    let core = AppCore::with_repo(paths, repo);
+
+    let hydrated = core.hydrate_markdown_assets("![](assets/notes/note/image.png)");
+    assert_eq!(
+        hydrated.markdown,
+        "![](asset://localhost/assets/notes/note/image.png)"
+    );
+
+    let restored = core.restore_markdown_asset_sources(&hydrated.markdown, &hydrated.mappings);
+    assert_eq!(restored, "![](assets/notes/note/image.png)");
 }
 
 #[test]
