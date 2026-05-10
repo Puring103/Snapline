@@ -31,8 +31,7 @@ pub fn generate_kek_salt() -> [u8; 32] {
 
 /// 从用户密码派生 KEK（Argon2id，与服务端密码哈希参数独立）。
 pub fn derive_kek(password: &str, salt: &[u8; 32]) -> Result<[u8; 32]> {
-    let params = Params::new(65536, 3, 4, Some(32))
-        .map_err(|e| anyhow!("argon2 params: {e}"))?;
+    let params = Params::new(65536, 3, 4, Some(32)).map_err(|e| anyhow!("argon2 params: {e}"))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut key = [0u8; 32];
     argon2
@@ -72,7 +71,9 @@ pub fn encode_salt(salt: &[u8; 32]) -> String {
 
 /// Decode a base64-encoded 32-byte salt.
 pub fn decode_salt(encoded: &str) -> Result<[u8; 32]> {
-    let bytes = B64.decode(encoded).map_err(|e| anyhow!("decode salt: {e}"))?;
+    let bytes = B64
+        .decode(encoded)
+        .map_err(|e| anyhow!("decode salt: {e}"))?;
     bytes
         .try_into()
         .map_err(|_| anyhow!("salt has wrong length"))
@@ -94,7 +95,9 @@ fn seal(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn open(key: &[u8; 32], encoded: &str) -> Result<Vec<u8>> {
-    let blob = B64.decode(encoded).map_err(|e| anyhow!("base64 decode: {e}"))?;
+    let blob = B64
+        .decode(encoded)
+        .map_err(|e| anyhow!("base64 decode: {e}"))?;
     if blob.len() < NONCE_LEN {
         return Err(anyhow!("ciphertext too short"));
     }

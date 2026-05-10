@@ -196,8 +196,9 @@ fn row_to_change_queue_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChangeQ
         .map(NoteId)
         .map_err(to_sql_err)?;
     let op_str: String = row.get(3)?;
-    let op_type = SyncOpType::from_str(&op_str)
-        .ok_or_else(|| rusqlite::Error::InvalidParameterName(format!("unknown op_type: {op_str}")))?;
+    let op_type = SyncOpType::from_str(&op_str).ok_or_else(|| {
+        rusqlite::Error::InvalidParameterName(format!("unknown op_type: {op_str}"))
+    })?;
     let payload_json: String = row.get(5)?;
     Ok(ChangeQueueItem {
         id: row.get(0)?,

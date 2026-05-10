@@ -544,10 +544,7 @@ async fn register_sync(
             .core
             .lock()
             .map_err(|_| "app state lock poisoned".to_string())?;
-        let device_id = core
-            .sync_state()
-            .map_err(|err| err.to_string())?
-            .device_id;
+        let device_id = core.sync_state().map_err(|err| err.to_string())?.device_id;
         let (kek_salt, encrypted_dek) = core
             .generate_e2ee_material(&password)
             .map_err(|err| err.to_string())?;
@@ -677,7 +674,13 @@ async fn run_sync_once(state: &AppState) -> Result<String, String> {
             .map_err(|err| err.to_string())?
             .ok_or_else(|| "not logged in".to_string())?;
         let dek = core.dek().copied();
-        (base_url, token, device_id, core.data_dir().to_path_buf(), dek)
+        (
+            base_url,
+            token,
+            device_id,
+            core.data_dir().to_path_buf(),
+            dek,
+        )
     };
     let api = HttpSyncApi::new(base_url);
     let asset_items = {
@@ -845,9 +848,7 @@ async fn run_sync_once(state: &AppState) -> Result<String, String> {
                 .has_pending_note_change(&note.id)
                 .map_err(|err| err.to_string())?
             {
-                let local_note = core
-                    .get_note(&note.id)
-                    .map_err(|err| err.to_string())?;
+                let local_note = core.get_note(&note.id).map_err(|err| err.to_string())?;
                 core.create_conflict_copy(&local_note)
                     .map_err(|err| err.to_string())?;
                 core.delete_sync_changes_for_note(&note.id)
@@ -1100,8 +1101,7 @@ fn reveal_window(
 
 fn close_other_note_windows(app: &AppHandle, keep_label: &str) {
     for (label, window) in app.webview_windows() {
-        if label != keep_label && label != "main" && label != "list" && label.starts_with("note-")
-        {
+        if label != keep_label && label != "main" && label != "list" && label.starts_with("note-") {
             let _ = window.close();
         }
     }

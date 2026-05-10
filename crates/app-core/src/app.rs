@@ -14,11 +14,19 @@ impl AppCore {
     pub fn open(paths: AppPaths) -> Result<Self> {
         fs::create_dir_all(&paths.data_dir)?;
         let repo = NoteRepository::open(&paths.db_path)?;
-        Ok(Self { repo, paths, dek: None })
+        Ok(Self {
+            repo,
+            paths,
+            dek: None,
+        })
     }
 
     pub fn with_repo(paths: AppPaths, repo: NoteRepository) -> Self {
-        Self { repo, paths, dek: None }
+        Self {
+            repo,
+            paths,
+            dek: None,
+        }
     }
 
     pub fn data_dir(&self) -> &std::path::Path {

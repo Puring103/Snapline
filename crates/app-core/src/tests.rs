@@ -62,7 +62,7 @@ fn saves_png_asset_under_note_directory() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let mut core = AppCore::with_repo(paths, repo);
+    let core = AppCore::with_repo(paths, repo);
     let note = core.create_note().unwrap();
 
     let asset = core.save_png_asset(&note.id, &[137, 80, 78, 71]).unwrap();
@@ -79,7 +79,7 @@ fn resolves_asset_urls_without_frontend_path_api() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let mut core = AppCore::with_repo(paths, repo);
+    let core = AppCore::with_repo(paths, repo);
 
     let resolved = core.resolve_asset_url("assets/notes/example/image.png");
     assert!(resolved.starts_with("asset://localhost/"));
@@ -91,7 +91,7 @@ fn anonymous_save_does_not_enqueue_sync_change() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let mut core = AppCore::with_repo(paths, repo);
+    let core = AppCore::with_repo(paths, repo);
     let note = core.create_note().unwrap();
 
     core.save_note(&note.id, "Title", "# Title", false).unwrap();
@@ -208,7 +208,7 @@ fn save_remote_asset_uses_metadata_location() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());
     let repo = NoteRepository::open_in_memory().unwrap();
-    let mut core = AppCore::with_repo(paths, repo);
+    let core = AppCore::with_repo(paths, repo);
     let note_id = snapline_domain::NoteId::new();
     let asset = snapline_domain::AssetMetadata {
         id: snapline_domain::AssetId::new(),
@@ -349,9 +349,8 @@ fn importing_anonymous_notes_removes_old_anonymous_queue_rows() {
 
     let local = core.create_note().unwrap();
     core.save_note(&local.id, "Local", "Local", false).unwrap();
-    let payload = snapline_domain::SyncPayload::Note(
-        snapline_domain::NoteChangePayload::from_note(&local),
-    );
+    let payload =
+        snapline_domain::SyncPayload::Note(snapline_domain::NoteChangePayload::from_note(&local));
     core.repo
         .enqueue_change(
             None,

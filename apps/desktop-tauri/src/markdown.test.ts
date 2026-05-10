@@ -12,6 +12,7 @@ import {
   replaceMarkdownImageSource,
   rewriteMarkdownImageSources,
   splitDraftMarkdown,
+  splitStoredNoteMarkdown,
   stripTransientImageSources,
   titleFromMarkdown,
 } from "./features/editor/markdown";
@@ -71,6 +72,20 @@ describe("markdown helpers", () => {
     const draft = composeDraftMarkdown("Title", "Body line");
     expect(draft).toBe("# Title\n\nBody line");
     expect(splitDraftMarkdown(draft)).toEqual({ title: "Title", body_md: "Body line" });
+  });
+
+  it("splits stored note markdown into title and body when stored markdown repeats the title", () => {
+    expect(splitStoredNoteMarkdown("Stored title", "# Stored title\n\nFirst line\nSecond line")).toEqual({
+      title: "Stored title",
+      body_md: "First line\nSecond line",
+    });
+  });
+
+  it("keeps stored markdown intact when the body does not repeat the title", () => {
+    expect(splitStoredNoteMarkdown("第一步", "1. 第一步\n2. 第二步\n3. 第三步")).toEqual({
+      title: "第一步",
+      body_md: "1. 第一步\n2. 第二步\n3. 第三步",
+    });
   });
 
   it("detects transient pasted image sources", () => {

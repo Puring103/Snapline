@@ -188,6 +188,44 @@ export function splitDraftMarkdownViaRust(markdown: string): Promise<{ title: st
   return api.splitDraftMarkdown(markdown);
 }
 
+export function splitStoredNoteMarkdown(
+  storedTitle: string,
+  markdown: string,
+): { title: string; body_md: string } {
+  const normalizedTitle = normalizeTitle(storedTitle);
+  const normalizedMarkdown = normalizeMarkdown(markdown);
+
+  if (normalizedMarkdown.length === 0) {
+    return { title: normalizedTitle, body_md: "" };
+  }
+
+  const lines = normalizedMarkdown.split("\n");
+  const firstVisibleLineIndex = lines.findIndex((line) => line.trim().length > 0);
+
+  if (firstVisibleLineIndex === -1) {
+    return { title: normalizedTitle, body_md: "" };
+  }
+
+  const firstVisibleTitle = normalizeTitle(lines[firstVisibleLineIndex]);
+  if (firstVisibleTitle !== normalizedTitle) {
+    return { title: normalizedTitle, body_md: normalizedMarkdown };
+  }
+
+  const bodyLines = [
+    ...lines.slice(0, firstVisibleLineIndex),
+    ...lines.slice(firstVisibleLineIndex + 1),
+  ];
+
+  if (bodyLines[0]?.trim().length === 0) {
+    bodyLines.shift();
+  }
+
+  return {
+    title: normalizedTitle,
+    body_md: normalizeMarkdown(bodyLines.join("\n")),
+  };
+}
+
 function normalizeTitle(title: string): string {
   const trimmed = normalizeMarkdown(title).trim();
   if (trimmed.length === 0) {

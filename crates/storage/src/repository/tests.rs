@@ -172,11 +172,9 @@ fn applies_remote_note_and_updates_server_version() {
 #[test]
 fn detects_pending_changes_for_note() {
     let repo = NoteRepository::open_in_memory().unwrap();
-    let note =
-        snapline_domain::Note::draft(Utc.with_ymd_and_hms(2026, 4, 29, 9, 0, 0).unwrap());
-    let payload = snapline_domain::SyncPayload::Note(
-        snapline_domain::NoteChangePayload::from_note(&note),
-    );
+    let note = snapline_domain::Note::draft(Utc.with_ymd_and_hms(2026, 4, 29, 9, 0, 0).unwrap());
+    let payload =
+        snapline_domain::SyncPayload::Note(snapline_domain::NoteChangePayload::from_note(&note));
 
     assert!(!repo.has_pending_note_change(None, &note.id).unwrap());
 
@@ -226,7 +224,10 @@ fn list_recent_filters_by_owner_account() {
     let local = repo.create_note(t1, None).unwrap();
     let account = repo.create_note(t1, Some("acct_a")).unwrap();
 
-    assert_eq!(repo.list_recent_for_owner(10, None).unwrap()[0].id, local.id);
+    assert_eq!(
+        repo.list_recent_for_owner(10, None).unwrap()[0].id,
+        local.id
+    );
     assert_eq!(
         repo.list_recent_for_owner(10, Some("acct_a")).unwrap()[0].id,
         account.id

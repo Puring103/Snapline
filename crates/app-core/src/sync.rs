@@ -63,7 +63,9 @@ impl AppCore {
         self.repo.count_anonymous_notes()
     }
 
-    pub fn import_anonymous_notes_to_current_account(&self) -> Result<Vec<snapline_domain::NoteSummary>> {
+    pub fn import_anonymous_notes_to_current_account(
+        &self,
+    ) -> Result<Vec<snapline_domain::NoteSummary>> {
         let account_id = self
             .current_account_id()?
             .ok_or_else(|| anyhow::anyhow!("not logged in"))?;

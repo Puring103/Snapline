@@ -7,13 +7,13 @@ import { startupLog } from "../../platform/startupLog";
 import { openListWindow, openNoteWindow, shouldDeferInitialNoteLoad, shouldStartWindowDrag } from "../../platform/window";
 import { webviewAssetUrlFromFilesystemPath } from "../../features/assets/assetUrl";
 import { DEFAULT_EDITOR_MODE, toggleEditorMode, type EditorMode } from "../../features/editor/editorMode";
-import { splitDraftMarkdownViaRust } from "../../features/editor/markdown";
 import {
   createDraftSession,
   hasMeaningfulDraftContent,
   isSessionDirty,
   type ActiveSession,
 } from "../../features/sync/session";
+import { splitStoredNoteMarkdown } from "../../features/editor/markdown";
 import type { LoginSyncResult, Note, SavedAsset, SyncAccountState } from "../../types";
 import { SettingsPanel } from "./SettingsPanel";
 import { EditorLoadingState } from "./EditorLoadingState";
@@ -247,14 +247,14 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
 
   async function beginSessionFromNote(note: Note) {
     clearSaveTimer();
-    const parts = await splitDraftMarkdownViaRust(note.content_md).catch(() => null);
+    const { title, body_md } = splitStoredNoteMarkdown(note.title, note.content_md);
     setSession({
       kind: noteId ? "existing" : "draft",
       id: note.id,
-      title: parts?.title ?? note.title,
-      bodyMd: parts?.body_md ?? note.content_md,
-      persistedTitle: note.title,
-      persistedBodyMd: note.content_md,
+      title,
+      bodyMd: body_md,
+      persistedTitle: title,
+      persistedBodyMd: body_md,
     });
     setNotePinned(note.pinned ?? false);
     setDeleted(false);
