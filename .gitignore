@@ -3,6 +3,17 @@
 target/
 apps/desktop-tauri/node_modules/
 apps/desktop-tauri/dist/
+apps/client/node_modules/
+apps/client/dist/
+apps/client/src-tauri/gen/android/.gradle/
+apps/client/src-tauri/gen/android/**/build/
+apps/client/src-tauri/gen/android/app/src/main/assets/
+apps/client/src-tauri/gen/android/app/src/main/java/app/snapline/client/generated/
+apps/client/src-tauri/gen/android/app/src/main/jniLibs/
+apps/client/src-tauri/gen/android/app/proguard-tauri.pro
+apps/client/src-tauri/gen/android/app/tauri.build.gradle.kts
+apps/client/src-tauri/gen/android/app/tauri.properties
+apps/client/src-tauri/gen/android/tauri.settings.gradle
 apps/android/node_modules/
 apps/android/dist/
 apps/android/*.log

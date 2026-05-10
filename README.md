@@ -4,8 +4,8 @@ Snapline is a desktop-first note application built with Tauri, React, TypeScript
 
 ## Repository Map
 
-- `apps/desktop-tauri/`
-  Desktop app UI, Tauri frontend, and native desktop integration.
+- `apps/client/`
+  Cross-platform Tauri client UI and native integration for desktop and mobile.
 - `crates/domain/`
   Shared domain types for notes, assets, and sync payloads.
 - `crates/platform/`
@@ -23,7 +23,7 @@ Snapline is a desktop-first note application built with Tauri, React, TypeScript
 
 ## Workspace Architecture
 
-The desktop app lives in `apps/desktop-tauri`, with React and Tauri on the frontend side and Rust crates in the workspace providing storage, business logic, and sync support.
+The cross-platform client lives in `apps/client`, with React and Tauri on the frontend side and Rust crates in the workspace providing storage, business logic, and sync support.
 
 The sync stack is split across:
 
@@ -35,28 +35,28 @@ The sync stack is split across:
 Install frontend dependencies:
 
 ```bash
-cd apps/desktop-tauri
+cd apps/client
 npm install
 ```
 
 Run the desktop frontend dev server:
 
 ```bash
-cd apps/desktop-tauri
+cd apps/client
 npm run dev
 ```
 
 Run the Tauri desktop app:
 
 ```bash
-cd apps/desktop-tauri
+cd apps/client
 npx tauri dev
 ```
 
 Create a production frontend build:
 
 ```bash
-cd apps/desktop-tauri
+cd apps/client
 npm run build
 ```
 
@@ -65,7 +65,7 @@ npm run build
 Run the frontend test suite:
 
 ```bash
-cd apps/desktop-tauri
+cd apps/client
 npm test
 ```
 

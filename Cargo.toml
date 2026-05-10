@@ -4,9 +4,10 @@ members = [
   "crates/platform",
   "crates/storage",
   "crates/app-core",
+  "crates/app-sync",
   "crates/sync-client",
   "crates/sync-server",
-  "apps/desktop-tauri/src-tauri"
+  "apps/client/src-tauri"
 ]
 resolver = "2"
 
@@ -26,7 +27,7 @@ bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 directories = "5"
 jsonwebtoken = "9"
-reqwest = { version = "0.12", features = ["json", "multipart"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

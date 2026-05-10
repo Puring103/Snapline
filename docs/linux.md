@@ -12,7 +12,7 @@ The desktop Tauri bundle targets are:
 
 ## Build Command
 
-From `apps/desktop-tauri`:
+From `apps/client`:
 
 ```bash
 npm run build
