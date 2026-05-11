@@ -53,6 +53,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
   const [dataDir, setDataDir] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [syncAccount, setSyncAccount] = useState<SyncAccountState | null>(null);
+  const [syncInFlight, setSyncInFlight] = useState(false);
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [themeMode, setThemeMode] = useThemeMode();
@@ -324,7 +325,8 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
       setNotePinned(saved.pinned ?? false);
       setStatus("Saved");
       await emit("note-saved", { id: saved.id });
-      void api.syncNow().catch(() => undefined);
+      setSyncInFlight(true);
+      void api.syncNow().catch(() => undefined).finally(() => setSyncInFlight(false));
       return saved;
     } catch (err) {
       setError(String(err));
@@ -412,11 +414,14 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
     setSyncAccount(result.account);
   }
 
-  function persistShortcut(nextShortcut: string) {
-    void api
-      .setOpenShortcut(nextShortcut)
-      .then(() => setShortcut(nextShortcut))
-      .catch((err) => setError(String(err)));
+  async function persistShortcut(nextShortcut: string): Promise<boolean> {
+    try {
+      await api.setOpenShortcut(nextShortcut);
+      setShortcut(nextShortcut);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function persistAutostart(nextEnabled: boolean) {
@@ -524,7 +529,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
               onBodyChange={handleBodyChange}
               onModeToggle={() => setEditorMode((mode) => toggleEditorMode(mode))}
               onRequestImageSave={handleRequestImageSave}
-              readOnly={deleted}
+              readOnly={deleted || syncInFlight}
             />
           </Suspense>
         </section>
@@ -532,7 +537,6 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
           <SettingsPanel
             onClose={() => setSettingsOpen(false)}
             shortcut={shortcut}
-            onShortcutChange={setShortcut}
             onShortcutSave={persistShortcut}
             autostartEnabled={autostartEnabled}
             onAutostartChange={persistAutostart}

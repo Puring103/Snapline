@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 pub trait AssetStore: Send + Sync {
     async fn put(&self, key: &str, bytes: Bytes) -> Result<()>;
     async fn get(&self, key: &str) -> Result<Bytes>;
-    async fn delete(&self, key: &str) -> Result<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -41,14 +40,6 @@ impl AssetStore for LocalFsAssetStore {
 
     async fn get(&self, key: &str) -> Result<Bytes> {
         Ok(Bytes::from(tokio::fs::read(self.resolve(key)).await?))
-    }
-
-    async fn delete(&self, key: &str) -> Result<()> {
-        let path = self.resolve(key);
-        if tokio::fs::try_exists(&path).await? {
-            tokio::fs::remove_file(path).await?;
-        }
-        Ok(())
     }
 }
 

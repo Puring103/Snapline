@@ -67,10 +67,6 @@ export function EditorPane({
     editable: !readOnly && mode === "preview",
     editorProps: {
       handleDOMEvents: {
-        contextmenu: (_view, event) => {
-          event.preventDefault();
-          return true;
-        },
         copy: (_view, event) => {
           const activeEditor = editorRef.current;
           if (!activeEditor) {
@@ -599,31 +595,21 @@ function EditorToolbar({
           </ToolbarButton>
           <div className="editorToolbarDivider" />
           {variant === "full" ? (
-            <>
-              <ToolbarButton
-                active={editor.isActive("blockquote")}
-                label="Blockquote"
-                onClick={() => editor.chain().focus().toggleBlockquote().run()}
-              >
-                <BlockquoteIcon />
-              </ToolbarButton>
-              <ToolbarButton
-                active={editor.isActive("codeBlock")}
-                label="Code block"
-                onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-              >
-                <CodeBlockIcon />
-              </ToolbarButton>
-            </>
-          ) : (
             <ToolbarButton
-              active={editor.isActive("codeBlock")}
-              label="Code block"
-              onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+              active={editor.isActive("blockquote")}
+              label="Blockquote"
+              onClick={() => editor.chain().focus().toggleBlockquote().run()}
             >
-              <CodeBlockIcon />
+              <BlockquoteIcon />
             </ToolbarButton>
-          )}
+          ) : null}
+          <ToolbarButton
+            active={editor.isActive("codeBlock")}
+            label="Code block"
+            onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+          >
+            <CodeBlockIcon />
+          </ToolbarButton>
         </>
       ) : null}
       {showModeToggle ? (
@@ -674,23 +660,26 @@ function ToolbarButton({
   );
 }
 
-function SelectionMenu({
-  position,
-  onCopy,
-  onPaste,
-}: {
-  position: { x: number; y: number } | null;
-  onCopy: () => void;
-  onPaste: () => void;
-}) {
-  if (!position) return null;
+function indentSelection(editor: Editor) {
+  if (editor.isActive("taskItem")) {
+    editor.chain().focus().sinkListItem("taskItem").run();
+    return;
+  }
+  if (editor.isActive("bulletList") || editor.isActive("orderedList")) {
+    editor.chain().focus().sinkListItem("listItem").run();
+    return;
+  }
+  editor.chain().focus().insertContent("  ").run();
+}
 
-  return (
-    <div className="editorSelectionMenu" style={{ left: position.x, top: position.y }}>
-      <button onMouseDown={(event) => { event.preventDefault(); onCopy(); }} type="button">Copy</button>
-      <button onMouseDown={(event) => { event.preventDefault(); onPaste(); }} type="button">Paste</button>
-    </div>
-  );
+function outdentSelection(editor: Editor) {
+  if (editor.isActive("taskItem")) {
+    editor.chain().focus().liftListItem("taskItem").run();
+    return;
+  }
+  if (editor.isActive("bulletList") || editor.isActive("orderedList")) {
+    editor.chain().focus().liftListItem("listItem").run();
+  }
 }
 
 function UndoIcon() {
@@ -713,21 +702,21 @@ function InlineCodeIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8L5 12l4 4M15 8l4 4-4 4"/></svg>;
 }
 
-function HeadingIcon({ level }: { level: 1 | 2 | 3 }) {
-  const marker = level === 1
-    ? "M20 19v-5l-2 1"
-    : level === 2
-      ? "M18 15.5a2 2 0 0 1 4 0c0 1.8-4 3.5-4 3.5h4"
-      : "M18 14h3a1.5 1.5 0 0 1 0 3h-2M21 17a1.5 1.5 0 0 1 0 3h-3";
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5v14M17 5v14M5 12h12"/><path d={marker} /></svg>;
-}
-
 function StrikeIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M16 6.5C15.1 5.5 13.7 5 12 5c-2.4 0-4 1.2-4 3 0 2.2 2.3 2.8 4 3M8 17.5c.9 1 2.3 1.5 4 1.5 2.4 0 4-1.2 4-3 0-1-.5-1.8-1.4-2.3"/></svg>;
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/><path d="M16 6.5A4.8 4.8 0 0 0 12.3 5H10a3 3 0 0 0 0 6h4a3 3 0 0 1 0 6h-2.5A5 5 0 0 1 7 14.5"/></svg>;
 }
 
 function UnderlineIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v6a5 5 0 0 0 10 0V4M5 21h14"/></svg>;
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v7a5 5 0 0 0 10 0V4"/><path d="M5 21h14"/></svg>;
+}
+
+function HeadingIcon({ level }: { level: 1 | 2 | 3 }) {
+  const levelPath = level === 1
+    ? "M20 19v-5l-2 1"
+    : level === 2
+      ? "M18 15.5a2 2 0 0 1 4 0c0 1.8-4 3.5-4 3.5h4"
+      : "M18 14h3l-2 2a2 2 0 1 1-1 3.7";
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5v14M16 5v14M5 12h11"/><path d={levelPath} /></svg>;
 }
 
 function BulletListIcon() {
@@ -736,14 +725,6 @@ function BulletListIcon() {
 
 function OrderedListIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h10M10 12h10M10 18h10"/><path d="M4 5h1v4M3.8 9h2.4M3.7 11.5h2.1L4 14h2M4 17h1.7a1 1 0 0 1 0 2H4.4M5.7 19a1 1 0 0 1 0 2H4"/></svg>;
-}
-
-function IndentIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M12 12h8M4 18h16"/><path d="m4 9 3 3-3 3"/></svg>;
-}
-
-function OutdentIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M12 12h8M4 18h16"/><path d="m7 9-3 3 3 3"/></svg>;
 }
 
 function TaskListIcon() {
@@ -756,6 +737,14 @@ function BlockquoteIcon() {
 
 function CodeBlockIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="M8 9l-3 3 3 3M16 9l3 3-3 3M13 8l-2 8"/></svg>;
+}
+
+function IndentIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M12 12h8M4 18h16"/><path d="m4 10 4 2-4 2z"/></svg>;
+}
+
+function OutdentIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M12 12h8M4 18h16"/><path d="m8 10-4 2 4 2z"/></svg>;
 }
 
 function SourceModeToolbarIcon() {
@@ -795,28 +784,6 @@ function updateImageSource(editor: Editor, source: string, nextSource: string | 
 
     return updated;
   });
-}
-
-function indentSelection(editor: Editor) {
-  const chain = editor.chain().focus();
-  if (editor.isActive("bulletList") || editor.isActive("orderedList") || editor.isActive("taskList")) {
-    chain.sinkListItem("listItem").run() || editor.chain().focus().sinkListItem("taskItem").run();
-    return;
-  }
-
-  chain.toggleBlockquote().run();
-}
-
-function outdentSelection(editor: Editor) {
-  const chain = editor.chain().focus();
-  if (editor.isActive("bulletList") || editor.isActive("orderedList") || editor.isActive("taskList")) {
-    chain.liftListItem("listItem").run() || editor.chain().focus().liftListItem("taskItem").run();
-    return;
-  }
-
-  if (editor.isActive("blockquote")) {
-    chain.toggleBlockquote().run();
-  }
 }
 
 function linkElementFromEvent(event: MouseEvent): HTMLAnchorElement | null {

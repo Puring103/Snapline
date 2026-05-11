@@ -3,27 +3,34 @@ name: snapline-packaging
 description: Documents Snapline's required validation, desktop packaging, Android signing, artifact collection, and common project commands. Use when modifying Snapline code, building releases, packaging desktop or Android installers, cleaning build output, or checking the project's standard commands.
 ---
 
-# Snapline Packaging
+# Snapline Commands
 
-## Required After Code Changes
+## Required Before Commit
 
-After every code change, run these checks from the repo root unless the user explicitly says not to:
+Before every commit, run the complete validation and test set unless the user explicitly says not to.
+
+Run these from the repo root:
 ```powershell
 cargo fmt
 cargo check
 cargo clippy
+cargo test
 ```
 
-Also run the client validation from `apps/client`:
+Run these from `apps/client`:
 ```powershell
 npm run build
 npm run test
 ```
 If tests are unavailable or fail for an environmental reason, report the exact blocker.
 
-## Desktop Package Is Automatic
+## Packaging Requires Explicit Instruction
 
-After every completed code adjustment, build the desktop installer automatically.
+Do not package before commit by default. Build installable packages only when the user explicitly asks for packaging, a release build, an installer, desktop package, Android package, APK, or signed APK.
+
+## Desktop Package
+
+When explicitly requested, build the desktop installer:
 ```powershell
 Set-Location apps/client
 npx tauri build
@@ -36,7 +43,7 @@ New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
 Copy-Item -Force target/release/bundle/nsis/Snapline_0.1.0_x64-setup.exe release-artifacts/
 ```
 
-## Android Package Is Explicit
+## Android Package
 
 Only build Android when the user explicitly asks for an Android/mobile package, APK, or signed APK.
 

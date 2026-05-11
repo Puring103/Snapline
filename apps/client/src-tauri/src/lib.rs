@@ -663,6 +663,23 @@ fn get_sync_account_state(state: State<'_, AppState>) -> Result<SyncAccountState
 }
 
 #[tauri::command]
+fn logout_sync(state: State<'_, AppState>) -> Result<LoginSyncResult, String> {
+    let (account, anonymous_note_count) = {
+        let mut core = state
+            .core
+            .lock()
+            .map_err(|_| "app state lock poisoned".to_string())?;
+        let account = core.clear_sync_login().map_err(|err| err.to_string())?;
+        let anonymous_note_count = core.anonymous_note_count().map_err(|err| err.to_string())?;
+        (account, anonymous_note_count)
+    };
+    Ok(LoginSyncResult {
+        account,
+        anonymous_note_count,
+    })
+}
+
+#[tauri::command]
 async fn register_sync(
     state: State<'_, AppState>,
     server_base_url: String,
@@ -1047,6 +1064,7 @@ pub fn run() {
             get_open_shortcut,
             set_open_shortcut,
             get_sync_account_state,
+            logout_sync,
             register_sync,
             login_sync,
             anonymous_note_count,
@@ -1066,11 +1084,9 @@ fn handle_run_event(app: &AppHandle, event: RunEvent, should_launch_in_backgroun
             label,
             event: WindowEvent::CloseRequested { api, .. },
             ..
-        } => {
-            if label == "main" {
-                api.prevent_close();
-                hide_main_window(app);
-            }
+        } if label == "main" => {
+            api.prevent_close();
+            hide_main_window(app);
         }
         _ => {}
     }

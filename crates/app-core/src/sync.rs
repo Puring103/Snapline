@@ -40,6 +40,21 @@ impl AppCore {
         self.sync_account_state()
     }
 
+    pub fn clear_sync_login(&mut self) -> Result<SyncAccountState> {
+        let mut state = self.repo.get_or_create_sync_state()?;
+        state.account_id = None;
+        state.access_token = None;
+        state.server_base_url = None;
+        state.server_cursor = 0;
+        state.last_sync_at = None;
+        state.last_success_at = None;
+        state.kek_salt = None;
+        state.encrypted_dek = None;
+        self.repo.save_sync_state(&state)?;
+        self.dek = None;
+        self.sync_account_state()
+    }
+
     /// 注册新账户时生成 E2EE 材料，返回 `(kek_salt_b64, encrypted_dek_b64)`。
     pub fn generate_e2ee_material(&mut self, password: &str) -> Result<(String, String)> {
         let salt = crypto::generate_kek_salt();

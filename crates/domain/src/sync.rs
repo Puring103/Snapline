@@ -23,14 +23,17 @@ impl SyncOpType {
             SyncOpType::AssetUpload => "asset_upload",
         }
     }
+}
 
-    /// 从数据库字符串解析操作类型。
-    pub fn from_str(value: &str) -> Option<Self> {
+impl std::str::FromStr for SyncOpType {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "upsert_note" => Some(SyncOpType::UpsertNote),
-            "delete_note" => Some(SyncOpType::DeleteNote),
-            "asset_upload" => Some(SyncOpType::AssetUpload),
-            _ => None,
+            "upsert_note" => Ok(SyncOpType::UpsertNote),
+            "delete_note" => Ok(SyncOpType::DeleteNote),
+            "asset_upload" => Ok(SyncOpType::AssetUpload),
+            _ => Err(format!("unknown sync op type: {value}")),
         }
     }
 }
@@ -119,7 +122,7 @@ mod tests {
             SyncOpType::DeleteNote,
             SyncOpType::AssetUpload,
         ] {
-            assert_eq!(SyncOpType::from_str(op.as_str()), Some(op));
+            assert_eq!(op.as_str().parse::<SyncOpType>().unwrap(), op);
         }
     }
 }

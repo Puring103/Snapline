@@ -171,11 +171,14 @@ export function NotesListWindow() {
     void revealCurrentWindowWhenReady();
   }, [windowReadyToReveal]);
 
-  function persistShortcut(nextShortcut: string) {
-    void api
-      .setOpenShortcut(nextShortcut)
-      .then(() => setShortcut(nextShortcut))
-      .catch((err) => setError(String(err)));
+  async function persistShortcut(nextShortcut: string): Promise<boolean> {
+    try {
+      await api.setOpenShortcut(nextShortcut);
+      setShortcut(nextShortcut);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function persistAutostart(nextEnabled: boolean) {
@@ -380,7 +383,6 @@ export function NotesListWindow() {
         <SettingsPanel
           onClose={() => setSettingsOpen(false)}
           shortcut={shortcut}
-          onShortcutChange={setShortcut}
           onShortcutSave={persistShortcut}
           autostartEnabled={autostartEnabled}
           onAutostartChange={persistAutostart}

@@ -180,12 +180,22 @@
 }
 
 .logoMark {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   flex: 0 0 auto;
   color: var(--accent);
   fill: color-mix(in srgb, var(--accent-soft) 55%, transparent);
   stroke: var(--accent);
+}
+
+.mobileRoot .drawerHeader > .logoMark {
+  width: 40px;
+  height: 40px;
+  padding: 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: var(--canvas);
+  box-shadow: var(--note-shadow);
 }
 
 .muted,
@@ -216,33 +226,33 @@
 
 .mobileEditorHost .editorScrollArea {
   padding: 0 12px;
-  padding-bottom: calc(58px + var(--keyboard-offset) + env(safe-area-inset-bottom));
+  padding-bottom: calc(48px + var(--keyboard-offset) + env(safe-area-inset-bottom));
   transition: padding-bottom 140ms ease;
   overscroll-behavior: contain;
-  scroll-padding-bottom: calc(118px + var(--keyboard-offset));
+  scroll-padding-bottom: calc(84px + var(--keyboard-offset));
 }
 
 .mobileEditorHost .editorSurface {
-  padding: 16px 0 calc(42dvh + 70px + var(--keyboard-offset));
+  padding: 14px 0 calc(22dvh + 58px + var(--keyboard-offset));
 }
 
 .mobileEditorHost .editorLoadingSurface,
 .mobileEditorHost .markdownSurface .ProseMirror {
-  min-height: calc(100dvh - 108px - 52px - var(--keyboard-offset));
+  min-height: calc(100dvh - 104px - 46px - var(--keyboard-offset));
   font-size: 17px;
   line-height: 1.54;
 }
 
 .mobileEditorHost .editorSourceSurface {
   display: block;
-  height: calc(100dvh - 108px - 52px - var(--keyboard-offset));
-  padding-bottom: calc(42dvh + 78px + var(--keyboard-offset));
+  height: calc(100dvh - 104px - 46px - var(--keyboard-offset));
+  padding-bottom: calc(22dvh + 64px + var(--keyboard-offset));
   overflow-y: auto;
-  scroll-padding-bottom: calc(118px + var(--keyboard-offset));
+  scroll-padding-bottom: calc(84px + var(--keyboard-offset));
 }
 
 .mobileEditorHost .markdownSurface .ProseMirror {
-  padding-bottom: calc(42dvh + 72px + var(--keyboard-offset));
+  padding-bottom: calc(22dvh + 58px + var(--keyboard-offset));
 }
 
 .mobileEditorHost .editorToolbar {
@@ -251,12 +261,12 @@
   right: 0;
   bottom: 0;
   z-index: 9;
-  min-height: 58px;
-  gap: 4px;
+  min-height: 48px;
+  gap: 3px;
   justify-content: flex-start;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
+  padding: 5px 7px calc(5px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg) 86%, var(--surface-soft));
   transform: translateY(calc(-1 * var(--keyboard-offset)));
@@ -270,8 +280,8 @@
 }
 
 .mobileEditorHost .editorToolbarDivider {
-  height: 18px;
-  margin: 0 2px;
+  height: 16px;
+  margin: 0 1px;
 }
 
 .mobileEditorHost .editorToolbarSpacer {
@@ -279,16 +289,16 @@
 }
 
 .mobileEditorHost .editorToolbarBtn {
-  width: 42px;
-  height: 42px;
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
   border-color: color-mix(in srgb, var(--line) 70%, transparent);
   background: color-mix(in srgb, var(--surface) 78%, transparent);
 }
 
 .mobileEditorHost .editorToolbarBtn svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .mobileEditorHost .editorToolbarBtn:disabled {
@@ -300,6 +310,7 @@
   inset: 0;
   z-index: 20;
   background: rgba(0, 0, 0, 0.52);
+  animation: mobileFadeIn 170ms ease both;
 }
 
 .drawerBackdrop {
@@ -317,6 +328,7 @@
   border-right: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface) 94%, var(--bg));
   box-shadow: var(--shadow);
+  animation: mobileDrawerIn 210ms ease both;
 }
 
 .drawerHeader {
@@ -468,12 +480,38 @@
   -webkit-line-clamp: 2;
 }
 
+.mobileRoot .noteRowPreview.markdownSurface {
+  display: block;
+  margin: 8px 0 0;
+  max-height: 3.2em;
+  overflow: hidden;
+}
+
+.mobileRoot .noteRowPreview.markdownSurface .ProseMirror {
+  min-height: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  padding-bottom: 0;
+}
+
+.mobileRoot .noteRowPreview.markdownSurface .ProseMirror > * {
+  margin-top: 0;
+}
+
 .drawerSettings {
   flex: 0 0 auto;
   margin: 12px -12px calc(-1 * max(12px, env(safe-area-inset-bottom)));
   padding: 12px 12px max(14px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface-soft) 64%, var(--surface));
+}
+
+.drawerSettings.accountSettings {
+  margin: 0 0 12px;
+  padding: 0 0 12px;
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
 }
 
 .drawerSettingsTrigger {
@@ -503,16 +541,20 @@
   height: 18px;
 }
 
-.drawerSettingsChevron {
+.drawerSettingsIcon {
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
+  transition: transform 160ms ease;
+}
+
+.drawerSettingsIcon.open {
+  transform: rotate(180deg);
 }
 
 .drawerSettingsPanel {
   display: grid;
   gap: 10px;
   padding-top: 8px;
+  animation: mobilePanelDrop 170ms ease both;
 }
 
 .drawerSettings h3 {
@@ -562,6 +604,10 @@
   gap: 8px;
 }
 
+.syncSettingsActions:has(> button:only-child) {
+  grid-template-columns: 1fr;
+}
+
 .syncSettings button,
 .connectionDialogActions button {
   min-height: 38px;
@@ -579,6 +625,7 @@
   place-items: end center;
   padding: 14px;
   background: rgba(0, 0, 0, 0.48);
+  animation: mobileFadeIn 170ms ease both;
 }
 
 .connectionDialog {
@@ -590,6 +637,7 @@
   border-radius: 14px;
   background: var(--surface);
   box-shadow: var(--shadow);
+  animation: mobileSheetIn 190ms ease both;
 }
 
 .connectionDialogHeader {
@@ -610,6 +658,21 @@
 .syncSettingsServer {
   color: var(--muted);
   font-size: 12px;
+}
+
+.syncSettingsStatus.syncing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.syncSettingsStatus.syncing::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: mobileSyncPulse 900ms ease-in-out infinite;
 }
 
 .dialogIconButton {
@@ -672,6 +735,40 @@
   border-color: color-mix(in srgb, var(--accent) 74%, var(--line));
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+@keyframes mobileFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes mobileDrawerIn {
+  from { transform: translateX(-18px); opacity: 0.72; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes mobilePanelDrop {
+  from { transform: translateY(-5px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes mobileSheetIn {
+  from { transform: translateY(16px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes mobileSyncPulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.78); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobileRoot *,
+  .mobileRoot *::before,
+  .mobileRoot *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
 }
 
 @media (min-width: 680px) {

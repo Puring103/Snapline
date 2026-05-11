@@ -58,6 +58,7 @@ export const api = {
   getOpenShortcut: () => invoke<string>("get_open_shortcut"),
   setOpenShortcut: (shortcut: string) => invoke<string>("set_open_shortcut", { shortcut }),
   getSyncAccountState: () => invoke<SyncAccountState>("get_sync_account_state"),
+  logoutSync: () => invoke<LoginSyncResult>("logout_sync"),
   registerSync: (serverBaseUrl: string, email: string, password: string) =>
     invoke<LoginSyncResult>("register_sync", { serverBaseUrl, email, password }),
   loginSync: (serverBaseUrl: string, email: string, password: string) =>

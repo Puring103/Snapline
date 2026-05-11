@@ -710,7 +710,7 @@ html[data-theme="dark"] .markdownSurface .ProseMirror pre {
 .markdownSurface .ProseMirror li:has(> label input[type="checkbox"]) > label,
 .markdownSurface .ProseMirror li[data-type="taskItem"] > label {
   flex: none;
-  margin-top: 1px;
+  margin-top: 0.22em;
   display: inline-flex;
   align-items: center;
 }
@@ -957,7 +957,7 @@ html[data-theme="dark"] .searchHighlight {
 .noteRowPreview .ProseMirror li:has(> label input[type="checkbox"]) > label,
 .noteRowPreview .ProseMirror li[data-type="taskItem"] > label {
   flex: none;
-  margin-top: 1px;
+  margin-top: 0.22em;
   display: inline-flex;
   align-items: center;
 }
@@ -1170,6 +1170,7 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   padding: 10px;
   background: rgba(78, 56, 24, 0.18);
   backdrop-filter: blur(6px);
+  animation: fadeIn 160ms ease both;
 }
 
 .settingsPanel {
@@ -1182,6 +1183,7 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   background: var(--surface);
   box-shadow: var(--shadow);
   overflow: hidden;
+  animation: panelRise 180ms ease both;
 }
 
 .settingsHeader {
@@ -1442,6 +1444,12 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   color: var(--accent);
 }
 
+.shortcutDisplay.failed {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
 .shortcutInput:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
@@ -1485,6 +1493,21 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   font-size: 11px;
 }
 
+.syncSettingsStatus.syncing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.syncSettingsStatus.syncing::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: syncPulse 900ms ease-in-out infinite;
+}
+
 .syncSettingsSummary {
   min-width: 0;
   display: grid;
@@ -1505,6 +1528,10 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   gap: 6px;
 }
 
+.syncSettingsActions:has(> button:only-child) {
+  grid-template-columns: 1fr;
+}
+
 .connectionDialogBackdrop {
   position: fixed;
   inset: 0;
@@ -1514,6 +1541,7 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   padding: 14px;
   background: rgba(78, 56, 24, 0.22);
   backdrop-filter: blur(7px);
+  animation: fadeIn 160ms ease both;
 }
 
 .connectionDialog {
@@ -1526,6 +1554,31 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   border-radius: 15px;
   background: var(--surface);
   box-shadow: var(--shadow);
+  animation: panelRise 180ms ease both;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes panelRise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes syncPulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.78); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
 }
 
 .connectionDialogHeader {

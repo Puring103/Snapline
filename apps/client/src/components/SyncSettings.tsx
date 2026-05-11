@@ -1,11 +1,10 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { api } from "../platform/api";
-import type { LoginSyncResult, SyncAccountState, SyncReport } from "../types";
+import type { LoginSyncResult, SyncAccountState } from "../types";
 
 interface SyncSettingsProps {
   initial: SyncAccountState | null;
   onSaved: (result: LoginSyncResult) => void;
-  onSyncNow: () => Promise<SyncReport>;
 }
 
 interface SyncConnectionFields {
@@ -51,7 +50,7 @@ export function importPromptText(count: number): string {
   return `Detected ${count} local ${count === 1 ? "note" : "notes"}. Import into this account?`;
 }
 
-export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps) {
+export function SyncSettings({ initial, onSaved }: SyncSettingsProps) {
   const [serverUrl, setServerUrl] = useState(initial?.server_base_url ?? "http://localhost:8080");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -59,6 +58,13 @@ export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps)
   const [status, setStatus] = useState(initial?.is_logged_in ? "Connected" : "Not connected");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [errors, setErrors] = useState<SyncConnectionErrors>({});
+
+  useEffect(() => {
+    setStatus(initial?.is_logged_in ? "Connected" : "Not connected");
+    if (initial?.server_base_url) {
+      setServerUrl(initial.server_base_url);
+    }
+  }, [initial?.is_logged_in, initial?.server_base_url]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -82,11 +88,19 @@ export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps)
     }
   }
 
-  async function syncNow() {
-    setStatus("Syncing");
+  function openDialog(nextMode: "login" | "register") {
+    setMode(nextMode);
+    setDialogOpen(true);
+  }
+
+  async function logout() {
+    setStatus("Disconnecting");
     try {
-      const report = await onSyncNow();
-      setStatus(report.has_conflicts ? "Conflict" : "Synced");
+      const next = await api.logoutSync();
+      onSaved(next);
+      setEmail("");
+      setPassword("");
+      setStatus("Not connected");
     } catch (err) {
       setStatus(String(err));
     }
@@ -95,14 +109,18 @@ export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps)
   return (
     <div className="syncSettings">
       <div className="syncSettingsSummary">
-        <span className="syncSettingsStatus">{status}</span>
+        <span className={status === "Connecting" || status === "Creating account" ? "syncSettingsStatus syncing" : "syncSettingsStatus"}>{status}</span>
         {initial?.server_base_url ? <span className="syncSettingsServer">{initial.server_base_url}</span> : null}
       </div>
       <div className="syncSettingsActions">
-        <button onClick={() => setDialogOpen(true)} type="button">Remote connection</button>
-        <button disabled={!initial?.is_logged_in} onClick={() => void syncNow()} type="button">
-          Sync now
-        </button>
+        {initial?.is_logged_in ? (
+          <button onClick={() => void logout()} type="button">退出账号</button>
+        ) : (
+          <>
+            <button onClick={() => openDialog("login")} type="button">登录</button>
+            <button onClick={() => openDialog("register")} type="button">注册</button>
+          </>
+        )}
       </div>
 
       {dialogOpen ? (
@@ -110,7 +128,7 @@ export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps)
           <form className="connectionDialog" onClick={(event) => event.stopPropagation()} onSubmit={submit}>
             <header className="connectionDialogHeader">
               <div>
-                <div className="connectionDialogTitle">Remote connection</div>
+                <div className="connectionDialogTitle">账号登录</div>
                 <div className="connectionDialogSub">Connect Snapline to your sync server</div>
               </div>
               <button aria-label="Close remote connection" className="dialogIconButton" onClick={() => setDialogOpen(false)} type="button">
@@ -124,14 +142,14 @@ export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps)
                 onClick={() => setMode("login")}
                 type="button"
               >
-                Sign in
+                登录
               </button>
               <button
                 className={mode === "register" ? "connectionModeActive" : ""}
                 onClick={() => setMode("register")}
                 type="button"
               >
-                Create account
+                注册
               </button>
             </div>
 
@@ -180,7 +198,7 @@ export function SyncSettings({ initial, onSaved, onSyncNow }: SyncSettingsProps)
 
             <div className="connectionDialogActions">
               <button onClick={() => setDialogOpen(false)} type="button">Cancel</button>
-              <button type="submit">{mode === "register" ? "Create account" : "Connect"}</button>
+              <button type="submit">{mode === "register" ? "注册" : "登录"}</button>
             </div>
             <span className="syncSettingsStatus">{status}</span>
           </form>

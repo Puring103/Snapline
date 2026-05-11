@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { EditorPane } from "../components/EditorPane";
+import { MarkdownPreview } from "../components/MarkdownPreview";
 import { SyncSettings } from "../components/SyncSettings";
 import { api } from "../platform/api";
-import { IconButton, ListIcon, LogoIcon, PinIcon, PlusIcon, PreviewModeIcon, SettingsIcon, SourceModeIcon, ThemeDarkIcon, ThemeLightIcon, ThemeSystemIcon } from "../components/app/AppIcons";
+import { ChevronDownIcon, IconButton, ListIcon, LogoIcon, PinIcon, PlusIcon, PreviewModeIcon, SettingsIcon, SourceModeIcon, ThemeDarkIcon, ThemeLightIcon, ThemeSystemIcon } from "../components/app/AppIcons";
 import { SearchIcon } from "./icons";
 import { HighlightedText } from "../features/search/highlight";
 import { loadLastNoteId, loadTheme, saveLastNoteId, saveTheme } from "./storage";
@@ -61,10 +62,6 @@ function formatTime(timestamp: number) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} 小时前`;
   return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(timestamp);
-}
-
-function previewText(note: Note) {
-  return note.body.replace(/[#*_`>-]/g, "").replace(/\s+/g, " ").trim() || "No preview";
 }
 
 function useKeyboardOffset() {
@@ -127,6 +124,7 @@ export function AndroidApp() {
   const [syncAccount, setSyncAccount] = useState<SyncAccountState | null>(null);
   const keyboardOffset = useKeyboardOffset();
   const [isSaving, setIsSaving] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const saveQueueRef = useRef(Promise.resolve());
   const syncQueueRef = useRef(Promise.resolve());
   const autoSyncTimerRef = useRef<number | null>(null);
@@ -244,11 +242,13 @@ export function AndroidApp() {
   }
 
   function queueAutoSync() {
+    setIsSyncing(true);
     syncQueueRef.current = syncQueueRef.current
       .catch(() => undefined)
       .then(() => api.syncNow())
       .then(() => undefined)
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => setIsSyncing(false));
   }
 
   function updateDraft(patch: Partial<Note>) {
@@ -296,7 +296,9 @@ export function AndroidApp() {
   function handleSyncSaved(result: LoginSyncResult) {
     setSyncAccount(result.account);
     if (result.account.is_logged_in) {
+      setIsSyncing(true);
       void api.syncNow().catch(() => undefined).finally(() => {
+        setIsSyncing(false);
         void refreshNotes().catch(() => undefined);
       });
       return;
@@ -356,6 +358,7 @@ export function AndroidApp() {
               onBodyChange={(body) => updateDraft({ body })}
               onModeToggle={() => setEditorMode((mode) => mode === "preview" ? "source" : "preview")}
               onRequestImageSave={handleRequestImageSave}
+              readOnly={isSyncing}
               showModeToggle={false}
               toolbarVariant="full"
             />
@@ -380,6 +383,26 @@ export function AndroidApp() {
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索笔记" />
             </label>
 
+            <section className="drawerSettings accountSettings">
+              <button
+                aria-expanded={settingsExpanded}
+                className="drawerSettingsTrigger"
+                onClick={() => setSettingsExpanded((open) => !open)}
+                type="button"
+              >
+                <span><SettingsIcon />账号登录</span>
+                <ChevronDownIcon className={settingsExpanded ? "drawerSettingsIcon open" : "drawerSettingsIcon"} />
+              </button>
+              {settingsExpanded ? (
+                <div className="drawerSettingsPanel">
+                  <SyncSettings
+                    initial={syncAccount}
+                    onSaved={handleSyncSaved}
+                  />
+                </div>
+              ) : null}
+            </section>
+
             <div className="noteFeed">
               {visibleNotes.map((note) => (
                 <article
@@ -395,7 +418,7 @@ export function AndroidApp() {
                       </div>
                       <span className="noteRowTime">{formatTime(note.updatedAt)}</span>
                     </div>
-                    <p className="noteRowPreview"><HighlightedText query={query} text={previewText(note)} /></p>
+                    <MarkdownPreview highlightQuery={query} markdown={note.body || "No preview"} />
                   </button>
                   <IconButton active={note.pinned} label={note.pinned ? "取消收藏" : "收藏"} onClick={() => togglePinned(note)}><PinIcon /></IconButton>
                 </article>
@@ -411,7 +434,7 @@ export function AndroidApp() {
                 type="button"
               >
                 <span><SettingsIcon />设置</span>
-                <span className="drawerSettingsChevron" aria-hidden="true">{settingsExpanded ? "收起" : "打开"}</span>
+                <ChevronDownIcon className={settingsExpanded ? "drawerSettingsIcon open" : "drawerSettingsIcon"} />
               </button>
               {settingsExpanded ? (
                 <div className="drawerSettingsPanel">
@@ -421,16 +444,6 @@ export function AndroidApp() {
                     <button className={theme === "dark" ? "selected" : ""} onClick={() => setTheme("dark")} type="button"><ThemeDarkIcon />暗色</button>
                     <button className={theme === "light" ? "selected" : ""} onClick={() => setTheme("light")} type="button"><ThemeLightIcon />浅色</button>
                   </div>
-                  <h3>同步</h3>
-                  <SyncSettings
-                    initial={syncAccount}
-                    onSaved={handleSyncSaved}
-                    onSyncNow={async () => {
-                      const report = await api.syncNow();
-                      await refreshNotes(draft.id.startsWith("draft-") ? null : draft.id);
-                      return report;
-                    }}
-                  />
                 </div>
               ) : null}
             </section>

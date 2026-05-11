@@ -1,17 +1,14 @@
-import { api } from "../../platform/api";
+import { useEffect, useRef, useState } from "react";
 import { SyncSettings } from "../SyncSettings";
 import { syncStatusLabel } from "../../features/sync/syncStatus";
 import type { LoginSyncResult, SyncAccountState } from "../../types";
 import { CloseIcon, IconButton, ThemeDarkIcon, ThemeLightIcon, ThemeSystemIcon } from "./AppIcons";
 import type { ThemeMode } from "../../hooks/theme";
 
-const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
-
 interface SettingsPanelProps {
   onClose: () => void;
   shortcut: string;
-  onShortcutChange: (value: string) => void;
-  onShortcutSave: (value: string) => void;
+  onShortcutSave: (value: string) => Promise<boolean>;
   autostartEnabled: boolean;
   onAutostartChange: (value: boolean) => void;
   themeMode: ThemeMode;
@@ -23,7 +20,6 @@ interface SettingsPanelProps {
 export function SettingsPanel({
   onClose,
   shortcut,
-  onShortcutChange,
   onShortcutSave,
   autostartEnabled,
   onAutostartChange,
@@ -32,6 +28,73 @@ export function SettingsPanel({
   syncAccount,
   onSyncSaved,
 }: SettingsPanelProps) {
+  const [listeningShortcut, setListeningShortcut] = useState(false);
+  const [pendingShortcut, setPendingShortcut] = useState(shortcut);
+  const [failedShortcut, setFailedShortcut] = useState("");
+  const [shortcutSaveFailed, setShortcutSaveFailed] = useState(false);
+  const shortcutTimerRef = useRef<number | null>(null);
+  const shortcutErrorTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!listeningShortcut) {
+      setPendingShortcut(shortcut);
+    }
+  }, [listeningShortcut, shortcut]);
+
+  useEffect(() => {
+    return () => {
+      if (shortcutTimerRef.current !== null) {
+        window.clearTimeout(shortcutTimerRef.current);
+      }
+      if (shortcutErrorTimerRef.current !== null) {
+        window.clearTimeout(shortcutErrorTimerRef.current);
+      }
+    };
+  }, []);
+
+  function completeShortcutCapture(nextShortcut: string) {
+    setPendingShortcut(nextShortcut);
+    setShortcutSaveFailed(false);
+    if (shortcutTimerRef.current !== null) {
+      window.clearTimeout(shortcutTimerRef.current);
+    }
+    shortcutTimerRef.current = window.setTimeout(() => {
+      setListeningShortcut(false);
+      void saveShortcut(nextShortcut);
+    }, 650);
+  }
+
+  async function saveShortcut(nextShortcut: string) {
+    const saved = await onShortcutSave(nextShortcut);
+    if (saved) {
+      setShortcutSaveFailed(false);
+      setFailedShortcut("");
+      return;
+    }
+
+    setFailedShortcut(nextShortcut);
+    setShortcutSaveFailed(true);
+    if (shortcutErrorTimerRef.current !== null) {
+      window.clearTimeout(shortcutErrorTimerRef.current);
+    }
+    shortcutErrorTimerRef.current = window.setTimeout(() => {
+      setPendingShortcut(shortcut);
+      setFailedShortcut("");
+      setShortcutSaveFailed(false);
+    }, 1200);
+  }
+
+  function shortcutFromKeyboardEvent(event: React.KeyboardEvent<HTMLButtonElement>) {
+    const parts = [
+      event.ctrlKey ? "Ctrl" : "",
+      event.metaKey ? "Meta" : "",
+      event.altKey ? "Alt" : "",
+      event.shiftKey ? "Shift" : "",
+    ].filter(Boolean);
+    const key = normalizedShortcutKey(event.key);
+    return key ? [...parts, key].join("+") : parts.join("+");
+  }
+
   return (
     <div className="settingsBackdrop" onClick={onClose}>
       <section className="settingsPanel" onClick={(event) => event.stopPropagation()}>
@@ -45,24 +108,52 @@ export function SettingsPanel({
 
         <div className="settingsPanelScroll">
           <div className="settingsGroup">
+            <div className="settingsGroupTitle">登录</div>
+            <div className="settingsField">
+              <span>账号登录</span>
+              <div className="settingsSyncStatus">{syncStatusLabel(syncAccount)}</div>
+              <SyncSettings
+                initial={syncAccount}
+                onSaved={onSyncSaved}
+              />
+            </div>
+          </div>
+
+          <div className="settingsGroup">
             <div className="settingsGroupTitle">General</div>
             <label className="settingsField">
               <span>Open shortcut</span>
               <div className="shortcutRow">
-                <input
-                  className="shortcutInput"
-                  value={shortcut}
-                  onChange={(event) => onShortcutChange(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      onShortcutSave(shortcut);
-                    }
+                <div
+                  className={[
+                    "shortcutDisplay",
+                    listeningShortcut ? "listening" : "",
+                    shortcutSaveFailed ? "failed" : "",
+                  ].filter(Boolean).join(" ")}
+                >
+                  {listeningShortcut ? pendingShortcut || "Press shortcut" : shortcutSaveFailed ? failedShortcut : shortcut}
+                </div>
+                <button
+                  className="drawerAction"
+                  onClick={() => {
+                    setPendingShortcut("");
+                    setListeningShortcut(true);
                   }}
-                  placeholder={DEFAULT_SHORTCUT}
-                />
-                <button className="drawerAction" onClick={() => onShortcutSave(shortcut)} type="button">
-                  Save
+                  onKeyDown={(event) => {
+                    if (!listeningShortcut) return;
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setListeningShortcut(false);
+                      setPendingShortcut(shortcut);
+                      return;
+                    }
+                    event.preventDefault();
+                    const nextShortcut = shortcutFromKeyboardEvent(event);
+                    if (nextShortcut) completeShortcutCapture(nextShortcut);
+                  }}
+                  type="button"
+                >
+                  Change
                 </button>
               </div>
             </label>
@@ -107,20 +198,21 @@ export function SettingsPanel({
             </div>
           </div>
 
-          <div className="settingsGroup">
-            <div className="settingsGroupTitle">Sync</div>
-            <div className="settingsField">
-              <span>Status</span>
-              <div className="settingsSyncStatus">{syncStatusLabel(syncAccount)}</div>
-              <SyncSettings
-                initial={syncAccount}
-                onSaved={onSyncSaved}
-                onSyncNow={() => api.syncNow()}
-              />
-            </div>
-          </div>
         </div>
       </section>
     </div>
   );
+}
+
+function normalizedShortcutKey(key: string) {
+  if (key === "Control" || key === "Shift" || key === "Alt" || key === "Meta") {
+    return "";
+  }
+  if (key === " ") {
+    return "Space";
+  }
+  if (key.length === 1) {
+    return key.toUpperCase();
+  }
+  return key;
 }

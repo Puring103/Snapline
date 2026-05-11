@@ -11,6 +11,7 @@ import { TableRow } from "@tiptap/extension-table-row";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
 import { all, createLowlight } from "lowlight";
+import Underline from "@tiptap/extension-underline";
 import { mergeAttributes, Node, type Editor } from "@tiptap/core";
 import { codeBlockLanguageClass } from "./markdown";
 
@@ -143,7 +144,9 @@ export function createMarkdownExtensions(placeholder?: string) {
     StarterKit.configure({
       codeBlock: false,
       link: false,
+      underline: false,
     }),
+    Underline,
     Image.configure({ inline: false }),
     Link.configure({
       autolink: true,
