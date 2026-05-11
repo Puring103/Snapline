@@ -51,7 +51,10 @@ mod tests {
     use crate::protocol::{PushChange, PushRequest};
     use crate::SyncApi;
     use chrono::Utc;
-    use snapline_domain::{Note, NoteChangePayload, SyncOpType, SyncPayload};
+    use snapline_domain::{
+        crypto::{decrypt_bytes, generate_dek},
+        AssetId, Note, NoteChangePayload, SyncOpType, SyncPayload,
+    };
     use snapline_storage::NoteRepository;
 
     #[tokio::test]
@@ -102,7 +105,7 @@ mod tests {
         std::fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
         std::fs::write(&asset_path, [137, 80, 78, 71]).unwrap();
         let payload = SyncPayload::Asset(snapline_domain::AssetUploadPayload {
-            asset_id: snapline_domain::AssetId::new(),
+            asset_id: AssetId::new(),
             note_id: note.id.clone(),
             content_type: "image/png".to_string(),
             byte_size: 4,
@@ -120,7 +123,7 @@ mod tests {
         .unwrap();
 
         let api = MockSyncApi::default();
-        let report = upload_pending_assets(&repo, &api, "token:acct_a", dir.path())
+        let report = upload_pending_assets(&repo, &api, "token:acct_a", dir.path(), None)
             .await
             .unwrap();
 
@@ -129,6 +132,53 @@ mod tests {
             .list_pending_changes(Some("acct_a"), 10)
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn processor_encrypts_asset_bytes_when_dek_is_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let mut state = repo.get_or_create_sync_state().unwrap();
+        state.account_id = Some("acct_a".to_string());
+        repo.save_sync_state(&state).unwrap();
+        let note = Note::draft(Utc::now());
+        let asset_id = AssetId::new();
+        let markdown_path = format!("assets/notes/{}/{}.png", note.id, asset_id);
+        let asset_path = dir.path().join(&markdown_path);
+        std::fs::create_dir_all(asset_path.parent().unwrap()).unwrap();
+        let plaintext = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        std::fs::write(&asset_path, &plaintext).unwrap();
+        let payload = SyncPayload::Asset(snapline_domain::AssetUploadPayload {
+            asset_id: asset_id.clone(),
+            note_id: note.id.clone(),
+            content_type: "image/png".to_string(),
+            byte_size: plaintext.len() as i64,
+            sha256: "local-plaintext-sha".to_string(),
+            markdown_path,
+        });
+        repo.enqueue_change(
+            Some("acct_a"),
+            &note.id,
+            SyncOpType::AssetUpload,
+            0,
+            &payload,
+            Utc::now(),
+        )
+        .unwrap();
+        let dek = generate_dek();
+
+        let api = MockSyncApi::default();
+        let report = upload_pending_assets(&repo, &api, "token:acct_a", dir.path(), Some(&dek))
+            .await
+            .unwrap();
+
+        assert_eq!(report.accepted, 1);
+        let uploaded = api.uploaded_asset_bytes(&asset_id.to_string()).unwrap();
+        assert_ne!(uploaded, plaintext);
+        assert_eq!(decrypt_bytes(&dek, &uploaded).unwrap(), plaintext);
+        let metadata = api.uploaded_assets().pop().unwrap();
+        assert_eq!(metadata.byte_size, uploaded.len() as i64);
+        assert_ne!(metadata.sha256, "local-plaintext-sha");
     }
 
     #[tokio::test]

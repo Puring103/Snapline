@@ -17,11 +17,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri::{RunEvent, WindowEvent};
 #[cfg(desktop)]
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+#[cfg(desktop)]
+use windows::show_main_window;
 use windows::{
     build_note_window, close_other_note_windows, hide_main_window, reveal_window, WindowPosition,
 };
-#[cfg(desktop)]
-use windows::show_main_window;
 
 const AUTOSTART_BACKGROUND_ARG: &str = "--background";
 const BACKGROUND_SYNC_INTERVAL_SECS: u64 = 60;
@@ -852,7 +852,12 @@ async fn import_snapshot_and_assets(
             .core
             .lock()
             .map_err(|_| "app state lock poisoned".to_string())?;
-        core.save_remote_asset(&asset, &downloaded.bytes)
+        let bytes = match core.dek() {
+            Some(key) => snapline_domain::crypto::decrypt_bytes(key, &downloaded.bytes)
+                .map_err(|err| err.to_string())?,
+            None => downloaded.bytes,
+        };
+        core.save_remote_asset(&asset, &bytes)
             .map_err(|err| err.to_string())?;
     }
     Ok(())
@@ -1050,7 +1055,8 @@ fn handle_run_event(app: &AppHandle, event: RunEvent, should_launch_in_backgroun
 }
 
 #[cfg(not(desktop))]
-fn handle_run_event(_app: &AppHandle, _event: tauri::RunEvent, _should_launch_in_background: bool) {}
+fn handle_run_event(_app: &AppHandle, _event: tauri::RunEvent, _should_launch_in_background: bool) {
+}
 
 #[cfg(test)]
 mod tests {

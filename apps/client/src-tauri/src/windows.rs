@@ -1,9 +1,9 @@
+#[cfg(not(desktop))]
+use tauri::AppHandle;
 #[cfg(desktop)]
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, Position, WebviewUrl, WebviewWindowBuilder,
 };
-#[cfg(not(desktop))]
-use tauri::AppHandle;
 
 #[cfg(desktop)]
 pub const FOCUS_EDITOR_EVENT: &str = "snapline-focus-editor";

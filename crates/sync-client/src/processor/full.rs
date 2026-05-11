@@ -13,14 +13,22 @@ pub async fn run_full_sync_from_path<A: SyncApi + Sync>(
     context: FullSyncContext<'_>,
 ) -> Result<FullSyncReport> {
     let asset_report =
-        upload_pending_assets_from_path(db_path, api, context.token, context.data_dir).await?;
+        upload_pending_assets_from_path(db_path, api, context.token, context.data_dir, context.dek)
+            .await?;
     let push_report =
         push_pending_changes_from_path(db_path, api, context.token, context.device_id, context.dek)
             .await?;
     let pull_report =
         pull_remote_changes_from_path(db_path, api, context.token, context.device_id, context.dek)
             .await?;
-    import_snapshot_and_assets_from_path(db_path, api, context.token, context.data_dir).await?;
+    import_snapshot_and_assets_from_path(
+        db_path,
+        api,
+        context.token,
+        context.data_dir,
+        context.dek,
+    )
+    .await?;
 
     Ok(FullSyncReport {
         uploaded_assets: asset_report.accepted,

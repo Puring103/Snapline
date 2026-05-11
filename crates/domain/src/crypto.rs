@@ -58,10 +58,20 @@ pub fn encrypt_field(dek: &[u8; 32], plaintext: &str) -> Result<String> {
     Ok(B64.encode(seal(dek, plaintext.as_bytes())?))
 }
 
+/// 用 DEK 加密二进制内容，返回 nonce || ciphertext。
+pub fn encrypt_bytes(dek: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
+    seal(dek, plaintext)
+}
+
 /// 用 DEK 解密单个文本字段。
 pub fn decrypt_field(dek: &[u8; 32], encoded: &str) -> Result<String> {
     let plaintext = open(dek, encoded)?;
     String::from_utf8(plaintext).map_err(|e| anyhow!("decrypt utf8: {e}"))
+}
+
+/// 用 DEK 解密二进制内容，输入为 nonce || ciphertext。
+pub fn decrypt_bytes(dek: &[u8; 32], encrypted: &[u8]) -> Result<Vec<u8>> {
+    open_raw(dek, encrypted)
 }
 
 /// base64-encode a raw 32-byte salt for transport.
@@ -98,6 +108,10 @@ fn open(key: &[u8; 32], encoded: &str) -> Result<Vec<u8>> {
     let blob = B64
         .decode(encoded)
         .map_err(|e| anyhow!("base64 decode: {e}"))?;
+    open_raw(key, &blob)
+}
+
+fn open_raw(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>> {
     if blob.len() < NONCE_LEN {
         return Err(anyhow!("ciphertext too short"));
     }
@@ -120,6 +134,16 @@ mod tests {
         let encoded = encrypt_field(&dek, plaintext).unwrap();
         assert_ne!(encoded, plaintext);
         assert_eq!(decrypt_field(&dek, &encoded).unwrap(), plaintext);
+    }
+
+    #[test]
+    fn bytes_encrypt_decrypt_round_trip() {
+        let dek = generate_dek();
+        let plaintext = b"\x89PNG\r\n\x1a\nimage bytes";
+        let encrypted = encrypt_bytes(&dek, plaintext).unwrap();
+
+        assert_ne!(encrypted, plaintext);
+        assert_eq!(decrypt_bytes(&dek, &encrypted).unwrap(), plaintext);
     }
 
     #[test]

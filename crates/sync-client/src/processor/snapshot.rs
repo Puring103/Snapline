@@ -1,7 +1,7 @@
 use crate::SyncApi;
 use anyhow::Result;
 use chrono::Utc;
-use snapline_domain::{AssetMetadata, Note};
+use snapline_domain::{crypto::decrypt_bytes, AssetMetadata, Note};
 use snapline_platform::AppPaths;
 use snapline_storage::NoteRepository;
 use std::{fs, path::Path};
@@ -11,6 +11,7 @@ pub(super) async fn import_snapshot_and_assets_from_path<A: SyncApi + Sync>(
     api: &A,
     token: &str,
     data_dir: &Path,
+    dek: Option<&[u8; 32]>,
 ) -> Result<()> {
     let snapshot = api.snapshot(token).await?;
     let missing_assets = {
@@ -20,7 +21,8 @@ pub(super) async fn import_snapshot_and_assets_from_path<A: SyncApi + Sync>(
     };
     for asset in missing_assets {
         let downloaded = api.download_asset(token, &asset.id.to_string()).await?;
-        save_remote_asset(data_dir, &asset, &downloaded.bytes)?;
+        let bytes = asset_plaintext(&downloaded.bytes, dek)?;
+        save_remote_asset(data_dir, &asset, &bytes)?;
     }
     Ok(())
 }
@@ -30,15 +32,24 @@ pub async fn import_snapshot_and_assets<A: SyncApi + Sync>(
     api: &A,
     token: &str,
     data_dir: &Path,
+    dek: Option<&[u8; 32]>,
 ) -> Result<()> {
     let snapshot = api.snapshot(token).await?;
     import_snapshot(repo, &snapshot.notes, snapshot.cursor)?;
     let missing_assets = missing_asset_metadata(data_dir, &snapshot.assets);
     for asset in missing_assets {
         let downloaded = api.download_asset(token, &asset.id.to_string()).await?;
-        save_remote_asset(data_dir, &asset, &downloaded.bytes)?;
+        let bytes = asset_plaintext(&downloaded.bytes, dek)?;
+        save_remote_asset(data_dir, &asset, &bytes)?;
     }
     Ok(())
+}
+
+fn asset_plaintext(bytes: &[u8], dek: Option<&[u8; 32]>) -> Result<Vec<u8>> {
+    match dek {
+        Some(key) => decrypt_bytes(key, bytes),
+        None => Ok(bytes.to_vec()),
+    }
 }
 
 fn import_snapshot(repo: &NoteRepository, notes: &[Note], cursor: i64) -> Result<()> {

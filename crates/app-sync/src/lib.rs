@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use snapline_app_core::{AppCore, SyncAccountState};
-use snapline_domain::AssetMetadata;
+use snapline_domain::{crypto::decrypt_bytes, AssetMetadata};
 use snapline_sync_client::{
     processor::{self, FullSyncContext, FullSyncReport},
     protocol::{AssetDownload, LoginRequest, LoginResponse, SnapshotResponse},
@@ -204,7 +204,11 @@ pub fn save_remote_asset(
     asset: &AssetMetadata,
     downloaded: &AssetDownload,
 ) -> Result<()> {
-    core.save_remote_asset(asset, &downloaded.bytes)
+    let bytes = match core.dek() {
+        Some(key) => decrypt_bytes(key, &downloaded.bytes)?,
+        None => downloaded.bytes.clone(),
+    };
+    core.save_remote_asset(asset, &bytes)
 }
 
 fn login_sync_result(core: &AppCore, account: SyncAccountState) -> Result<LoginSyncResult> {

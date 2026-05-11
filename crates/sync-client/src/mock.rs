@@ -169,6 +169,21 @@ impl SyncApi for MockSyncApi {
     }
 }
 
+impl MockSyncApi {
+    pub fn uploaded_asset_bytes(&self, asset_id: &str) -> Option<Vec<u8>> {
+        self.asset_bytes
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(id, _)| id == asset_id)
+            .map(|(_, bytes)| bytes.clone())
+    }
+
+    pub fn uploaded_assets(&self) -> Vec<AssetUploadPayload> {
+        self.assets.lock().unwrap().clone()
+    }
+}
+
 /// 从 `token:acct_xxx` 格式的 Bearer token 中解析账户 ID。
 fn account_id_from_token(token: &str) -> Option<String> {
     token.strip_prefix("token:").map(str::to_string)
