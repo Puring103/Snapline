@@ -52,7 +52,7 @@ mod tests {
     use crate::SyncApi;
     use chrono::Utc;
     use snapline_domain::{
-        crypto::{decrypt_bytes, generate_dek},
+        crypto::{decrypt_bytes, encrypt_field, generate_dek},
         AssetId, Note, NoteChangePayload, SyncOpType, SyncPayload,
     };
     use snapline_storage::NoteRepository;
@@ -372,5 +372,48 @@ mod tests {
             .unwrap()
             .iter()
             .all(|note| !note.is_conflict_copy));
+    }
+
+    #[tokio::test]
+    async fn processor_decrypts_snapshot_notes_when_dek_is_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let mut state = repo.get_or_create_sync_state().unwrap();
+        state.account_id = Some("acct_a".to_string());
+        repo.save_sync_state(&state).unwrap();
+        let dek = generate_dek();
+        let api = MockSyncApi::default();
+        let mut note = Note::draft(Utc::now());
+        note.owner_account_id = Some("acct_a".to_string());
+        let plaintext_title = "Remote encrypted title";
+        let plaintext_body = "# Remote encrypted body";
+        let payload = SyncPayload::Note(NoteChangePayload {
+            title: encrypt_field(&dek, plaintext_title).unwrap(),
+            content_md: encrypt_field(&dek, plaintext_body).unwrap(),
+            pinned: false,
+            deleted_at: None,
+        });
+        api.push(
+            "token:acct_a",
+            PushRequest {
+                device_id: "device-b".to_string(),
+                changes: vec![PushChange {
+                    queue_id: "q1".to_string(),
+                    note_id: note.id.clone(),
+                    base_version: 0,
+                    payload,
+                }],
+            },
+        )
+        .await
+        .unwrap();
+
+        import_snapshot_and_assets(&repo, &api, "token:acct_a", dir.path(), Some(&dek))
+            .await
+            .unwrap();
+
+        let imported = repo.get_note(&note.id).unwrap();
+        assert_eq!(imported.title, plaintext_title);
+        assert_eq!(imported.content_md, plaintext_body);
     }
 }

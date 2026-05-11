@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { EditorPane } from "../components/EditorPane";
 import { SyncSettings } from "../components/SyncSettings";
 import { api } from "../platform/api";
 import { IconButton, ListIcon, LogoIcon, PinIcon, PlusIcon, PreviewModeIcon, SettingsIcon, SourceModeIcon, ThemeDarkIcon, ThemeLightIcon, ThemeSystemIcon } from "../components/app/AppIcons";
 import { SearchIcon } from "./icons";
-import { loadLastNoteId, loadNotes, loadTheme, saveLastNoteId, saveNotes, saveTheme } from "./storage";
+import { loadLastNoteId, loadTheme, saveLastNoteId, saveTheme } from "./storage";
 import type { EditorMode, Note, ThemeMode } from "./types";
-import type { LoginSyncResult, SavedAsset, SyncAccountState } from "../types";
+import type { LoginSyncResult, Note as StoredNote, NoteSummary, SavedAsset, SyncAccountState } from "../types";
 import "./mobile.css";
 
 function nowId() {
@@ -20,6 +20,26 @@ function blankDraft(): Note {
     body: "",
     pinned: false,
     updatedAt: Date.now(),
+  };
+}
+
+function draftFromStored(note: StoredNote): Note {
+  return {
+    id: note.id,
+    title: note.title,
+    body: note.content_md,
+    pinned: note.pinned ?? false,
+    updatedAt: Date.parse(note.updated_at),
+  };
+}
+
+function noteFromSummary(summary: NoteSummary): Note {
+  return {
+    id: summary.id,
+    title: summary.title,
+    body: summary.preview_md ?? summary.preview ?? "",
+    pinned: summary.pinned ?? false,
+    updatedAt: Date.parse(summary.updated_at),
   };
 }
 
@@ -99,7 +119,7 @@ function useKeyboardOffset() {
 }
 
 export function AndroidApp() {
-  const [notes, setNotes] = useState<Note[]>(() => sortNotes(loadNotes().filter(hasMeaningfulContent)));
+  const [notes, setNotes] = useState<Note[]>([]);
   const [theme, setTheme] = useState<ThemeMode>(loadTheme);
   const [resolvedTheme, setResolvedTheme] = useState<"dark" | "light">("dark");
   const [editorMode, setEditorMode] = useState<EditorMode>("source");
@@ -108,12 +128,11 @@ export function AndroidApp() {
   const [settingsExpanded, setSettingsExpanded] = useState(false);
   const [syncAccount, setSyncAccount] = useState<SyncAccountState | null>(null);
   const keyboardOffset = useKeyboardOffset();
+  const [isSaving, setIsSaving] = useState(false);
+  const saveQueueRef = useRef(Promise.resolve());
+  const materializedDraftRef = useRef<{ tempId: string; savedId: string } | null>(null);
 
-  const [draft, setDraft] = useState<Note>(() => {
-    const saved = sortNotes(loadNotes().filter(hasMeaningfulContent));
-    const lastId = loadLastNoteId();
-    return saved.find((note) => note.id === lastId) ?? saved[0] ?? blankDraft();
-  });
+  const [draft, setDraft] = useState<Note>(() => blankDraft());
 
   const visibleNotes = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -143,43 +162,92 @@ export function AndroidApp() {
   }, []);
 
   useEffect(() => {
-    saveNotes(sortNotes(notes.filter(hasMeaningfulContent)));
-  }, [notes]);
-
-  useEffect(() => {
     saveLastNoteId(hasMeaningfulContent(draft) ? draft.id : null);
   }, [draft]);
 
-  function persistDraft(next: Note) {
+  const refreshNotes = useCallback(async (preferredId?: string | null) => {
+    materializedDraftRef.current = null;
+    const summaries = await api.searchNotes("");
+    const nextNotes = sortNotes(summaries.map(noteFromSummary).filter(hasMeaningfulContent));
+    setNotes(nextNotes);
+
+    const targetId = preferredId ?? loadLastNoteId();
+    const target = targetId ? nextNotes.find((note) => note.id === targetId) : null;
+    const summary = target ?? nextNotes[0] ?? null;
+    if (!summary) {
+      setDraft(blankDraft());
+      return;
+    }
+
+    const stored = await api.getNote(summary.id);
+    setDraft(draftFromStored(stored));
+  }, []);
+
+  useEffect(() => {
+    void refreshNotes().catch(() => undefined);
+  }, [refreshNotes]);
+
+  async function persistDraft(next: Note) {
     setDraft(next);
     setNotes((current) => {
       const without = current.filter((note) => note.id !== next.id);
       if (!hasMeaningfulContent(next)) return sortNotes(without);
       return sortNotes([next, ...without]);
     });
+    if (!hasMeaningfulContent(next)) return;
+    setIsSaving(true);
+    saveQueueRef.current = saveQueueRef.current.then(async () => {
+      const materialized = materializedDraftRef.current;
+      const saveId = next.id.startsWith("draft-")
+        ? materialized?.tempId === next.id ? materialized.savedId : null
+        : next.id;
+      const result = await api.saveDraftSession({
+        id: saveId,
+        title: next.title,
+        body_md: next.body,
+        pinned: next.pinned,
+      });
+      if (result.note) {
+        const saved = draftFromStored(result.note);
+        if (next.id.startsWith("draft-")) {
+          materializedDraftRef.current = { tempId: next.id, savedId: saved.id };
+        }
+        setDraft(saved);
+        setNotes((current) => sortNotes([saved, ...current.filter((note) => note.id !== saved.id && note.id !== next.id)]));
+        saveLastNoteId(saved.id);
+      }
+    }).finally(() => {
+      setIsSaving(false);
+    });
   }
 
   function updateDraft(patch: Partial<Note>) {
-    persistDraft({ ...draft, ...patch, updatedAt: Date.now() });
+    void persistDraft({ ...draft, ...patch, updatedAt: Date.now() });
   }
 
   function createNote() {
     const next = blankDraft();
+    materializedDraftRef.current = null;
     setDraft(next);
     setEditorMode("source");
     setSidebarOpen(false);
   }
 
   function openNote(note: Note) {
-    setDraft(note);
+    materializedDraftRef.current = null;
+    void api.getNote(note.id).then((stored) => setDraft(draftFromStored(stored))).catch(() => setDraft(note));
     setEditorMode("source");
     setSidebarOpen(false);
   }
 
   function deleteDraft() {
-    setNotes((current) => current.filter((note) => note.id !== draft.id));
-    const next = notes.filter((note) => note.id !== draft.id)[0] ?? blankDraft();
-    setDraft(next);
+    if (!draft.id.startsWith("draft-")) {
+      void api.deleteNote(draft.id).then(() => refreshNotes(null)).catch(() => undefined);
+    } else {
+      setNotes((current) => current.filter((note) => note.id !== draft.id));
+      const next = notes.filter((note) => note.id !== draft.id)[0] ?? blankDraft();
+      setDraft(next);
+    }
     setEditorMode("source");
   }
 
@@ -192,14 +260,30 @@ export function AndroidApp() {
     setNotes((current) => sortNotes(current.map((item) => (
       item.id === note.id ? { ...item, pinned: nextPinned, updatedAt: Date.now() } : item
     ))));
+    if (!note.id.startsWith("draft-")) void api.setNotePinned(note.id, nextPinned).catch(() => undefined);
   }
 
   function handleSyncSaved(result: LoginSyncResult) {
     setSyncAccount(result.account);
+    void refreshNotes().catch(() => undefined);
   }
 
-  async function handleRequestImageSave(_bytes: number[]): Promise<SavedAsset | null> {
-    return null;
+  async function handleRequestImageSave(bytes: number[]): Promise<SavedAsset | null> {
+    let noteId = draft.id;
+    if (noteId.startsWith("draft-")) {
+      const result = await api.saveDraftSession({
+        id: null,
+        title: draft.title,
+        body_md: draft.body,
+        pinned: draft.pinned,
+      });
+      if (!result.note) return null;
+      const saved = draftFromStored(result.note);
+      noteId = saved.id;
+      setDraft(saved);
+      setNotes((current) => sortNotes([saved, ...current.filter((note) => note.id !== draft.id && note.id !== saved.id)]));
+    }
+    return api.savePngAsset(noteId, bytes);
   }
 
   return (
@@ -302,7 +386,11 @@ export function AndroidApp() {
                   <SyncSettings
                     initial={syncAccount}
                     onSaved={handleSyncSaved}
-                    onSyncNow={() => api.syncNow()}
+                    onSyncNow={async () => {
+                      const report = await api.syncNow();
+                      await refreshNotes(draft.id.startsWith("draft-") ? null : draft.id);
+                      return report;
+                    }}
                   />
                 </div>
               ) : null}

@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use snapline_app_core::{AppCore, SyncAccountState};
-use snapline_domain::{crypto::decrypt_bytes, AssetMetadata};
+use snapline_domain::{
+    crypto::{decrypt_bytes, decrypt_field},
+    AssetMetadata, Note,
+};
 use snapline_sync_client::{
     processor::{self, FullSyncContext, FullSyncReport},
     protocol::{AssetDownload, LoginRequest, LoginResponse, SnapshotResponse},
@@ -185,7 +188,8 @@ pub fn import_snapshot_and_find_missing_assets(
     core: &AppCore,
     snapshot: &SnapshotResponse,
 ) -> Result<Vec<AssetMetadata>> {
-    core.import_snapshot(&snapshot.notes, snapshot.cursor)?;
+    let notes = snapshot_notes_plaintext(core, &snapshot.notes)?;
+    core.import_snapshot(&notes, snapshot.cursor)?;
     Ok(core.missing_asset_metadata(&snapshot.assets))
 }
 
@@ -216,4 +220,20 @@ fn login_sync_result(core: &AppCore, account: SyncAccountState) -> Result<LoginS
         account,
         anonymous_note_count: core.anonymous_note_count()?,
     })
+}
+
+fn snapshot_notes_plaintext(core: &AppCore, notes: &[Note]) -> Result<Vec<Note>> {
+    match core.dek() {
+        Some(key) => notes
+            .iter()
+            .map(|note| {
+                Ok(Note {
+                    title: decrypt_field(key, &note.title)?,
+                    content_md: decrypt_field(key, &note.content_md)?,
+                    ..note.clone()
+                })
+            })
+            .collect(),
+        None => Ok(notes.to_vec()),
+    }
 }

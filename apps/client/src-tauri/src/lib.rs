@@ -839,7 +839,23 @@ async fn import_snapshot_and_assets(
             .core
             .lock()
             .map_err(|_| "app state lock poisoned".to_string())?;
-        core.import_snapshot(&snapshot.notes, snapshot.cursor)
+        let notes = match core.dek() {
+            Some(key) => snapshot
+                .notes
+                .iter()
+                .map(|note| {
+                    Ok(Note {
+                        title: snapline_domain::crypto::decrypt_field(key, &note.title)
+                            .map_err(|err| err.to_string())?,
+                        content_md: snapline_domain::crypto::decrypt_field(key, &note.content_md)
+                            .map_err(|err| err.to_string())?,
+                        ..note.clone()
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+            None => snapshot.notes.clone(),
+        };
+        core.import_snapshot(&notes, snapshot.cursor)
             .map_err(|err| err.to_string())?;
         core.missing_asset_metadata(&snapshot.assets)
     };

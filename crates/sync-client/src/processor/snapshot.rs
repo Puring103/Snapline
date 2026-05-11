@@ -1,3 +1,4 @@
+use crate::processor::crypto::decrypt_note;
 use crate::SyncApi;
 use anyhow::Result;
 use chrono::Utc;
@@ -16,7 +17,8 @@ pub(super) async fn import_snapshot_and_assets_from_path<A: SyncApi + Sync>(
     let snapshot = api.snapshot(token).await?;
     let missing_assets = {
         let repo = NoteRepository::open(db_path)?;
-        import_snapshot(&repo, &snapshot.notes, snapshot.cursor)?;
+        let notes = snapshot_notes_plaintext(&snapshot.notes, dek)?;
+        import_snapshot(&repo, &notes, snapshot.cursor)?;
         missing_asset_metadata(data_dir, &snapshot.assets)
     };
     for asset in missing_assets {
@@ -35,7 +37,8 @@ pub async fn import_snapshot_and_assets<A: SyncApi + Sync>(
     dek: Option<&[u8; 32]>,
 ) -> Result<()> {
     let snapshot = api.snapshot(token).await?;
-    import_snapshot(repo, &snapshot.notes, snapshot.cursor)?;
+    let notes = snapshot_notes_plaintext(&snapshot.notes, dek)?;
+    import_snapshot(repo, &notes, snapshot.cursor)?;
     let missing_assets = missing_asset_metadata(data_dir, &snapshot.assets);
     for asset in missing_assets {
         let downloaded = api.download_asset(token, &asset.id.to_string()).await?;
@@ -43,6 +46,13 @@ pub async fn import_snapshot_and_assets<A: SyncApi + Sync>(
         save_remote_asset(data_dir, &asset, &bytes)?;
     }
     Ok(())
+}
+
+fn snapshot_notes_plaintext(notes: &[Note], dek: Option<&[u8; 32]>) -> Result<Vec<Note>> {
+    match dek {
+        Some(key) => notes.iter().map(|note| decrypt_note(key, note)).collect(),
+        None => Ok(notes.to_vec()),
+    }
 }
 
 fn asset_plaintext(bytes: &[u8], dek: Option<&[u8; 32]>) -> Result<Vec<u8>> {
