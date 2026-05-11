@@ -739,6 +739,32 @@ html[data-theme="dark"] .markdownSurface .ProseMirror pre {
   -webkit-app-region: no-drag;
 }
 
+.searchBar {
+  flex: none;
+  padding: 0 2px;
+}
+
+.searchInput {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 11px;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  font-size: 13px;
+}
+
+.searchInput::placeholder {
+  color: var(--muted);
+}
+
+.searchInput:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .listPanel {
   flex: 1;
   min-height: 0;

@@ -1,7 +1,7 @@
 import { emit, listen } from "@tauri-apps/api/event";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { SettingsPanel } from "./SettingsPanel";
 import {
   CheckIcon,
@@ -23,14 +23,7 @@ import { deleteConfirmationFor, sortNotes, upsertNote } from "../../features/syn
 import type { LoginSyncResult, NoteSummary, SyncAccountState, SyncReport, SyncStatusState } from "../../types";
 
 const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
-
-const LazyMarkdownPreview = lazy(() => {
-  startupLog("preview_chunk_requested");
-  return import("../MarkdownPreview").then((module) => {
-    startupLog("preview_chunk_loaded");
-    return { default: module.MarkdownPreview };
-  });
-});
+const LazyMarkdownPreview = lazy(() => import("../MarkdownPreview").then((module) => ({ default: module.MarkdownPreview })));
 
 export function NotesListWindow() {
   const [notes, setNotes] = useState<NoteSummary[]>([]);
@@ -45,6 +38,9 @@ export function NotesListWindow() {
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [themeMode, setThemeMode] = useThemeMode();
   const [pendingImportCount, setPendingImportCount] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchQueryRef = useRef("");
+  const searchMountedRef = useRef(false);
 
   const refreshNotes = useCallback(async (quiet = false) => {
     try {
@@ -55,14 +51,18 @@ export function NotesListWindow() {
       }
       const state = await api.bootstrap();
       setDataDir(state.data_dir);
+      const currentSearchQuery = searchQueryRef.current;
+      const nextNotes = currentSearchQuery.trim()
+        ? await api.searchNotes(currentSearchQuery)
+        : state.notes;
       startupLog("list_bootstrap_done", {
         quiet,
-        notes: state.notes.length,
+        notes: nextNotes.length,
         duration_ms: Math.round(performance.now() - startedAt),
       });
-      setNotes(state.notes);
+      setNotes(nextNotes);
       setConfirmingDeleteId((current) =>
-        current && state.notes.some((note) => note.id === current) ? current : null,
+        current && nextNotes.some((note) => note.id === current) ? current : null,
       );
       setStatus("Ready");
     } catch (err) {
@@ -147,6 +147,15 @@ export function NotesListWindow() {
   }, [refreshNotes]);
 
   const visibleNotes = useMemo(() => sortNotes(notes), [notes]);
+
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+    if (!searchMountedRef.current) {
+      searchMountedRef.current = true;
+      return;
+    }
+    void refreshNotes(true);
+  }, [refreshNotes, searchQuery]);
 
   function persistShortcut(nextShortcut: string) {
     void api
@@ -270,9 +279,20 @@ export function NotesListWindow() {
 
       {error ? <div className="errorBanner">{error}</div> : null}
 
+      <div className="searchBar">
+        <input
+          aria-label="Search notes"
+          className="searchInput"
+          placeholder="Search notes"
+          type="search"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+        />
+      </div>
+
       <section className="listPanel" aria-label="Note list">
         {visibleNotes.length === 0 ? (
-          <div className="emptyList">No saved notes yet.</div>
+          <div className="emptyList">{searchQuery.trim() ? "No matching notes." : "No saved notes yet."}</div>
         ) : (
           visibleNotes.map((note) => {
             const pinned = note.pinned ?? false;

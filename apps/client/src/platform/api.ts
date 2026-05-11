@@ -32,6 +32,7 @@ export const api = {
   createNote: () => invoke<Note>("create_note"),
   getNote: (id: string) => invoke<Note>("get_note", { id }),
   getNoteSummary: (id: string) => invoke<NoteSummary>("get_note_summary", { id }),
+  searchNotes: (query: string) => invoke<NoteSummary[]>("search_notes", { query }),
   saveNote: (id: string, title: string, contentMd: string, pinned: boolean) =>
     invoke<Note>("save_note", { id, title, contentMd, pinned }),
   saveDraftSession: (request: {

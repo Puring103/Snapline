@@ -304,6 +304,16 @@ fn get_note_summary(state: State<'_, AppState>, id: String) -> Result<NoteSummar
 }
 
 #[tauri::command]
+fn search_notes(state: State<'_, AppState>, query: String) -> Result<Vec<NoteSummary>, String> {
+    state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?
+        .search_notes(&query)
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 fn save_note(
     state: State<'_, AppState>,
     id: String,
@@ -991,6 +1001,7 @@ pub fn run() {
             create_note,
             get_note,
             get_note_summary,
+            search_notes,
             save_note,
             save_draft_session,
             set_note_title,

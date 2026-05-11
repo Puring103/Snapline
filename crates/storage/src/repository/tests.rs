@@ -255,3 +255,75 @@ fn imports_anonymous_notes_into_account() {
         local.id
     );
 }
+
+#[test]
+fn searches_notes_with_fts5_and_owner_scope() {
+    let repo = NoteRepository::open_in_memory().unwrap();
+    let t1 = Utc.with_ymd_and_hms(2026, 5, 11, 9, 0, 0).unwrap();
+    let local = repo.create_note(t1, None).unwrap();
+    let account = repo.create_note(t1, Some("acct_a")).unwrap();
+    let other = repo.create_note(t1, Some("acct_b")).unwrap();
+
+    repo.save_note(
+        &local.id,
+        "Local roadmap",
+        "Searchable local body",
+        false,
+        t1,
+        None,
+    )
+    .unwrap();
+    repo.save_note(
+        &account.id,
+        "Account roadmap",
+        "Searchable account body",
+        false,
+        t1,
+        Some("acct_a"),
+    )
+    .unwrap();
+    repo.save_note(
+        &other.id,
+        "Other roadmap",
+        "Searchable other body",
+        false,
+        t1,
+        Some("acct_b"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        repo.search_notes_for_owner("roadmap", 10, None).unwrap()[0].id,
+        local.id
+    );
+    assert_eq!(
+        repo.search_notes_for_owner("roadmap", 10, Some("acct_a"))
+            .unwrap()[0]
+            .id,
+        account.id
+    );
+    assert!(repo
+        .search_notes_for_owner("roadmap", 10, Some("missing"))
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn search_falls_back_for_partial_or_cjk_matches() {
+    let repo = NoteRepository::open_in_memory().unwrap();
+    let t1 = Utc.with_ymd_and_hms(2026, 5, 11, 9, 30, 0).unwrap();
+    let note = repo.create_note(t1, None).unwrap();
+    repo.save_note(
+        &note.id,
+        "搜索笔记",
+        "这里可以实现全文搜索功能",
+        false,
+        t1,
+        None,
+    )
+    .unwrap();
+
+    let results = repo.search_notes_for_owner("全文搜索", 10, None).unwrap();
+
+    assert_eq!(results[0].id, note.id);
+}

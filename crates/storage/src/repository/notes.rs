@@ -255,6 +255,113 @@ impl NoteRepository {
         }
     }
 
+    pub fn search_notes_for_owner(
+        &self,
+        query: &str,
+        limit: usize,
+        owner_account_id: Option<&str>,
+    ) -> Result<Vec<NoteSummary>> {
+        let Some(fts_query) = fts5_query(query) else {
+            return self.list_recent_for_owner(limit, owner_account_id);
+        };
+
+        let results = match owner_account_id {
+            Some(owner) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT notes.id, notes.title, notes.pinned, notes.updated_at, notes.content_md,
+                            notes.is_conflict_copy, notes.source_note_id, notes.owner_account_id,
+                            bm25(note_search) AS rank
+                     FROM note_search
+                     JOIN notes ON notes.rowid = note_search.rowid
+                     WHERE note_search MATCH ?1
+                       AND notes.deleted_at IS NULL
+                       AND notes.owner_account_id = ?2
+                     ORDER BY notes.pinned DESC, rank ASC, notes.updated_at DESC
+                     LIMIT ?3",
+                )?;
+                let rows = stmt.query_map(
+                    params![fts_query, owner, limit as i64],
+                    note_summary_from_search_row,
+                )?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            }
+            None => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT notes.id, notes.title, notes.pinned, notes.updated_at, notes.content_md,
+                            notes.is_conflict_copy, notes.source_note_id, notes.owner_account_id,
+                            bm25(note_search) AS rank
+                     FROM note_search
+                     JOIN notes ON notes.rowid = note_search.rowid
+                     WHERE note_search MATCH ?1
+                       AND notes.deleted_at IS NULL
+                       AND notes.owner_account_id IS NULL
+                     ORDER BY notes.pinned DESC, rank ASC, notes.updated_at DESC
+                     LIMIT ?2",
+                )?;
+                let rows = stmt.query_map(
+                    params![fts_query, limit as i64],
+                    note_summary_from_search_row,
+                )?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            }
+        }?;
+
+        if results.is_empty() {
+            return self.search_notes_like_for_owner(query, limit, owner_account_id);
+        }
+
+        Ok(results)
+    }
+
+    fn search_notes_like_for_owner(
+        &self,
+        query: &str,
+        limit: usize,
+        owner_account_id: Option<&str>,
+    ) -> Result<Vec<NoteSummary>> {
+        let escaped = query
+            .trim()
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        if escaped.is_empty() {
+            return self.list_recent_for_owner(limit, owner_account_id);
+        }
+        let pattern = format!("%{escaped}%");
+
+        match owner_account_id {
+            Some(owner) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, title, pinned, updated_at, content_md, is_conflict_copy, source_note_id, owner_account_id
+                     FROM notes
+                     WHERE deleted_at IS NULL
+                       AND owner_account_id = ?2
+                       AND (title LIKE ?1 ESCAPE '\\' OR content_md LIKE ?1 ESCAPE '\\')
+                     ORDER BY pinned DESC, updated_at DESC
+                     LIMIT ?3",
+                )?;
+                let rows =
+                    stmt.query_map(params![pattern, owner, limit as i64], note_summary_from_row)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(Into::into)
+            }
+            None => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, title, pinned, updated_at, content_md, is_conflict_copy, source_note_id, owner_account_id
+                     FROM notes
+                     WHERE deleted_at IS NULL
+                       AND owner_account_id IS NULL
+                       AND (title LIKE ?1 ESCAPE '\\' OR content_md LIKE ?1 ESCAPE '\\')
+                     ORDER BY pinned DESC, updated_at DESC
+                     LIMIT ?2",
+                )?;
+                let rows = stmt.query_map(params![pattern, limit as i64], note_summary_from_row)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(Into::into)
+            }
+        }
+    }
+
     pub fn count_anonymous_notes(&self) -> Result<usize> {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM notes WHERE owner_account_id IS NULL AND deleted_at IS NULL",
@@ -324,6 +431,25 @@ fn note_summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteSummar
             .transpose()?,
         owner_account_id: row.get(7)?,
     })
+}
+
+fn note_summary_from_search_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NoteSummary> {
+    note_summary_from_row(row)
+}
+
+fn fts5_query(query: &str) -> Option<String> {
+    let terms = query
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect::<Vec<_>>();
+
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" AND "))
+    }
 }
 
 fn parse_uuid(value: String) -> rusqlite::Result<Uuid> {

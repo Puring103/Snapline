@@ -45,6 +45,22 @@ impl NoteRepository {
             );
             CREATE INDEX IF NOT EXISTS idx_notes_deleted_pinned_updated
             ON notes (deleted_at, pinned DESC, updated_at DESC);
+            CREATE VIRTUAL TABLE IF NOT EXISTS note_search
+            USING fts5(title, content_md, content='notes', content_rowid='rowid');
+            CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
+              INSERT INTO note_search(rowid, title, content_md)
+              VALUES (new.rowid, new.title, new.content_md);
+            END;
+            CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
+              INSERT INTO note_search(note_search, rowid, title, content_md)
+              VALUES('delete', old.rowid, old.title, old.content_md);
+            END;
+            CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
+              INSERT INTO note_search(note_search, rowid, title, content_md)
+              VALUES('delete', old.rowid, old.title, old.content_md);
+              INSERT INTO note_search(rowid, title, content_md)
+              VALUES (new.rowid, new.title, new.content_md);
+            END;
             CREATE TABLE IF NOT EXISTS settings (
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
@@ -57,6 +73,8 @@ impl NoteRepository {
         self.ensure_column("notes", "is_conflict_copy", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column("notes", "source_note_id", "TEXT")?;
         self.ensure_column("notes", "owner_account_id", "TEXT")?;
+        self.conn
+            .execute("INSERT INTO note_search(note_search) VALUES('rebuild')", [])?;
         sync::migrate_sync_tables(&self.conn)?;
         Ok(())
     }

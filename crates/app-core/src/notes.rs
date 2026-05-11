@@ -27,6 +27,12 @@ impl AppCore {
         Ok(summarize_note(&note))
     }
 
+    pub fn search_notes(&self, query: &str) -> Result<Vec<NoteSummary>> {
+        let owner = self.current_account_id()?;
+        self.repo
+            .search_notes_for_owner(query, 50, owner.as_deref())
+    }
+
     pub fn save_note(
         &self,
         id: &NoteId,
