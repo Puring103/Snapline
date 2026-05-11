@@ -15,7 +15,6 @@ import {
 } from "../../features/sync/session";
 import type { LoginSyncResult, Note, SavedAsset, SyncAccountState } from "../../types";
 import { SettingsPanel } from "./SettingsPanel";
-import { EditorLoadingState } from "./EditorLoadingState";
 import {
   CloseIcon,
   ConflictIcon,
@@ -30,14 +29,7 @@ import { useThemeMode } from "../../hooks/theme";
 
 const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
 const FOCUS_EDITOR_EVENT = "snapline-focus-editor";
-
-const LazyEditorPane = lazy(() => {
-  startupLog("editor_chunk_requested");
-  return import("../EditorPane").then((module) => {
-    startupLog("editor_chunk_loaded");
-    return { default: module.EditorPane };
-  });
-});
+const LazyEditorPane = lazy(() => import("../EditorPane").then((module) => ({ default: module.EditorPane })));
 
 export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; noteId: string | null }) {
   const windowLabel = useMemo(() => getCurrentWindow().label, []);
@@ -505,7 +497,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
               ) : null}
             </div>
           ) : null}
-          <Suspense fallback={<EditorLoadingState bodyMarkdown={session.bodyMd} />}>
+          <Suspense fallback={<EditorPaneFallback bodyMarkdown={session.bodyMd} readOnly={deleted} onBodyChange={handleBodyChange} />}>
             <LazyEditorPane
               bodyMarkdown={session.bodyMd}
               dataDir={dataDir}
@@ -539,4 +531,28 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
 
 function pointerPositionFromEvent(event?: MouseEvent<HTMLElement>) {
   return event ? { x: event.screenX, y: event.screenY } : undefined;
+}
+
+function EditorPaneFallback({
+  bodyMarkdown,
+  onBodyChange,
+  readOnly,
+}: {
+  bodyMarkdown: string;
+  onBodyChange: (bodyMarkdown: string) => void;
+  readOnly: boolean;
+}) {
+  return (
+    <div className="editorShell">
+      <textarea
+        aria-label="Note body source"
+        className="editorSurface editorLoadingSurface editorSourceSurface"
+        onChange={(event) => onBodyChange(event.target.value)}
+        placeholder="Write before the thought fades..."
+        readOnly={readOnly}
+        spellCheck={false}
+        value={bodyMarkdown}
+      />
+    </div>
+  );
 }

@@ -1,4 +1,6 @@
 import { Suspense, lazy, useEffect, useMemo } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { api } from "./platform/api";
 import { startupLog } from "./platform/startupLog";
 import { readAppRoute } from "./platform/window";
 import { useThemeSync } from "./hooks/theme";
@@ -17,7 +19,28 @@ export function App() {
       has_note_id: route.noteId !== null,
       new_draft: route.newDraft,
     });
+
+    const currentWindow = getCurrentWindow();
+    if (currentWindow.label !== "main") {
+      void revealCurrentWindow(currentWindow);
+      return;
+    }
+
+    void api
+      .launchedInBackground()
+      .then((isBackgroundLaunch) => {
+        if (!isBackgroundLaunch) {
+          void revealCurrentWindow(currentWindow);
+        }
+      })
+      .catch(() => {
+        void revealCurrentWindow(currentWindow);
+      });
   }, [route.mode, route.noteId, route.newDraft]);
+
+  useEffect(() => {
+    preloadEditorChunks();
+  }, []);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -36,4 +59,26 @@ export function App() {
   }
 
   return route.mode === "list" ? <NotesListWindow /> : <NoteEditorWindow newDraft={route.newDraft} noteId={route.noteId} />;
+}
+
+async function revealCurrentWindow(window: ReturnType<typeof getCurrentWindow>) {
+  await window.show();
+  await window.unminimize();
+  await window.setFocus();
+}
+
+function preloadEditorChunks() {
+  const preload = () => {
+    void Promise.all([
+      import("./components/EditorPane"),
+      import("./components/MarkdownPreview"),
+    ]).catch(() => undefined);
+  };
+
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(preload, { timeout: 1200 });
+    return;
+  }
+
+  globalThis.setTimeout(preload, 0);
 }

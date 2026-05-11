@@ -34,6 +34,7 @@
         "height": 440,
         "minWidth": 300,
         "minHeight": 260,
+        "visible": false,
         "resizable": true,
         "decorations": false
       }

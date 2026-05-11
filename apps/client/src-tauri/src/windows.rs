@@ -128,7 +128,8 @@ pub fn build_note_window(
         .inner_size(NOTE_WINDOW_WIDTH, NOTE_WINDOW_HEIGHT)
         .min_inner_size(NOTE_WINDOW_MIN_WIDTH, NOTE_WINDOW_MIN_HEIGHT)
         .resizable(true)
-        .decorations(false);
+        .decorations(false)
+        .visible(false);
 
     builder = if let Some(position) = position {
         builder.position(position.x, position.y)
@@ -136,8 +137,7 @@ pub fn build_note_window(
         builder.center()
     };
 
-    let window = builder.build().map_err(|err| err.to_string())?;
-    reveal_window(&window, None)?;
+    let _window = builder.build().map_err(|err| err.to_string())?;
     Ok(label.to_string())
 }
 
