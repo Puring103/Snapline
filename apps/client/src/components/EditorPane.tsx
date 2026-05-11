@@ -39,6 +39,7 @@ interface EditorPaneProps {
   onRequestImageSave: (bytes: number[]) => Promise<SavedAsset | null>;
   readOnly?: boolean;
   showModeToggle?: boolean;
+  toolbarVariant?: "compact" | "full";
 }
 
 export function EditorPane({
@@ -51,6 +52,7 @@ export function EditorPane({
   onRequestImageSave,
   readOnly = false,
   showModeToggle = true,
+  toolbarVariant = "compact",
 }: EditorPaneProps) {
   const suppressNextUpdate = useRef(false);
   const editorRef = useRef<Editor | null>(null);
@@ -58,7 +60,6 @@ export function EditorPane({
   const uploadedImageSources = useRef(new Map<string, string>());
   const hydratedImageSources = useRef(new Map<string, string>());
   const assetBlobUrls = useRef(new Map<string, string>());
-
   const editor = useEditor({
     extensions: createMarkdownExtensions("Write before the thought fades..."),
     content: bodyMarkdown,
@@ -243,6 +244,7 @@ export function EditorPane({
           mode={mode}
           onModeToggle={onModeToggle}
           showModeToggle={showModeToggle}
+          variant={toolbarVariant}
         />
       ) : null}
     </div>
@@ -457,11 +459,13 @@ function EditorToolbar({
   mode,
   onModeToggle,
   showModeToggle,
+  variant,
 }: {
   editor: Editor | null;
   mode: EditorMode;
   onModeToggle: () => void;
   showModeToggle: boolean;
+  variant: "compact" | "full";
 }) {
   if (!editor && !showModeToggle) {
     return null;
@@ -471,6 +475,32 @@ function EditorToolbar({
     <div className="editorToolbar">
       {editor ? (
         <>
+          {variant === "full" ? (
+            <>
+              <ToolbarButton
+                active={editor.isActive("heading", { level: 1 })}
+                label="Heading 1"
+                onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+              >
+                <HeadingIcon level={1} />
+              </ToolbarButton>
+              <ToolbarButton
+                active={editor.isActive("heading", { level: 2 })}
+                label="Heading 2"
+                onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+              >
+                <HeadingIcon level={2} />
+              </ToolbarButton>
+              <ToolbarButton
+                active={editor.isActive("heading", { level: 3 })}
+                label="Heading 3"
+                onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+              >
+                <HeadingIcon level={3} />
+              </ToolbarButton>
+              <div className="editorToolbarDivider" />
+            </>
+          ) : null}
           <ToolbarButton
             active={editor.isActive("bold")}
             label="Bold"
@@ -486,6 +516,20 @@ function EditorToolbar({
             <ItalicIcon />
           </ToolbarButton>
           <ToolbarButton
+            active={editor.isActive("strike")}
+            label="Strikethrough"
+            onClick={() => editor.chain().focus().toggleStrike().run()}
+          >
+            <StrikeIcon />
+          </ToolbarButton>
+          <ToolbarButton
+            active={editor.isActive("underline")}
+            label="Underline"
+            onClick={() => editor.chain().focus().toggleUnderline().run()}
+          >
+            <UnderlineIcon />
+          </ToolbarButton>
+          <ToolbarButton
             active={editor.isActive("code")}
             label="Inline code"
             onClick={() => editor.chain().focus().toggleCode().run()}
@@ -493,6 +537,59 @@ function EditorToolbar({
             <InlineCodeIcon />
           </ToolbarButton>
           <div className="editorToolbarDivider" />
+          {variant === "full" ? (
+            <>
+              <ToolbarButton
+                disabled={!editor.can().undo()}
+                active={false}
+                label="Undo"
+                onClick={() => editor.chain().focus().undo().run()}
+              >
+                <UndoIcon />
+              </ToolbarButton>
+              <ToolbarButton
+                disabled={!editor.can().redo()}
+                active={false}
+                label="Redo"
+                onClick={() => editor.chain().focus().redo().run()}
+              >
+                <RedoIcon />
+              </ToolbarButton>
+              <div className="editorToolbarDivider" />
+            </>
+          ) : null}
+          {variant === "full" ? (
+            <>
+              <ToolbarButton
+                active={editor.isActive("bulletList")}
+                label="Bullet list"
+                onClick={() => editor.chain().focus().toggleBulletList().run()}
+              >
+                <BulletListIcon />
+              </ToolbarButton>
+              <ToolbarButton
+                active={editor.isActive("orderedList")}
+                label="Ordered list"
+                onClick={() => editor.chain().focus().toggleOrderedList().run()}
+              >
+                <OrderedListIcon />
+              </ToolbarButton>
+              <ToolbarButton
+                active={false}
+                label="Indent"
+                onClick={() => indentSelection(editor)}
+              >
+                <IndentIcon />
+              </ToolbarButton>
+              <ToolbarButton
+                active={false}
+                label="Outdent"
+                onClick={() => outdentSelection(editor)}
+              >
+                <OutdentIcon />
+              </ToolbarButton>
+            </>
+          ) : null}
           <ToolbarButton
             active={editor.isActive("taskList")}
             label="Task list"
@@ -501,13 +598,32 @@ function EditorToolbar({
             <TaskListIcon />
           </ToolbarButton>
           <div className="editorToolbarDivider" />
-          <ToolbarButton
-            active={editor.isActive("codeBlock")}
-            label="Code block"
-            onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-          >
-            <CodeBlockIcon />
-          </ToolbarButton>
+          {variant === "full" ? (
+            <>
+              <ToolbarButton
+                active={editor.isActive("blockquote")}
+                label="Blockquote"
+                onClick={() => editor.chain().focus().toggleBlockquote().run()}
+              >
+                <BlockquoteIcon />
+              </ToolbarButton>
+              <ToolbarButton
+                active={editor.isActive("codeBlock")}
+                label="Code block"
+                onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+              >
+                <CodeBlockIcon />
+              </ToolbarButton>
+            </>
+          ) : (
+            <ToolbarButton
+              active={editor.isActive("codeBlock")}
+              label="Code block"
+              onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+            >
+              <CodeBlockIcon />
+            </ToolbarButton>
+          )}
         </>
       ) : null}
       {showModeToggle ? (
@@ -529,11 +645,13 @@ function EditorToolbar({
 
 function ToolbarButton({
   active,
+  disabled = false,
   label,
   onClick,
   children,
 }: {
   active: boolean;
+  disabled?: boolean;
   label: string;
   onClick: () => void;
   children: ReactNode;
@@ -542,8 +660,10 @@ function ToolbarButton({
     <button
       aria-label={label}
       className={active ? "editorToolbarBtn editorToolbarBtnActive" : "editorToolbarBtn"}
+      disabled={disabled}
       onMouseDown={(e) => {
         e.preventDefault();
+        if (disabled) return;
         onClick();
       }}
       title={label}
@@ -552,6 +672,33 @@ function ToolbarButton({
       {children}
     </button>
   );
+}
+
+function SelectionMenu({
+  position,
+  onCopy,
+  onPaste,
+}: {
+  position: { x: number; y: number } | null;
+  onCopy: () => void;
+  onPaste: () => void;
+}) {
+  if (!position) return null;
+
+  return (
+    <div className="editorSelectionMenu" style={{ left: position.x, top: position.y }}>
+      <button onMouseDown={(event) => { event.preventDefault(); onCopy(); }} type="button">Copy</button>
+      <button onMouseDown={(event) => { event.preventDefault(); onPaste(); }} type="button">Paste</button>
+    </div>
+  );
+}
+
+function UndoIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7 5 11l4 4"/><path d="M5 11h9a5 5 0 0 1 0 10h-1"/></svg>;
+}
+
+function RedoIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 7 4 4-4 4"/><path d="M19 11h-9a5 5 0 0 0 0 10h1"/></svg>;
 }
 
 function BoldIcon() {
@@ -566,8 +713,45 @@ function InlineCodeIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8L5 12l4 4M15 8l4 4-4 4"/></svg>;
 }
 
+function HeadingIcon({ level }: { level: 1 | 2 | 3 }) {
+  const marker = level === 1
+    ? "M20 19v-5l-2 1"
+    : level === 2
+      ? "M18 15.5a2 2 0 0 1 4 0c0 1.8-4 3.5-4 3.5h4"
+      : "M18 14h3a1.5 1.5 0 0 1 0 3h-2M21 17a1.5 1.5 0 0 1 0 3h-3";
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5v14M17 5v14M5 12h12"/><path d={marker} /></svg>;
+}
+
+function StrikeIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M16 6.5C15.1 5.5 13.7 5 12 5c-2.4 0-4 1.2-4 3 0 2.2 2.3 2.8 4 3M8 17.5c.9 1 2.3 1.5 4 1.5 2.4 0 4-1.2 4-3 0-1-.5-1.8-1.4-2.3"/></svg>;
+}
+
+function UnderlineIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v6a5 5 0 0 0 10 0V4M5 21h14"/></svg>;
+}
+
+function BulletListIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>;
+}
+
+function OrderedListIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h10M10 12h10M10 18h10"/><path d="M4 5h1v4M3.8 9h2.4M3.7 11.5h2.1L4 14h2M4 17h1.7a1 1 0 0 1 0 2H4.4M5.7 19a1 1 0 0 1 0 2H4"/></svg>;
+}
+
+function IndentIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M12 12h8M4 18h16"/><path d="m4 9 3 3-3 3"/></svg>;
+}
+
+function OutdentIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M12 12h8M4 18h16"/><path d="m7 9-3 3 3 3"/></svg>;
+}
+
 function TaskListIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="5" height="5" rx="1"/><path d="M4.5 7.5l1 1 2-2"/><path d="M10 7.5h10M10 12.5h10M10 17.5h10"/><rect x="3" y="10" width="5" height="5" rx="1"/><rect x="3" y="15" width="5" height="5" rx="1"/></svg>;
+}
+
+function BlockquoteIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M4 12h8M4 17h10"/><path d="M19 7c-2 1-2 3.5-2 3.5H20V16h-5v-5c0-2.6 1.4-4.6 3.7-5.8z"/></svg>;
 }
 
 function CodeBlockIcon() {
@@ -611,6 +795,28 @@ function updateImageSource(editor: Editor, source: string, nextSource: string | 
 
     return updated;
   });
+}
+
+function indentSelection(editor: Editor) {
+  const chain = editor.chain().focus();
+  if (editor.isActive("bulletList") || editor.isActive("orderedList") || editor.isActive("taskList")) {
+    chain.sinkListItem("listItem").run() || editor.chain().focus().sinkListItem("taskItem").run();
+    return;
+  }
+
+  chain.toggleBlockquote().run();
+}
+
+function outdentSelection(editor: Editor) {
+  const chain = editor.chain().focus();
+  if (editor.isActive("bulletList") || editor.isActive("orderedList") || editor.isActive("taskList")) {
+    chain.liftListItem("listItem").run() || editor.chain().focus().liftListItem("taskItem").run();
+    return;
+  }
+
+  if (editor.isActive("blockquote")) {
+    chain.toggleBlockquote().run();
+  }
 }
 
 function linkElementFromEvent(event: MouseEvent): HTMLAnchorElement | null {

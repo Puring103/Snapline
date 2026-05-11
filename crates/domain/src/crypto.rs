@@ -69,6 +69,18 @@ pub fn decrypt_field(dek: &[u8; 32], encoded: &str) -> Result<String> {
     String::from_utf8(plaintext).map_err(|e| anyhow!("decrypt utf8: {e}"))
 }
 
+/// Decrypt a text field, but preserve legacy plaintext values that predate E2EE.
+pub fn decrypt_field_legacy_plaintext(dek: &[u8; 32], value: &str) -> Result<String> {
+    match B64.decode(value) {
+        Ok(blob) if blob.len() >= NONCE_LEN => {
+            let plaintext = open_raw(dek, &blob)?;
+            String::from_utf8(plaintext).map_err(|e| anyhow!("decrypt utf8: {e}"))
+        }
+        Ok(_) => Ok(value.to_string()),
+        Err(_) => Ok(value.to_string()),
+    }
+}
+
 /// 用 DEK 解密二进制内容，输入为 nonce || ciphertext。
 pub fn decrypt_bytes(dek: &[u8; 32], encrypted: &[u8]) -> Result<Vec<u8>> {
     open_raw(dek, encrypted)
@@ -161,11 +173,21 @@ mod tests {
         let other_key = generate_dek();
         let encoded = encrypt_field(&dek, "secret").unwrap();
         assert!(decrypt_field(&other_key, &encoded).is_err());
+        assert!(decrypt_field_legacy_plaintext(&other_key, &encoded).is_err());
     }
 
     #[test]
     fn salt_encode_decode_round_trip() {
         let salt = generate_kek_salt();
         assert_eq!(decode_salt(&encode_salt(&salt)).unwrap(), salt);
+    }
+
+    #[test]
+    fn legacy_plaintext_field_is_preserved() {
+        let dek = generate_dek();
+        assert_eq!(
+            decrypt_field_legacy_plaintext(&dek, "中文标题").unwrap(),
+            "中文标题"
+        );
     }
 }

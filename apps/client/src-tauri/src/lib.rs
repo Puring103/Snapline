@@ -845,10 +845,16 @@ async fn import_snapshot_and_assets(
                 .iter()
                 .map(|note| {
                     Ok(Note {
-                        title: snapline_domain::crypto::decrypt_field(key, &note.title)
-                            .map_err(|err| err.to_string())?,
-                        content_md: snapline_domain::crypto::decrypt_field(key, &note.content_md)
-                            .map_err(|err| err.to_string())?,
+                        title: snapline_domain::crypto::decrypt_field_legacy_plaintext(
+                            key,
+                            &note.title,
+                        )
+                        .map_err(|err| err.to_string())?,
+                        content_md: snapline_domain::crypto::decrypt_field_legacy_plaintext(
+                            key,
+                            &note.content_md,
+                        )
+                        .map_err(|err| err.to_string())?,
                         ..note.clone()
                     })
                 })

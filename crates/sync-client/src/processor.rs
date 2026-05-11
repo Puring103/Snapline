@@ -416,4 +416,41 @@ mod tests {
         assert_eq!(imported.title, plaintext_title);
         assert_eq!(imported.content_md, plaintext_body);
     }
+
+    #[tokio::test]
+    async fn processor_imports_legacy_plaintext_snapshot_with_dek() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = NoteRepository::open_in_memory().unwrap();
+        let mut state = repo.get_or_create_sync_state().unwrap();
+        state.account_id = Some("acct_a".to_string());
+        repo.save_sync_state(&state).unwrap();
+        let dek = generate_dek();
+        let api = MockSyncApi::default();
+        let mut note = Note::draft(Utc::now());
+        note.owner_account_id = Some("acct_a".to_string());
+        note.title = "中文标题".to_string();
+        note.content_md = "# 中文正文".to_string();
+        api.push(
+            "token:acct_a",
+            PushRequest {
+                device_id: "device-b".to_string(),
+                changes: vec![PushChange {
+                    queue_id: "q1".to_string(),
+                    note_id: note.id.clone(),
+                    base_version: 0,
+                    payload: SyncPayload::Note(NoteChangePayload::from_note(&note)),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+
+        import_snapshot_and_assets(&repo, &api, "token:acct_a", dir.path(), Some(&dek))
+            .await
+            .unwrap();
+
+        let imported = repo.get_note(&note.id).unwrap();
+        assert_eq!(imported.title, "中文标题");
+        assert_eq!(imported.content_md, "# 中文正文");
+    }
 }

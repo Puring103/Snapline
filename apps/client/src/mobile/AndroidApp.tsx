@@ -4,6 +4,7 @@ import { SyncSettings } from "../components/SyncSettings";
 import { api } from "../platform/api";
 import { IconButton, ListIcon, LogoIcon, PinIcon, PlusIcon, PreviewModeIcon, SettingsIcon, SourceModeIcon, ThemeDarkIcon, ThemeLightIcon, ThemeSystemIcon } from "../components/app/AppIcons";
 import { SearchIcon } from "./icons";
+import { HighlightedText } from "../features/search/highlight";
 import { loadLastNoteId, loadTheme, saveLastNoteId, saveTheme } from "./storage";
 import type { EditorMode, Note, ThemeMode } from "./types";
 import type { LoginSyncResult, Note as StoredNote, NoteSummary, SavedAsset, SyncAccountState } from "../types";
@@ -71,16 +72,8 @@ function useKeyboardOffset() {
 
   useEffect(() => {
     const viewport = window.visualViewport;
-    const initialHeight = Math.max(
-      window.screen?.height || 0,
-      window.outerHeight || 0,
-      window.innerHeight,
-      document.documentElement.clientHeight,
-    );
 
     function updateOffset() {
-      const activeTag = document.activeElement?.tagName;
-      const editing = activeTag === "TEXTAREA" || activeTag === "INPUT" || Boolean(document.activeElement?.closest("[contenteditable='true']"));
       if (!viewport) {
         setOffset(0);
         return;
@@ -92,26 +85,31 @@ function useKeyboardOffset() {
       );
       const visualBottom = viewport.height + viewport.offsetTop;
       const viewportHiddenHeight = Math.max(0, layoutHeight - visualBottom);
-      const resizedHiddenHeight = editing ? Math.max(0, initialHeight - window.innerHeight) : 0;
-      const fallbackKeyboardHeight = editing ? Math.round(window.innerHeight * 0.38) : 0;
-      const hiddenHeight = Math.max(viewportHiddenHeight, resizedHiddenHeight, fallbackKeyboardHeight);
-      setOffset(hiddenHeight > 24 ? Math.round(hiddenHeight) : 0);
+      setOffset(viewportHiddenHeight > 24 ? Math.round(viewportHiddenHeight) : 0);
+    }
+
+    function settleOffset() {
+      updateOffset();
+      window.setTimeout(updateOffset, 80);
+      window.setTimeout(updateOffset, 220);
     }
 
     updateOffset();
     viewport?.addEventListener("resize", updateOffset);
     viewport?.addEventListener("scroll", updateOffset);
+    window.addEventListener("scroll", updateOffset, true);
     window.addEventListener("resize", updateOffset);
-    window.addEventListener("orientationchange", updateOffset);
-    document.addEventListener("focusin", updateOffset);
-    document.addEventListener("focusout", updateOffset);
+    window.addEventListener("orientationchange", settleOffset);
+    document.addEventListener("focusin", settleOffset);
+    document.addEventListener("focusout", settleOffset);
     return () => {
       viewport?.removeEventListener("resize", updateOffset);
       viewport?.removeEventListener("scroll", updateOffset);
+      window.removeEventListener("scroll", updateOffset, true);
       window.removeEventListener("resize", updateOffset);
-      window.removeEventListener("orientationchange", updateOffset);
-      document.removeEventListener("focusin", updateOffset);
-      document.removeEventListener("focusout", updateOffset);
+      window.removeEventListener("orientationchange", settleOffset);
+      document.removeEventListener("focusin", settleOffset);
+      document.removeEventListener("focusout", settleOffset);
     };
   }, []);
 
@@ -122,7 +120,7 @@ export function AndroidApp() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [theme, setTheme] = useState<ThemeMode>(loadTheme);
   const [resolvedTheme, setResolvedTheme] = useState<"dark" | "light">("dark");
-  const [editorMode, setEditorMode] = useState<EditorMode>("source");
+  const [editorMode, setEditorMode] = useState<EditorMode>("preview");
   const [query, setQuery] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsExpanded, setSettingsExpanded] = useState(false);
@@ -130,6 +128,8 @@ export function AndroidApp() {
   const keyboardOffset = useKeyboardOffset();
   const [isSaving, setIsSaving] = useState(false);
   const saveQueueRef = useRef(Promise.resolve());
+  const syncQueueRef = useRef(Promise.resolve());
+  const autoSyncTimerRef = useRef<number | null>(null);
   const materializedDraftRef = useRef<{ tempId: string; savedId: string } | null>(null);
 
   const [draft, setDraft] = useState<Note>(() => blankDraft());
@@ -187,6 +187,14 @@ export function AndroidApp() {
     void refreshNotes().catch(() => undefined);
   }, [refreshNotes]);
 
+  useEffect(() => {
+    return () => {
+      if (autoSyncTimerRef.current !== null) {
+        window.clearTimeout(autoSyncTimerRef.current);
+      }
+    };
+  }, []);
+
   async function persistDraft(next: Note) {
     setDraft(next);
     setNotes((current) => {
@@ -215,10 +223,32 @@ export function AndroidApp() {
         setDraft(saved);
         setNotes((current) => sortNotes([saved, ...current.filter((note) => note.id !== saved.id && note.id !== next.id)]));
         saveLastNoteId(saved.id);
+        scheduleAutoSync();
       }
     }).finally(() => {
       setIsSaving(false);
     });
+  }
+
+  function scheduleAutoSync() {
+    if (!syncAccount?.is_logged_in) return;
+
+    if (autoSyncTimerRef.current !== null) {
+      window.clearTimeout(autoSyncTimerRef.current);
+    }
+
+    autoSyncTimerRef.current = window.setTimeout(() => {
+      autoSyncTimerRef.current = null;
+      queueAutoSync();
+    }, 900);
+  }
+
+  function queueAutoSync() {
+    syncQueueRef.current = syncQueueRef.current
+      .catch(() => undefined)
+      .then(() => api.syncNow())
+      .then(() => undefined)
+      .catch(() => undefined);
   }
 
   function updateDraft(patch: Partial<Note>) {
@@ -229,14 +259,14 @@ export function AndroidApp() {
     const next = blankDraft();
     materializedDraftRef.current = null;
     setDraft(next);
-    setEditorMode("source");
+    setEditorMode("preview");
     setSidebarOpen(false);
   }
 
   function openNote(note: Note) {
     materializedDraftRef.current = null;
     void api.getNote(note.id).then((stored) => setDraft(draftFromStored(stored))).catch(() => setDraft(note));
-    setEditorMode("source");
+    setEditorMode("preview");
     setSidebarOpen(false);
   }
 
@@ -248,7 +278,7 @@ export function AndroidApp() {
       const next = notes.filter((note) => note.id !== draft.id)[0] ?? blankDraft();
       setDraft(next);
     }
-    setEditorMode("source");
+    setEditorMode("preview");
   }
 
   function togglePinned(note: Note) {
@@ -265,6 +295,12 @@ export function AndroidApp() {
 
   function handleSyncSaved(result: LoginSyncResult) {
     setSyncAccount(result.account);
+    if (result.account.is_logged_in) {
+      void api.syncNow().catch(() => undefined).finally(() => {
+        void refreshNotes().catch(() => undefined);
+      });
+      return;
+    }
     void refreshNotes().catch(() => undefined);
   }
 
@@ -321,6 +357,7 @@ export function AndroidApp() {
               onModeToggle={() => setEditorMode((mode) => mode === "preview" ? "source" : "preview")}
               onRequestImageSave={handleRequestImageSave}
               showModeToggle={false}
+              toolbarVariant="full"
             />
           </section>
         </section>
@@ -352,11 +389,13 @@ export function AndroidApp() {
                   <button className="noteRowOpen" onClick={() => openNote(note)} type="button">
                     <div className="noteRowTitleBlock">
                       <div className="noteRowTitleRow">
-                        <span className="noteRowTitle">{note.title.trim() || "Untitled"}</span>
+                        <span className="noteRowTitle">
+                          <HighlightedText query={query} text={note.title.trim() || "Untitled"} />
+                        </span>
                       </div>
                       <span className="noteRowTime">{formatTime(note.updatedAt)}</span>
                     </div>
-                    <p className="noteRowPreview">{previewText(note)}</p>
+                    <p className="noteRowPreview"><HighlightedText query={query} text={previewText(note)} /></p>
                   </button>
                   <IconButton active={note.pinned} label={note.pinned ? "取消收藏" : "收藏"} onClick={() => togglePinned(note)}><PinIcon /></IconButton>
                 </article>

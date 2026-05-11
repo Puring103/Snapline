@@ -251,20 +251,27 @@
   right: 0;
   bottom: 0;
   z-index: 9;
-  min-height: 46px;
-  gap: 1px;
-  justify-content: center;
-  overflow: hidden;
-  padding: 5px 5px calc(5px + env(safe-area-inset-bottom));
+  min-height: 58px;
+  gap: 4px;
+  justify-content: flex-start;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg) 86%, var(--surface-soft));
   transform: translateY(calc(-1 * var(--keyboard-offset)));
   transition: transform 140ms ease;
+  scrollbar-width: none;
+  touch-action: pan-x;
+}
+
+.mobileEditorHost .editorToolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .mobileEditorHost .editorToolbarDivider {
-  height: 15px;
-  margin: 0 1px;
+  height: 18px;
+  margin: 0 2px;
 }
 
 .mobileEditorHost .editorToolbarSpacer {
@@ -272,14 +279,20 @@
 }
 
 .mobileEditorHost .editorToolbarBtn {
-  width: clamp(26px, 7.6vw, 34px);
-  height: 32px;
+  width: 42px;
+  height: 42px;
   border-radius: 8px;
+  border-color: color-mix(in srgb, var(--line) 70%, transparent);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
 }
 
 .mobileEditorHost .editorToolbarBtn svg {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
+}
+
+.mobileEditorHost .editorToolbarBtn:disabled {
+  opacity: 0.42;
 }
 
 .drawerBackdrop {

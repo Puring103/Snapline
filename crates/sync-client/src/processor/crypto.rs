@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::Utc;
 use snapline_domain::{
-    crypto::{decrypt_field, encrypt_field},
+    crypto::{decrypt_field_legacy_plaintext, encrypt_field},
     Note, NoteChangePayload, SyncPayload,
 };
 
@@ -45,8 +45,8 @@ pub(super) fn encrypt_note_payload(
 
 pub(super) fn decrypt_note(dek: &[u8; 32], note: &Note) -> Result<Note> {
     Ok(Note {
-        title: decrypt_field(dek, &note.title)?,
-        content_md: decrypt_field(dek, &note.content_md)?,
+        title: decrypt_field_legacy_plaintext(dek, &note.title)?,
+        content_md: decrypt_field_legacy_plaintext(dek, &note.content_md)?,
         ..note.clone()
     })
 }

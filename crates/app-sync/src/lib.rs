@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use serde::Serialize;
 use snapline_app_core::{AppCore, SyncAccountState};
 use snapline_domain::{
-    crypto::{decrypt_bytes, decrypt_field},
+    crypto::{decrypt_bytes, decrypt_field_legacy_plaintext},
     AssetMetadata, Note,
 };
 use snapline_sync_client::{
@@ -228,8 +228,8 @@ fn snapshot_notes_plaintext(core: &AppCore, notes: &[Note]) -> Result<Vec<Note>>
             .iter()
             .map(|note| {
                 Ok(Note {
-                    title: decrypt_field(key, &note.title)?,
-                    content_md: decrypt_field(key, &note.content_md)?,
+                    title: decrypt_field_legacy_plaintext(key, &note.title)?,
+                    content_md: decrypt_field_legacy_plaintext(key, &note.content_md)?,
                     ..note.clone()
                 })
             })
