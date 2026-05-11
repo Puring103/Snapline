@@ -114,24 +114,6 @@ export function EditorPane({
             return true;
           }
 
-          if (hasPotentialAsyncImageClipboardSource(clipboardData)) {
-            event.preventDefault();
-            void pastedImageSourceFromClipboardAsync(clipboardData).then((asyncImageSource) => {
-              if (asyncImageSource) {
-                logImagePaste("async_image_source", asyncImageSource.kind);
-                pasteImageSource(view, asyncImageSource);
-                return;
-              }
-
-              const fallbackMarkdownText = markdownTextFromClipboard(clipboardData);
-              const activeEditor = editorRef.current;
-              if (fallbackMarkdownText && activeEditor) {
-                insertClipboardMarkdown(activeEditor, fallbackMarkdownText);
-              }
-            });
-            return true;
-          }
-
           const markdownText = markdownTextFromClipboard(clipboardData);
           if (markdownText) {
             const activeEditor = editorRef.current;
@@ -141,6 +123,17 @@ export function EditorPane({
 
             event.preventDefault();
             return insertClipboardMarkdown(activeEditor, markdownText);
+          }
+
+          if (hasPotentialAsyncImageClipboardSource(clipboardData)) {
+            event.preventDefault();
+            void pastedImageSourceFromClipboardAsync(clipboardData).then((asyncImageSource) => {
+              if (asyncImageSource) {
+                logImagePaste("async_image_source", asyncImageSource.kind);
+                pasteImageSource(view, asyncImageSource);
+              }
+            });
+            return true;
           }
 
           event.preventDefault();

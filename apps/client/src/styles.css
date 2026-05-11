@@ -631,6 +631,37 @@ html[data-theme="dark"] .markdownSurface .ProseMirror pre {
   font-size: 0.92em;
 }
 
+.markdownSurface .ProseMirror .tiptap-mathematics-render {
+  color: var(--text);
+  font-size: 1em;
+}
+
+.markdownSurface .ProseMirror span.tiptap-mathematics-render {
+  display: inline-block;
+  padding: 0 2px;
+  vertical-align: baseline;
+}
+
+.markdownSurface .ProseMirror div.tiptap-mathematics-render {
+  display: block;
+  margin: 10px 0 12px;
+  overflow-x: auto;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 76%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-soft) 54%, transparent);
+}
+
+.markdownSurface .ProseMirror .block-math-inner {
+  min-width: max-content;
+}
+
+.markdownSurface .ProseMirror .inline-math-error,
+.markdownSurface .ProseMirror .block-math-error {
+  color: var(--danger);
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
 .hljs-comment,
 .hljs-quote {
   color: var(--code-muted);
@@ -846,6 +877,18 @@ html[data-theme="dark"] .markdownSurface .ProseMirror pre {
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.searchHighlight {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--pin-active-bg) 74%, transparent);
+  color: var(--text);
+  padding: 0 1px;
+}
+
+html[data-theme="dark"] .searchHighlight {
+  background: color-mix(in srgb, var(--pin-active-bg) 60%, var(--surface));
+  color: var(--text);
 }
 
 .noteRowPreview {

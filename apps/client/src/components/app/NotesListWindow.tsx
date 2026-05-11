@@ -20,6 +20,7 @@ import { openNoteWindow, revealCurrentWindowWhenReady, shouldStartWindowDrag } f
 import { importPromptText } from "../SyncSettings";
 import { useThemeMode } from "../../hooks/theme";
 import { deleteConfirmationFor, sortNotes, upsertNote } from "../../features/sync/session";
+import { HighlightedText } from "../../features/search/highlight";
 import type { LoginSyncResult, NoteSummary, SyncAccountState, SyncReport, SyncStatusState } from "../../types";
 
 const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
@@ -328,7 +329,9 @@ export function NotesListWindow() {
                 <div className="noteRowHeader">
                   <div className="noteRowTitleBlock">
                     <div className="noteRowTitleRow">
-                      <span className="noteRowTitle">{note.title}</span>
+                      <span className="noteRowTitle">
+                        <HighlightedText query={searchQuery} text={note.title} />
+                      </span>
                       {note.is_conflict_copy ? (
                         <span className="conflictBadge" title="Conflict copy — your local changes conflicted with a remote update">
                           <ConflictIcon />
@@ -361,7 +364,11 @@ export function NotesListWindow() {
                   </div>
                 </div>
                 <Suspense fallback={<div className="noteRowPreview">{note.preview || "No preview"}</div>}>
-                  <LazyMarkdownPreview dataDir={dataDir} markdown={note.preview_md || note.preview || "No preview"} />
+                  <LazyMarkdownPreview
+                    dataDir={dataDir}
+                    highlightQuery={searchQuery}
+                    markdown={note.preview_md || note.preview || "No preview"}
+                  />
                 </Suspense>
               </article>
             );

@@ -49,7 +49,7 @@ describe("paste markdown", () => {
     expect(insertText).toHaveBeenCalledWith("<unknown>custom block</unknown>");
   });
 
-  it("inserts known unsupported markdown syntax as plain text directly", () => {
+  it("inserts known unsupported container syntax as plain text directly", () => {
     const insertText = vi.fn();
     const editor = {
       commands: {
@@ -65,9 +65,9 @@ describe("paste markdown", () => {
       },
     };
 
-    expect(insertClipboardMarkdown(editor, "$$\na^2 + b^2 = c^2\n$$")).toBe(true);
+    expect(insertClipboardMarkdown(editor, "::: warning\nBody\n:::")).toBe(true);
     expect(editor.commands.insertContent).not.toHaveBeenCalled();
-    expect(insertText).toHaveBeenCalledWith("$$\na^2 + b^2 = c^2\n$$");
+    expect(insertText).toHaveBeenCalledWith("::: warning\nBody\n:::");
   });
 
   it("inserts footnote markdown through the markdown parser", () => {
@@ -100,5 +100,21 @@ describe("paste markdown", () => {
     expect(editor.getMarkdown()).toContain("| B");
     expect(editor.getMarkdown()).toContain("| 1");
     expect(editor.getMarkdown()).toContain("| 2");
+
+    editor.destroy();
+  });
+
+  it("inserts formula markdown through the markdown parser", () => {
+    const editor = new Editor({
+      extensions: createMarkdownExtensions(),
+      content: "",
+    });
+
+    insertClipboardMarkdown(editor, "$$\na^2 + b^2 = c^2\n$$");
+
+    expect(editor.getHTML()).toContain('data-type="block-math"');
+    expect(editor.getMarkdown()).toContain("$$\na^2 + b^2 = c^2\n$$");
+
+    editor.destroy();
   });
 });

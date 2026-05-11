@@ -1,6 +1,7 @@
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
+import { Mathematics } from "@tiptap/extension-mathematics";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Table } from "@tiptap/extension-table";
@@ -151,6 +152,12 @@ export function createMarkdownExtensions(placeholder?: string) {
       HTMLAttributes: {
         target: "_blank",
         rel: "noopener noreferrer",
+      },
+    }),
+    Mathematics.configure({
+      katexOptions: {
+        displayMode: false,
+        throwOnError: false,
       },
     }),
     FootnoteReference,

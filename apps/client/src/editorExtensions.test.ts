@@ -109,4 +109,19 @@ describe("editor extensions", () => {
     expect(editor.getHTML()).toContain("<blockquote>");
     expect(editor.getMarkdown()).toContain("> Quoted line");
   });
+
+  it("supports inline and block math markdown", () => {
+    const editor = new Editor({
+      extensions: createMarkdownExtensions(),
+      content: "",
+    });
+    editors.push(editor);
+
+    setMarkdownContent(editor, "Euler: $e^{i\\pi}+1=0$\n\n$$\na^2 + b^2 = c^2\n$$");
+
+    expect(editor.getHTML()).toContain('data-type="inline-math"');
+    expect(editor.getHTML()).toContain('data-type="block-math"');
+    expect(editor.getMarkdown()).toContain("$e^{i\\pi}+1=0$");
+    expect(editor.getMarkdown()).toContain("$$\na^2 + b^2 = c^2\n$$");
+  });
 });

@@ -41,6 +41,5 @@ function insertPlainText(editor: PasteEditor, text: string): boolean {
 function hasUnsupportedMarkdownSyntax(markdownText: string): boolean {
   return [
     /^\s*:::/m,
-    /^\s*\$\$/m,
   ].some((pattern) => pattern.test(markdownText));
 }

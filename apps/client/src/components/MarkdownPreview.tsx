@@ -4,22 +4,24 @@ import { useEffect, useRef } from "react";
 import { api } from "../platform/api";
 import { blobUrlFromBytes } from "../features/assets/assetDisplay";
 import { createMarkdownExtensions, setMarkdownContent } from "../features/editor/editorExtensions";
+import { createSearchHighlightExtension } from "../features/search/highlight";
 import { startupLog } from "../platform/startupLog";
 
 interface MarkdownPreviewProps {
   dataDir?: string | null;
+  highlightQuery?: string;
   markdown: string;
 }
 
-export function MarkdownPreview({ dataDir = null, markdown }: MarkdownPreviewProps) {
+export function MarkdownPreview({ dataDir = null, highlightQuery = "", markdown }: MarkdownPreviewProps) {
   const assetBlobUrls = useRef(new Map<string, string>());
 
   const editor = useEditor({
-    extensions: createMarkdownExtensions(),
+    extensions: [...createMarkdownExtensions(), createSearchHighlightExtension(highlightQuery)],
     content: markdown,
     contentType: "markdown",
     editable: false,
-  });
+  }, [highlightQuery]);
 
   useEffect(() => {
     if (!editor) return;
