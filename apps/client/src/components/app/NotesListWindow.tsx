@@ -16,7 +16,7 @@ import {
 } from "./AppIcons";
 import { api } from "../../platform/api";
 import { startupLog } from "../../platform/startupLog";
-import { openNoteWindow, shouldStartWindowDrag } from "../../platform/window";
+import { openNoteWindow, revealCurrentWindowWhenReady, shouldStartWindowDrag } from "../../platform/window";
 import { importPromptText } from "../SyncSettings";
 import { useThemeMode } from "../../hooks/theme";
 import { deleteConfirmationFor, sortNotes, upsertNote } from "../../features/sync/session";
@@ -39,6 +39,7 @@ export function NotesListWindow() {
   const [themeMode, setThemeMode] = useThemeMode();
   const [pendingImportCount, setPendingImportCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
+  const [windowReadyToReveal, setWindowReadyToReveal] = useState(false);
   const searchQueryRef = useRef("");
   const searchMountedRef = useRef(false);
 
@@ -65,9 +66,15 @@ export function NotesListWindow() {
         current && nextNotes.some((note) => note.id === current) ? current : null,
       );
       setStatus("Ready");
+      if (!quiet) {
+        setWindowReadyToReveal(true);
+      }
     } catch (err) {
       setError(String(err));
       setStatus("Error");
+      if (!quiet) {
+        setWindowReadyToReveal(true);
+      }
     }
   }, []);
 
@@ -156,6 +163,12 @@ export function NotesListWindow() {
     }
     void refreshNotes(true);
   }, [refreshNotes, searchQuery]);
+
+  useEffect(() => {
+    if (!windowReadyToReveal) return;
+
+    void revealCurrentWindowWhenReady();
+  }, [windowReadyToReveal]);
 
   function persistShortcut(nextShortcut: string) {
     void api

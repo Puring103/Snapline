@@ -77,6 +77,7 @@ pub fn hide_main_window(_app: &tauri::AppHandle) {}
 #[cfg(desktop)]
 pub fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        let is_visible = window.is_visible().unwrap_or(false);
         if let Ok(cursor) = app.cursor_position() {
             if let Ok(Some(monitor)) = app.monitor_from_point(cursor.x, cursor.y) {
                 let work_area = monitor.work_area();
@@ -109,10 +110,12 @@ pub fn show_main_window(app: &tauri::AppHandle) {
                 }));
             }
         }
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
         let _ = window.emit(FOCUS_EDITOR_EVENT, ());
+        if is_visible {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
     }
 }
 

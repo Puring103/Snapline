@@ -501,35 +501,6 @@ function EditorToolbar({
           </ToolbarButton>
           <div className="editorToolbarDivider" />
           <ToolbarButton
-            active={editor.isActive("heading", { level: 1 })}
-            label="Heading 1"
-            onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-          >
-            <HeadingIcon level={1} />
-          </ToolbarButton>
-          <ToolbarButton
-            active={editor.isActive("heading", { level: 2 })}
-            label="Heading 2"
-            onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-          >
-            <HeadingIcon level={2} />
-          </ToolbarButton>
-          <div className="editorToolbarDivider" />
-          <ToolbarButton
-            active={editor.isActive("bulletList")}
-            label="Bullet list"
-            onClick={() => editor.chain().focus().toggleBulletList().run()}
-          >
-            <BulletListIcon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={editor.isActive("orderedList")}
-            label="Ordered list"
-            onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          >
-            <OrderedListIcon />
-          </ToolbarButton>
-          <ToolbarButton
             active={editor.isActive("taskList")}
             label="Task list"
             onClick={() => editor.chain().focus().toggleTaskList().run()}
@@ -537,13 +508,6 @@ function EditorToolbar({
             <TaskListIcon />
           </ToolbarButton>
           <div className="editorToolbarDivider" />
-          <ToolbarButton
-            active={editor.isActive("blockquote")}
-            label="Blockquote"
-            onClick={() => editor.chain().focus().toggleBlockquote().run()}
-          >
-            <BlockquoteIcon />
-          </ToolbarButton>
           <ToolbarButton
             active={editor.isActive("codeBlock")}
             label="Code block"
@@ -609,29 +573,8 @@ function InlineCodeIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8L5 12l4 4M15 8l4 4-4 4"/></svg>;
 }
 
-function HeadingIcon({ level }: { level: 1 | 2 }) {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 6v12M4 12h8M12 6v12" />
-      <text x="15" y="19" style={{ fontSize: "9px", fontWeight: 700, fill: "currentColor", stroke: "none" }}>{level}</text>
-    </svg>
-  );
-}
-
-function BulletListIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h10M9 12h10M9 18h10"/><circle cx="4" cy="6" r="1.2" style={{ fill: "currentColor", stroke: "none" }} /><circle cx="4" cy="12" r="1.2" style={{ fill: "currentColor", stroke: "none" }} /><circle cx="4" cy="18" r="1.2" style={{ fill: "currentColor", stroke: "none" }} /></svg>;
-}
-
-function OrderedListIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h10M10 12h10M10 18h10"/><text x="2" y="9" style={{ fontSize: "8px", fontWeight: 700, fill: "currentColor", stroke: "none" }}>1</text><text x="2" y="15" style={{ fontSize: "8px", fontWeight: 700, fill: "currentColor", stroke: "none" }}>2</text><text x="2" y="21" style={{ fontSize: "8px", fontWeight: 700, fill: "currentColor", stroke: "none" }}>3</text></svg>;
-}
-
 function TaskListIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="5" height="5" rx="1"/><path d="M4.5 7.5l1 1 2-2"/><path d="M10 7.5h10M10 12.5h10M10 17.5h10"/><rect x="3" y="10" width="5" height="5" rx="1"/><rect x="3" y="15" width="5" height="5" rx="1"/></svg>;
-}
-
-function BlockquoteIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h12M3 12h10M3 16h8"/><path d="M20 7c-2.5 1-2.5 3.5-2.5 3.5H20v4h-4V11c0-3 2-5 4-6l.5 2z"/></svg>;
 }
 
 function CodeBlockIcon() {

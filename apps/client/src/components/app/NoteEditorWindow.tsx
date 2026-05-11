@@ -4,7 +4,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { api } from "../../platform/api";
 import { startupLog } from "../../platform/startupLog";
-import { openListWindow, openNoteWindow, shouldDeferInitialNoteLoad, shouldStartWindowDrag } from "../../platform/window";
+import {
+  openListWindow,
+  openNoteWindow,
+  revealCurrentWindowWhenReady,
+  shouldDeferInitialNoteLoad,
+  shouldStartWindowDrag,
+} from "../../platform/window";
 import { webviewAssetUrlFromFilesystemPath } from "../../features/assets/assetUrl";
 import { DEFAULT_EDITOR_MODE, toggleEditorMode, type EditorMode } from "../../features/editor/editorMode";
 import {
@@ -52,6 +58,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
   const [themeMode, setThemeMode] = useThemeMode();
   const [isConflictCopy, setIsConflictCopy] = useState(false);
   const [sourceNoteId, setSourceNoteId] = useState<string | null>(null);
+  const [windowReadyToReveal, setWindowReadyToReveal] = useState(false);
 
   const sessionRef = useRef(session);
   const notePinnedRef = useRef(notePinned);
@@ -84,6 +91,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
           })
         ) {
           setStatus("Ready");
+          setWindowReadyToReveal(false);
           return;
         }
         setNoteLoadArmed(true);
@@ -143,10 +151,12 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
           await beginSessionFromNote(bootstrapState.current);
         }
         setStatus("Draft");
+        setWindowReadyToReveal(true);
       } catch (err) {
         if (!cancelled) {
           setError(String(err));
           setStatus("Error");
+          setWindowReadyToReveal(true);
         }
       }
     }
@@ -177,6 +187,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
           setDeleted(false);
           setNoteLoadArmed(false);
           setStatus("Ready");
+          setWindowReadyToReveal(false);
           setError(null);
         }
       });
@@ -192,6 +203,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     void listen(FOCUS_EDITOR_EVENT, () => {
+      setWindowReadyToReveal(false);
       setNoteLoadArmed(true);
       setReloadRequestId((current) => current + 1);
       setFocusRequestId((current) => current + 1);
@@ -203,6 +215,12 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
       unlisten?.();
     };
   }, [noteId]);
+
+  useEffect(() => {
+    if (!windowReadyToReveal) return;
+
+    void revealCurrentWindowWhenReady();
+  }, [windowReadyToReveal]);
 
   useEffect(() => {
     clearSaveTimer();

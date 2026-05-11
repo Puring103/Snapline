@@ -1,4 +1,5 @@
 import { LogicalPosition } from "@tauri-apps/api/dpi";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { api } from "./api";
 
@@ -136,6 +137,20 @@ export async function revealExistingWindow(window: RevealableWindow, position?: 
   await window.setFocus();
 }
 
+export async function revealCurrentWindowWhenReady() {
+  const currentWindow = getCurrentWindow();
+  await nextPaint();
+  await currentWindow.show();
+  await currentWindow.unminimize();
+  await currentWindow.setFocus();
+}
+
+function nextPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
 async function revealExistingNoteWindow(noteId: string) {
   const stableLabel = buildWindowLabel("note", noteId);
   const rememberedLabel = readRememberedNoteWindowLabel(noteId);
@@ -168,6 +183,7 @@ function openAppWindow(mode: AppWindowMode, noteId: string | null = null, positi
     title: mode === "list" ? "Snapline" : "Snapline Note",
     ...(position ? { position: new LogicalPosition(position.x, position.y) } : { center: true }),
     ...options,
+    visible: false,
   });
 }
 
