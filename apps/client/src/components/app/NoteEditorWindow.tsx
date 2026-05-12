@@ -7,6 +7,7 @@ import { startupLog } from "../../platform/startupLog";
 import {
   openListWindow,
   openNoteWindow,
+  rememberNoteWindow,
   revealCurrentWindowWhenReady,
   shouldDeferInitialNoteLoad,
   shouldStartWindowDrag,
@@ -221,6 +222,12 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
 
     void revealCurrentWindowWhenReady();
   }, [windowReadyToReveal]);
+
+  useEffect(() => {
+    if (session.id) {
+      rememberNoteWindow(session.id, windowLabel);
+    }
+  }, [session.id, windowLabel]);
 
   useEffect(() => {
     clearSaveTimer();

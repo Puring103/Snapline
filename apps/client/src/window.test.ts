@@ -149,12 +149,48 @@ describe("window routing", () => {
     ]);
   });
 
-  it("asks the backend to open saved note windows by note id", async () => {
+  it("asks the backend to open saved note windows by note id when no local window is remembered", async () => {
     await openNoteWindow("saved-note-id");
 
     expect(invokeState.calls).toEqual([
       { command: "open_note_window", args: { noteId: "saved-note-id", position: undefined } },
     ]);
+  });
+
+  it("reveals a remembered draft window for a saved note instead of opening a duplicate", async () => {
+    const calls: string[] = [];
+    const existing = {
+      label: "note-draft-window",
+      close: async () => {
+        calls.push("closeExisting");
+      },
+      setPosition: async () => {
+        calls.push("setPosition");
+      },
+      show: async () => {
+        calls.push("show");
+      },
+      unminimize: async () => {
+        calls.push("unminimize");
+      },
+      setFocus: async () => {
+        calls.push("setFocus");
+      },
+    };
+    const duplicate = {
+      label: "note-other-window",
+      close: async () => {
+        calls.push("closeDuplicate");
+      },
+    };
+    rememberNoteWindow("saved-note-id", existing.label);
+    webviewState.byLabel.set(existing.label, existing);
+    webviewState.all = [existing, duplicate];
+
+    await openNoteWindow("saved-note-id", { x: 100, y: 200 });
+
+    expect(invokeState.calls).toEqual([]);
+    expect(calls).toEqual(["setPosition", "show", "unminimize", "setFocus", "closeDuplicate"]);
   });
 
   it("remembers and clears the window label for a saved note", () => {

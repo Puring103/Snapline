@@ -85,6 +85,13 @@ export interface PointerWindowPosition {
 }
 
 export async function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
+  if (noteId) {
+    const existing = await revealExistingNoteWindow(noteId, position);
+    if (existing) {
+      return existing.label;
+    }
+  }
+
   return api.openNoteWindow(noteId ?? null, position);
 }
 
@@ -151,7 +158,7 @@ function nextPaint() {
   });
 }
 
-async function revealExistingNoteWindow(noteId: string) {
+async function revealExistingNoteWindow(noteId: string, position?: PointerWindowPosition) {
   const stableLabel = buildWindowLabel("note", noteId);
   const rememberedLabel = readRememberedNoteWindowLabel(noteId);
   const candidateLabels = rememberedLabel && rememberedLabel !== stableLabel
@@ -161,8 +168,9 @@ async function revealExistingNoteWindow(noteId: string) {
   for (const label of candidateLabels) {
     const existing = await WebviewWindow.getByLabel(label);
     if (existing) {
-      await revealExistingWindow(existing);
+      await revealExistingWindow(existing, position);
       rememberNoteWindow(noteId, label);
+      await closeOtherNoteWindows(label);
       return existing;
     }
   }
