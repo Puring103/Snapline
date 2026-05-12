@@ -42,12 +42,18 @@ impl NoteRepository {
     ) -> Result<bool> {
         let count: i64 = match account_id {
             Some(account_id) => self.conn.query_row(
-                "SELECT COUNT(*) FROM change_queue WHERE account_id = ?1 AND note_id = ?2",
+                "SELECT COUNT(*) FROM change_queue
+                 WHERE account_id = ?1
+                   AND note_id = ?2
+                   AND op_type IN ('upsert_note', 'delete_note')",
                 params![account_id, note_id.to_string()],
                 |row| row.get(0),
             )?,
             None => self.conn.query_row(
-                "SELECT COUNT(*) FROM change_queue WHERE account_id IS NULL AND note_id = ?1",
+                "SELECT COUNT(*) FROM change_queue
+                 WHERE account_id IS NULL
+                   AND note_id = ?1
+                   AND op_type IN ('upsert_note', 'delete_note')",
                 params![note_id.to_string()],
                 |row| row.get(0),
             )?,
@@ -67,13 +73,19 @@ impl NoteRepository {
         match account_id {
             Some(account_id) => {
                 self.conn.execute(
-                    "DELETE FROM change_queue WHERE account_id = ?1 AND note_id = ?2",
+                    "DELETE FROM change_queue
+                     WHERE account_id = ?1
+                       AND note_id = ?2
+                       AND op_type IN ('upsert_note', 'delete_note')",
                     params![account_id, note_id.to_string()],
                 )?;
             }
             None => {
                 self.conn.execute(
-                    "DELETE FROM change_queue WHERE account_id IS NULL AND note_id = ?1",
+                    "DELETE FROM change_queue
+                     WHERE account_id IS NULL
+                       AND note_id = ?1
+                       AND op_type IN ('upsert_note', 'delete_note')",
                     params![note_id.to_string()],
                 )?;
             }

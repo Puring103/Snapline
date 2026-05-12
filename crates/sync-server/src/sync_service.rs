@@ -268,3 +268,436 @@ fn row_to_asset_metadata(row: &sqlx::postgres::PgRow) -> Result<AssetMetadata> {
         deleted_at: row.get("deleted_at"),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db;
+    use chrono::{TimeZone, Utc};
+    use snapline_sync_client::protocol::PushChange;
+    use sqlx::{
+        postgres::{PgConnectOptions, PgPoolOptions},
+        Row,
+    };
+
+    struct PgFixture {
+        pool: PgPool,
+        schema_name: String,
+    }
+
+    impl PgFixture {
+        fn schema_name(&self) -> &str {
+            &self.schema_name
+        }
+    }
+
+    async fn pg_fixture() -> Option<PgFixture> {
+        let database_url = match std::env::var("SNAPLINE_SYNC_SERVER_TEST_DATABASE_URL") {
+            Ok(url) => url,
+            Err(_) => {
+                eprintln!(
+                    "skipping PostgreSQL integration test; set SNAPLINE_SYNC_SERVER_TEST_DATABASE_URL"
+                );
+                return None;
+            }
+        };
+        let schema_name = format!("snapline_test_{}", Uuid::new_v4().simple());
+        let admin_pool = db::connect(&database_url)
+            .await
+            .expect("connect postgres admin database");
+        sqlx::query(&format!(r#"CREATE SCHEMA "{}""#, schema_name))
+            .execute(&admin_pool)
+            .await
+            .expect("create isolated test schema");
+        admin_pool.close().await;
+        let options: PgConnectOptions = database_url.parse().expect("parse postgres database url");
+        let options = options.options([("search_path", schema_name.as_str())]);
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect_with(options)
+            .await
+            .expect("connect isolated postgres test schema");
+        db::migrate(&pool).await.expect("migrate postgres schema");
+        Some(PgFixture { pool, schema_name })
+    }
+
+    async fn create_account(pool: &PgPool, account_id: &str) {
+        sqlx::query(
+            "INSERT INTO accounts (id, email, password_hash)
+             VALUES ($1, $2, 'hash')",
+        )
+        .bind(account_id)
+        .bind(format!("{account_id}@example.test"))
+        .execute(pool)
+        .await
+        .expect("insert account");
+    }
+
+    fn test_account(prefix: &str) -> String {
+        format!("{prefix}_{}", Uuid::new_v4().simple())
+    }
+
+    fn note_payload(title: &str) -> NoteChangePayload {
+        NoteChangePayload {
+            title: title.to_string(),
+            content_md: format!("# {title}\nBody"),
+            pinned: false,
+            deleted_at: None,
+        }
+    }
+
+    fn deleted_note_payload(title: &str) -> NoteChangePayload {
+        NoteChangePayload {
+            title: title.to_string(),
+            content_md: format!("# {title}\nDeleted body"),
+            pinned: false,
+            deleted_at: Some(Utc.with_ymd_and_hms(2026, 5, 12, 10, 0, 0).unwrap()),
+        }
+    }
+
+    fn push_change(queue_id: &str, note_id: &NoteId, base_version: i64, title: &str) -> PushChange {
+        PushChange {
+            queue_id: queue_id.to_string(),
+            note_id: note_id.clone(),
+            base_version,
+            payload: SyncPayload::Note(note_payload(title)),
+        }
+    }
+
+    #[tokio::test]
+    async fn migrated_schema_accepts_first_push_and_logs_cursor() {
+        let Some(fixture) = pg_fixture().await else {
+            return;
+        };
+        let pool = &fixture.pool;
+        let account_id = test_account("acct_push");
+        create_account(pool, &account_id).await;
+        let note_id = NoteId::new();
+        let mut tx = pool.begin().await.unwrap();
+
+        let result = apply_push_change(
+            &mut tx,
+            &account_id,
+            "device-a",
+            push_change("q1", &note_id, 0, "First"),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        assert!(matches!(
+            result,
+            PushChangeResult::Accepted {
+                server_version: 1,
+                ..
+            }
+        ));
+        let note = sqlx::query(
+            "SELECT title, version, last_modified_by_device FROM notes
+             WHERE account_id = $1 AND id = $2",
+        )
+        .bind(&account_id)
+        .bind(note_id.to_string())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(note.get::<String, _>("title"), "First");
+        assert_eq!(note.get::<i64, _>("version"), 1);
+        assert_eq!(note.get::<String, _>("last_modified_by_device"), "device-a");
+        let log_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM change_log WHERE account_id = $1")
+                .bind(&account_id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(log_count, 1, "schema {}", fixture.schema_name());
+    }
+
+    #[tokio::test]
+    async fn push_conflict_returns_server_note_without_mutating_current_version() {
+        let Some(fixture) = pg_fixture().await else {
+            return;
+        };
+        let pool = &fixture.pool;
+        let account_id = test_account("acct_conflict");
+        create_account(pool, &account_id).await;
+        let note_id = NoteId::new();
+        let mut tx = pool.begin().await.unwrap();
+        apply_push_change(
+            &mut tx,
+            &account_id,
+            "device-a",
+            push_change("q1", &note_id, 0, "Server"),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+
+        let result = apply_push_change(
+            &mut tx,
+            &account_id,
+            "device-b",
+            push_change("q2", &note_id, 0, "Local"),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        match result {
+            PushChangeResult::Conflict { server_note, .. } => {
+                assert_eq!(server_note.title, "Server");
+                assert_eq!(server_note.server_version, 1);
+            }
+            other => panic!("expected conflict, got {other:?}"),
+        }
+        let title: String =
+            sqlx::query_scalar("SELECT title FROM notes WHERE account_id = $1 AND id = $2")
+                .bind(&account_id)
+                .bind(note_id.to_string())
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(title, "Server");
+        let log_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM change_log WHERE account_id = $1")
+                .bind(&account_id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(log_count, 1, "schema {}", fixture.schema_name());
+    }
+
+    #[tokio::test]
+    async fn soft_delete_push_updates_note_and_logs_delete_operation() {
+        let Some(fixture) = pg_fixture().await else {
+            return;
+        };
+        let pool = &fixture.pool;
+        let account_id = test_account("acct_delete");
+        create_account(pool, &account_id).await;
+        let note_id = NoteId::new();
+        let mut tx = pool.begin().await.unwrap();
+        let created = apply_push_change(
+            &mut tx,
+            &account_id,
+            "device-a",
+            push_change("q1", &note_id, 0, "Live"),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let PushChangeResult::Accepted {
+            server_version: base_version,
+            ..
+        } = created
+        else {
+            panic!("expected first push to be accepted");
+        };
+        let mut tx = pool.begin().await.unwrap();
+
+        let deleted = apply_push_change(
+            &mut tx,
+            &account_id,
+            "device-a",
+            PushChange {
+                queue_id: "delete".to_string(),
+                note_id: note_id.clone(),
+                base_version,
+                payload: SyncPayload::Note(deleted_note_payload("Deleted")),
+            },
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        assert!(matches!(
+            deleted,
+            PushChangeResult::Accepted {
+                server_version: 2,
+                ..
+            }
+        ));
+        let note =
+            sqlx::query("SELECT deleted_at, version FROM notes WHERE account_id = $1 AND id = $2")
+                .bind(&account_id)
+                .bind(note_id.to_string())
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert!(note.get::<Option<DateTime<Utc>>, _>("deleted_at").is_some());
+        assert_eq!(note.get::<i64, _>("version"), 2);
+        let op_types = sqlx::query_scalar::<_, String>(
+            "SELECT op_type FROM change_log
+             WHERE account_id = $1 AND note_id = $2
+             ORDER BY cursor ASC",
+        )
+        .bind(&account_id)
+        .bind(note_id.to_string())
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            op_types,
+            vec![
+                SyncOpType::UpsertNote.as_str().to_string(),
+                SyncOpType::DeleteNote.as_str().to_string()
+            ],
+            "schema {}",
+            fixture.schema_name()
+        );
+        let pulled = pull_changes(pool, &account_id, 0).await.unwrap();
+        assert_eq!(pulled.len(), 2);
+        assert!(pulled[1].note.deleted_at.is_some());
+        assert_eq!(pulled[1].note.server_version, 2);
+    }
+
+    #[tokio::test]
+    async fn pull_changes_filters_by_account_and_cursor() {
+        let Some(fixture) = pg_fixture().await else {
+            return;
+        };
+        let pool = &fixture.pool;
+        let acct_a = test_account("acct_pull_a");
+        let acct_b = test_account("acct_pull_b");
+        create_account(pool, &acct_a).await;
+        create_account(pool, &acct_b).await;
+        let acct_a_first = NoteId::new();
+        let acct_a_second = NoteId::new();
+        let acct_b_note = NoteId::new();
+        for (account_id, note_id, title) in [
+            (acct_a.as_str(), &acct_a_first, "A1"),
+            (acct_b.as_str(), &acct_b_note, "B1"),
+            (acct_a.as_str(), &acct_a_second, "A2"),
+        ] {
+            let mut tx = pool.begin().await.unwrap();
+            apply_push_change(
+                &mut tx,
+                account_id,
+                "device-remote",
+                push_change(title, note_id, 0, title),
+            )
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+        }
+
+        let all_acct_a = pull_changes(&pool, &acct_a, 0).await.unwrap();
+        let after_first = pull_changes(&pool, &acct_a, all_acct_a[0].cursor)
+            .await
+            .unwrap();
+
+        assert_eq!(all_acct_a.len(), 2);
+        assert_eq!(all_acct_a[0].note.title, "A1");
+        assert_eq!(all_acct_a[1].note.title, "A2");
+        assert_eq!(after_first.len(), 1);
+        assert_eq!(after_first[0].note.id, acct_a_second);
+    }
+
+    #[tokio::test]
+    async fn snapshot_is_account_scoped_and_includes_assets_and_cursor() {
+        let Some(fixture) = pg_fixture().await else {
+            return;
+        };
+        let pool = &fixture.pool;
+        let acct_a = test_account("acct_snapshot_a");
+        let acct_b = test_account("acct_snapshot_b");
+        create_account(pool, &acct_a).await;
+        create_account(pool, &acct_b).await;
+        let acct_a_note = NoteId::new();
+        let acct_b_note = NoteId::new();
+        for (account_id, note_id, title) in [
+            (acct_a.as_str(), &acct_a_note, "A snapshot"),
+            (acct_b.as_str(), &acct_b_note, "B snapshot"),
+        ] {
+            let mut tx = pool.begin().await.unwrap();
+            apply_push_change(
+                &mut tx,
+                account_id,
+                "device-remote",
+                push_change(title, note_id, 0, title),
+            )
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+        }
+        let asset_id = AssetId::new();
+        sqlx::query(
+            "INSERT INTO assets
+             (id, account_id, note_id, content_type, byte_size, sha256, storage_key, created_at)
+             VALUES ($1, $2, $3, 'image/png', 4, 'sha', 'assets/notes/a/image.png', $4)",
+        )
+        .bind(asset_id.to_string())
+        .bind(&acct_a)
+        .bind(acct_a_note.to_string())
+        .bind(Utc.with_ymd_and_hms(2026, 5, 12, 8, 0, 0).unwrap())
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let (cursor, notes, assets) = snapshot(&pool, &acct_a).await.unwrap();
+
+        assert!(cursor > 0);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].title, "A snapshot");
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].id, asset_id);
+        assert_eq!(assets[0].note_id, acct_a_note);
+    }
+
+    #[tokio::test]
+    async fn asset_payload_sent_to_push_is_acknowledged_without_note_log_entry() {
+        let Some(fixture) = pg_fixture().await else {
+            return;
+        };
+        let pool = &fixture.pool;
+        let account_id = test_account("acct_asset");
+        create_account(pool, &account_id).await;
+        let note_id = NoteId::new();
+        let mut tx = pool.begin().await.unwrap();
+        let result = apply_push_change(
+            &mut tx,
+            &account_id,
+            "device-a",
+            PushChange {
+                queue_id: "asset".to_string(),
+                note_id: note_id.clone(),
+                base_version: 9,
+                payload: SyncPayload::Asset(snapline_domain::AssetUploadPayload {
+                    asset_id: AssetId::new(),
+                    note_id,
+                    content_type: "image/png".to_string(),
+                    byte_size: 4,
+                    sha256: "sha".to_string(),
+                    markdown_path: "assets/notes/note/image.png".to_string(),
+                }),
+            },
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        assert!(matches!(
+            result,
+            PushChangeResult::Accepted {
+                server_version: 9,
+                cursor: 0,
+                ..
+            }
+        ));
+        let note_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM notes WHERE account_id = $1")
+                .bind(&account_id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let log_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM change_log WHERE account_id = $1")
+                .bind(&account_id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(note_count, 0, "schema {}", fixture.schema_name());
+        assert_eq!(log_count, 0, "schema {}", fixture.schema_name());
+    }
+}

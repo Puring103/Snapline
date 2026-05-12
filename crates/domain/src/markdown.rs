@@ -143,17 +143,21 @@ where
     let mut output = String::with_capacity(markdown.len());
     let mut cursor = 0usize;
 
-    while let Some(start) = markdown[cursor..].find("![](") {
+    while let Some(start) = markdown[cursor..].find("![") {
         let absolute_start = cursor + start;
-        output.push_str(&markdown[cursor..absolute_start + 4]);
-        let source_start = absolute_start + 4;
+        output.push_str(&markdown[cursor..absolute_start]);
+        let Some(alt_end_offset) = markdown[absolute_start + 2..].find("](") else {
+            output.push_str(&markdown[absolute_start..]);
+            return output;
+        };
+        let source_start = absolute_start + 2 + alt_end_offset + 2;
         let Some(end_offset) = markdown[source_start..].find(')') else {
-            output.push_str(&markdown[source_start..]);
+            output.push_str(&markdown[absolute_start..]);
             return output;
         };
         let source_end = source_start + end_offset;
-        let source = &markdown[source_start..source_end];
-        output.push_str(&transform(source));
+        output.push_str(&markdown[absolute_start..source_start]);
+        output.push_str(&transform(&markdown[source_start..source_end]));
         output.push(')');
         cursor = source_end + 1;
     }
@@ -311,11 +315,40 @@ mod tests {
     }
 
     #[test]
+    fn rewrites_markdown_image_sources_with_alt_text_and_multiple_images() {
+        assert_eq!(
+            rewrite_markdown_image_sources(
+                "![cover](assets/notes/note/cover.png)\n![diagram](assets/notes/note/diagram.png)",
+                asset_url_from_markdown_path
+            ),
+            "![cover](asset://localhost/assets/notes/note/cover.png)\n![diagram](asset://localhost/assets/notes/note/diagram.png)"
+        );
+    }
+
+    #[test]
+    fn rewrite_markdown_image_sources_ignores_links_and_preserves_broken_images() {
+        assert_eq!(
+            rewrite_markdown_image_sources(
+                "[asset](assets/notes/note/file.png)\n![broken](assets/notes/note/missing.png",
+                asset_url_from_markdown_path
+            ),
+            "[asset](assets/notes/note/file.png)\n![broken](assets/notes/note/missing.png"
+        );
+    }
+
+    #[test]
     fn hydrates_and_restores_markdown_assets() {
-        let hydrated = hydrate_markdown_assets("![](assets/notes/note/image.png)");
+        let hydrated = hydrate_markdown_assets("![alt](assets/notes/note/image.png)");
         assert_eq!(
             hydrated.markdown,
-            "![](asset://localhost/assets/notes/note/image.png)"
+            "![alt](asset://localhost/assets/notes/note/image.png)"
+        );
+        assert_eq!(
+            hydrated.mappings,
+            vec![MarkdownImageMapping {
+                display_source: "asset://localhost/assets/notes/note/image.png".to_string(),
+                markdown_path: "assets/notes/note/image.png".to_string(),
+            }]
         );
         assert_eq!(
             restore_markdown_asset_sources(
@@ -325,7 +358,7 @@ mod tests {
                     markdown_path: "assets/notes/note/image.png".to_string(),
                 }],
             ),
-            "![](assets/notes/note/image.png)"
+            "![alt](assets/notes/note/image.png)"
         );
     }
 }

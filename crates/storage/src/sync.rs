@@ -500,4 +500,138 @@ mod tests {
         assert_eq!(items[0].base_version, 7);
         assert_eq!(items[0].payload, latest_payload);
     }
+
+    #[test]
+    fn coalescing_is_scoped_to_account() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_sync_tables(&conn).unwrap();
+        let mut note = Note::draft(Utc.with_ymd_and_hms(2026, 5, 12, 1, 0, 0).unwrap());
+        let original_payload = SyncPayload::Note(NoteChangePayload::from_note(&note));
+
+        let anonymous_id = enqueue_change(
+            &conn,
+            None,
+            &note.id,
+            SyncOpType::UpsertNote,
+            0,
+            &original_payload,
+            note.created_at,
+        )
+        .unwrap();
+        let account_id = enqueue_change(
+            &conn,
+            Some("acct_a"),
+            &note.id,
+            SyncOpType::UpsertNote,
+            3,
+            &original_payload,
+            note.created_at,
+        )
+        .unwrap();
+
+        note.title = "Account latest".to_string();
+        let account_payload = SyncPayload::Note(NoteChangePayload::from_note(&note));
+        let coalesced_account_id = enqueue_change(
+            &conn,
+            Some("acct_a"),
+            &note.id,
+            SyncOpType::UpsertNote,
+            3,
+            &account_payload,
+            Utc.with_ymd_and_hms(2026, 5, 12, 1, 1, 0).unwrap(),
+        )
+        .unwrap();
+
+        assert_ne!(anonymous_id, account_id);
+        assert_eq!(account_id, coalesced_account_id);
+        assert_eq!(list_pending_changes(&conn, None, 10).unwrap().len(), 1);
+        let account_items = list_pending_changes(&conn, Some("acct_a"), 10).unwrap();
+        assert_eq!(account_items.len(), 1);
+        assert_eq!(account_items[0].payload, account_payload);
+    }
+
+    #[test]
+    fn coalesced_note_change_resets_retry_state() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_sync_tables(&conn).unwrap();
+        let mut note = Note::draft(Utc.with_ymd_and_hms(2026, 5, 12, 2, 0, 0).unwrap());
+        let first_payload = SyncPayload::Note(NoteChangePayload::from_note(&note));
+        let queue_id = enqueue_change(
+            &conn,
+            Some("acct_a"),
+            &note.id,
+            SyncOpType::UpsertNote,
+            11,
+            &first_payload,
+            note.created_at,
+        )
+        .unwrap();
+        mark_change_failed(&conn, &queue_id, "network unavailable").unwrap();
+
+        note.content_md = "# Latest".to_string();
+        let latest_payload = SyncPayload::Note(NoteChangePayload::from_note(&note));
+        enqueue_change(
+            &conn,
+            Some("acct_a"),
+            &note.id,
+            SyncOpType::UpsertNote,
+            11,
+            &latest_payload,
+            Utc.with_ymd_and_hms(2026, 5, 12, 2, 1, 0).unwrap(),
+        )
+        .unwrap();
+
+        let item = list_pending_changes(&conn, Some("acct_a"), 10)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(item.id, queue_id);
+        assert_eq!(item.payload, latest_payload);
+        assert_eq!(item.retry_count, 0);
+        assert_eq!(item.last_error, None);
+    }
+
+    #[test]
+    fn asset_upload_changes_are_not_coalesced() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_sync_tables(&conn).unwrap();
+        let note = Note::draft(Utc.with_ymd_and_hms(2026, 5, 12, 3, 0, 0).unwrap());
+        let payload = SyncPayload::Asset(snapline_domain::AssetUploadPayload {
+            asset_id: snapline_domain::AssetId::new(),
+            note_id: note.id.clone(),
+            content_type: "image/png".to_string(),
+            byte_size: 4,
+            sha256: "sha".to_string(),
+            markdown_path: "assets/notes/note/image.png".to_string(),
+        });
+
+        let first_id = enqueue_change(
+            &conn,
+            Some("acct_a"),
+            &note.id,
+            SyncOpType::AssetUpload,
+            0,
+            &payload,
+            note.created_at,
+        )
+        .unwrap();
+        let second_id = enqueue_change(
+            &conn,
+            Some("acct_a"),
+            &note.id,
+            SyncOpType::AssetUpload,
+            0,
+            &payload,
+            Utc.with_ymd_and_hms(2026, 5, 12, 3, 1, 0).unwrap(),
+        )
+        .unwrap();
+
+        assert_ne!(first_id, second_id);
+        assert_eq!(
+            list_pending_changes(&conn, Some("acct_a"), 10)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
 }

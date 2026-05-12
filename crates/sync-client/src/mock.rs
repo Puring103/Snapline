@@ -4,7 +4,7 @@ use crate::SyncApi;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
-use snapline_domain::{AssetUploadPayload, Note, SyncPayload};
+use snapline_domain::{AssetMetadata, AssetUploadPayload, Note, SyncPayload};
 use std::sync::Mutex;
 
 /// 线程安全的内存同步后端，各字段均用 `Mutex` 保护。
@@ -12,7 +12,7 @@ use std::sync::Mutex;
 pub struct MockSyncApi {
     notes: Mutex<Vec<Note>>,
     /// 记录每条变更对应的设备 ID，用于拉取时填充 `RemoteChange.device_id`。
-    change_devices: Mutex<Vec<(snapline_domain::NoteId, String)>>,
+    change_devices: Mutex<Vec<(i64, snapline_domain::NoteId, String)>>,
     assets: Mutex<Vec<AssetUploadPayload>>,
     asset_bytes: Mutex<Vec<(String, Vec<u8>)>>,
     /// 全局单调递增游标，每接受一条变更时加 1。
@@ -62,10 +62,11 @@ impl SyncApi for MockSyncApi {
                     existing.deleted_at = payload.deleted_at;
                     existing.server_version += 1;
                     *cursor += 1;
-                    self.change_devices
-                        .lock()
-                        .unwrap()
-                        .push((existing.id.clone(), request.device_id.clone()));
+                    self.change_devices.lock().unwrap().push((
+                        *cursor,
+                        existing.id.clone(),
+                        request.device_id.clone(),
+                    ));
                     results.push(PushChangeResult::Accepted {
                         queue_id: change.queue_id,
                         note_id: existing.id.clone(),
@@ -84,10 +85,11 @@ impl SyncApi for MockSyncApi {
                     note.server_version = 1;
                     notes.push(note);
                     *cursor += 1;
-                    self.change_devices
-                        .lock()
-                        .unwrap()
-                        .push((change.note_id.clone(), request.device_id.clone()));
+                    self.change_devices.lock().unwrap().push((
+                        *cursor,
+                        change.note_id.clone(),
+                        request.device_id.clone(),
+                    ));
                     results.push(PushChangeResult::Accepted {
                         queue_id: change.queue_id,
                         note_id: change.note_id,
@@ -108,20 +110,23 @@ impl SyncApi for MockSyncApi {
         let change_devices = self.change_devices.lock().unwrap();
         Ok(PullResponse {
             cursor,
-            changes: notes
+            changes: change_devices
                 .iter()
-                .filter(|note| note.owner_account_id.as_deref() == Some(&account_id))
-                .cloned()
-                .map(|note| RemoteChange {
-                    cursor,
-                    device_id: change_devices
+                .filter(|(change_cursor, _, _)| *change_cursor > _cursor)
+                .filter_map(|(change_cursor, note_id, device_id)| {
+                    notes
                         .iter()
-                        .rev()
-                        .find(|(note_id, _)| note_id == &note.id)
-                        .map(|(_, device_id)| device_id.clone())
-                        .unwrap_or_else(|| "mock-device".to_string()),
-                    note,
-                    changed_at: Utc::now(),
+                        .find(|note| {
+                            note.id == *note_id
+                                && note.owner_account_id.as_deref() == Some(&account_id)
+                        })
+                        .cloned()
+                        .map(|note| RemoteChange {
+                            cursor: *change_cursor,
+                            device_id: device_id.clone(),
+                            note,
+                            changed_at: Utc::now(),
+                        })
                 })
                 .collect(),
         })
@@ -140,7 +145,23 @@ impl SyncApi for MockSyncApi {
                 .filter(|note| note.owner_account_id.as_deref() == Some(&account_id))
                 .cloned()
                 .collect(),
-            assets: Vec::new(),
+            assets: self
+                .assets
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|asset| asset.markdown_path.strip_prefix("assets/notes/").is_some())
+                .map(|asset| AssetMetadata {
+                    id: asset.asset_id.clone(),
+                    note_id: asset.note_id.clone(),
+                    content_type: asset.content_type.clone(),
+                    byte_size: asset.byte_size,
+                    sha256: asset.sha256.clone(),
+                    storage_key: asset.markdown_path.clone(),
+                    created_at: Utc::now(),
+                    deleted_at: None,
+                })
+                .collect(),
         })
     }
 
@@ -181,6 +202,10 @@ impl MockSyncApi {
 
     pub fn uploaded_assets(&self) -> Vec<AssetUploadPayload> {
         self.assets.lock().unwrap().clone()
+    }
+
+    pub fn notes(&self) -> Vec<Note> {
+        self.notes.lock().unwrap().clone()
     }
 }
 

@@ -195,6 +195,41 @@ fn detects_pending_changes_for_note() {
 }
 
 #[test]
+fn asset_upload_queue_does_not_count_as_pending_note_change() {
+    let repo = NoteRepository::open_in_memory().unwrap();
+    let note = snapline_domain::Note::draft(Utc.with_ymd_and_hms(2026, 5, 12, 9, 0, 0).unwrap());
+    let payload = snapline_domain::SyncPayload::Asset(snapline_domain::AssetUploadPayload {
+        asset_id: snapline_domain::AssetId::new(),
+        note_id: note.id.clone(),
+        content_type: "image/png".to_string(),
+        byte_size: 4,
+        sha256: "sha".to_string(),
+        markdown_path: format!("assets/notes/{}/image.png", note.id),
+    });
+
+    let asset_queue_id = repo
+        .enqueue_change(
+            Some("acct_a"),
+            &note.id,
+            snapline_domain::SyncOpType::AssetUpload,
+            0,
+            &payload,
+            Utc.with_ymd_and_hms(2026, 5, 12, 9, 1, 0).unwrap(),
+        )
+        .unwrap();
+
+    assert!(!repo
+        .has_pending_note_change(Some("acct_a"), &note.id)
+        .unwrap());
+
+    repo.delete_changes_for_note(Some("acct_a"), &note.id)
+        .unwrap();
+    let pending = repo.list_pending_changes(Some("acct_a"), 10).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, asset_queue_id);
+}
+
+#[test]
 fn creates_conflict_copy_for_note_payload() {
     let repo = NoteRepository::open_in_memory().unwrap();
     let mut rejected =
