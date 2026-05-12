@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useMemo } from "react";
 import { startupLog } from "./platform/startupLog";
-import { readAppRoute } from "./platform/window";
+import { ensureSpareNoteWindow, isAndroidRuntime, readAppRoute } from "./platform/window";
 import { useThemeSync } from "./hooks/theme";
 import { NotesListWindow } from "./components/app/NotesListWindow";
 import { NoteEditorWindow } from "./components/app/NoteEditorWindow";
@@ -24,6 +24,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (route.mode === "android" || isAndroidRuntime()) return;
+    void ensureSpareNoteWindow();
+  }, [route.mode]);
+
+  useEffect(() => {
     const url = new URL(window.location.href);
     if (!url.searchParams.has("mode")) {
       url.searchParams.set("mode", route.mode);
@@ -39,7 +44,7 @@ export function App() {
     );
   }
 
-  return route.mode === "list" ? <NotesListWindow /> : <NoteEditorWindow newDraft={route.newDraft} noteId={route.noteId} />;
+  return route.mode === "list" ? <NotesListWindow /> : <NoteEditorWindow newDraft={route.newDraft} noteId={route.noteId} spare={route.spare} />;
 }
 
 function preloadEditorChunks() {

@@ -7,6 +7,7 @@ import { api } from "./api";
 export const CLOSE_OTHER_NOTES_EVENT = "snapline-close-other-note-windows";
 export const CLOSE_NOTE_WINDOWS_EVENT = "snapline-close-note-windows";
 export const FOCUS_EDITOR_EVENT = "snapline-focus-editor";
+export const PREPARE_NOTE_WINDOW_EVENT = "snapline-prepare-note-window";
 
 export type AppWindowMode = "list" | "note" | "android";
 
@@ -29,13 +30,16 @@ const LIST_WINDOW_OPTIONS = {
 } as const;
 
 const NOTE_WINDOW_LABEL_PREFIX = "snapline.noteWindow.";
+const CLAIMED_SPARE_WINDOW_LABEL_PREFIX = "snapline.claimedSpareWindow.";
 const DRAFT_WINDOW_LABEL = "main";
 const LIST_WINDOW_LABEL = "list";
+const SPARE_NOTE_WINDOW_PREFIX = "note-spare-";
 
 export interface AppRoute {
   mode: AppWindowMode;
   noteId: string | null;
   newDraft: boolean;
+  spare: boolean;
 }
 
 export function readAppRoute(): AppRoute {
@@ -50,6 +54,7 @@ export function readAppRoute(): AppRoute {
     mode,
     noteId: search.get("noteId"),
     newDraft: search.get("newDraft") === "1",
+    spare: search.get("spare") === "1",
   };
 }
 
@@ -87,15 +92,49 @@ export interface PointerWindowPosition {
 }
 
 export async function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
+  if (!isAndroidRuntime()) {
+    const spareLabel = await consumeSpareNoteWindow(noteId ?? null, position);
+    if (spareLabel) {
+      if (noteId) {
+        await emit(CLOSE_NOTE_WINDOWS_EVENT, { id: noteId, exceptLabel: spareLabel });
+        await closeKnownNoteWindowsForNote(noteId, spareLabel);
+        rememberNoteWindow(noteId, spareLabel);
+      }
+      void ensureSpareNoteWindow();
+      return spareLabel;
+    }
+  }
+
   if (noteId) {
     const label = await api.openNoteWindow(noteId, position);
     await emit(CLOSE_NOTE_WINDOWS_EVENT, { id: noteId, exceptLabel: label });
     await closeKnownNoteWindowsForNote(noteId, label);
     rememberNoteWindow(noteId, label);
+    if (!isAndroidRuntime()) {
+      void ensureSpareNoteWindow();
+    }
     return label;
   }
 
-  return api.openNoteWindow(null, position);
+  const label = await api.openNoteWindow(null, position);
+  if (!isAndroidRuntime()) {
+    void ensureSpareNoteWindow();
+  }
+  return label;
+}
+
+export async function ensureSpareNoteWindow() {
+  if (isAndroidRuntime()) return null;
+
+  const existing = await findAvailableSpareNoteWindow();
+  if (existing) return existing.label;
+
+  const label = `${SPARE_NOTE_WINDOW_PREFIX}${createWindowLabelSuffix()}`;
+  const spare = openAppWindow("note", null, undefined, {
+    label,
+    params: { spare: "1" },
+  });
+  return spare.label;
 }
 
 export function rememberNoteWindow(noteId: string, label: string) {
@@ -162,11 +201,39 @@ async function closeKnownNoteWindowsForNote(noteId: string, exceptLabel: string)
   }));
 }
 
-function openAppWindow(mode: AppWindowMode, noteId: string | null = null, position?: PointerWindowPosition) {
-  const label = buildWindowLabel(mode, noteId);
+async function consumeSpareNoteWindow(noteId: string | null, position?: PointerWindowPosition) {
+  const spare = await findAvailableSpareNoteWindow();
+  if (!spare) return null;
+
+  claimSpareWindow(spare.label);
+  await emit(PREPARE_NOTE_WINDOW_EVENT, { label: spare.label, noteId });
+  if (position) {
+    await spare.setPosition?.(new LogicalPosition(position.x, position.y));
+  }
+  await revealExistingWindow(spare);
+  return spare.label;
+}
+
+async function findAvailableSpareNoteWindow() {
+  try {
+    const all = await WebviewWindow.getAll();
+    return all.find((window) => window.label.startsWith(SPARE_NOTE_WINDOW_PREFIX) && !isSpareWindowClaimed(window.label)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function openAppWindow(
+  mode: AppWindowMode,
+  noteId: string | null = null,
+  position?: PointerWindowPosition,
+  override?: { label?: string; params?: Record<string, string> },
+) {
+  const label = override?.label ?? buildWindowLabel(mode, noteId);
   const params = new URLSearchParams({ mode });
   if (noteId) params.set("noteId", noteId);
-  if (mode === "note" && noteId === null) params.set("newDraft", "1");
+  if (mode === "note" && noteId === null && override?.params?.spare !== "1") params.set("newDraft", "1");
+  Object.entries(override?.params ?? {}).forEach(([key, value]) => params.set(key, value));
   const options = windowOptionsForMode(mode);
 
   return new WebviewWindow(label, {
@@ -201,4 +268,12 @@ function createWindowLabelSuffix() {
 
 function readRememberedNoteWindowLabel(noteId: string): string | null {
   return localStorage.getItem(`${NOTE_WINDOW_LABEL_PREFIX}${noteId}`);
+}
+
+function claimSpareWindow(label: string) {
+  localStorage.setItem(`${CLAIMED_SPARE_WINDOW_LABEL_PREFIX}${label}`, "1");
+}
+
+function isSpareWindowClaimed(label: string) {
+  return localStorage.getItem(`${CLAIMED_SPARE_WINDOW_LABEL_PREFIX}${label}`) === "1";
 }

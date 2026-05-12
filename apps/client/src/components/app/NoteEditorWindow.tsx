@@ -6,6 +6,7 @@ import { api } from "../../platform/api";
 import { startupLog } from "../../platform/startupLog";
 import {
   CLOSE_NOTE_WINDOWS_EVENT,
+  PREPARE_NOTE_WINDOW_EVENT,
   openListWindow,
   openNoteWindow,
   rememberNoteWindow,
@@ -39,9 +40,12 @@ const DEFAULT_SHORTCUT = "Ctrl+Shift+Space";
 const FOCUS_EDITOR_EVENT = "snapline-focus-editor";
 const LazyEditorPane = lazy(() => import("../EditorPane").then((module) => ({ default: module.EditorPane })));
 
-export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; noteId: string | null }) {
+export function NoteEditorWindow({ newDraft, noteId, spare }: { newDraft: boolean; noteId: string | null; spare: boolean }) {
   const windowLabel = useMemo(() => getCurrentWindow().label, []);
   const shellRevealedRef = useRef(false);
+  const [targetNoteId, setTargetNoteId] = useState(noteId);
+  const [targetNewDraft, setTargetNewDraft] = useState(newDraft);
+  const [isSpare, setIsSpare] = useState(spare);
   const [session, setSession] = useState<ActiveSession>(() => createDraftSession());
   const [notePinned, setNotePinned] = useState(false);
   const [windowAlwaysOnTop, setWindowAlwaysOnTop] = useState(false);
@@ -74,19 +78,27 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
 
   useEffect(() => {
     startupLog("note_window_shell_mounted", {
-      existing_note: noteId !== null,
-      new_draft: newDraft,
+      existing_note: targetNoteId !== null,
+      new_draft: targetNewDraft,
+      spare: isSpare,
     });
 
-    if (noteId !== null || newDraft) {
+    if (!isSpare && (targetNoteId !== null || targetNewDraft)) {
       revealShellWindow();
     }
-  }, [newDraft, noteId]);
+  }, [isSpare, targetNewDraft, targetNoteId]);
 
   useEffect(() => {
     let cancelled = false;
 
-    if (noteId !== null || newDraft) {
+    if (isSpare) {
+      setStatus("Ready");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (targetNoteId !== null || targetNewDraft) {
       setNoteLoadArmed(true);
       return () => {
         cancelled = true;
@@ -101,7 +113,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
           shouldDeferInitialNoteLoad({
             launchedInBackground: isBackgroundLaunch,
             windowLabel,
-            noteId,
+            noteId: targetNoteId,
           })
         ) {
           setStatus("Ready");
@@ -119,7 +131,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
     return () => {
       cancelled = true;
     };
-  }, [newDraft, noteId, windowLabel]);
+  }, [isSpare, targetNewDraft, targetNoteId, windowLabel]);
 
   useEffect(() => {
     if (!noteLoadArmed) return;
@@ -131,12 +143,12 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
         const startedAt = performance.now();
         setError(null);
 
-        const [bootstrapState, payload] = noteId || newDraft
-          ? [null, await api.noteWindowPayload(noteId)] as const
+        const [bootstrapState, payload] = targetNoteId || targetNewDraft
+          ? [null, await api.noteWindowPayload(targetNoteId)] as const
           : [await api.bootstrap(), null] as const;
         startupLog("note_data_loaded", {
-          existing_note: noteId !== null,
-          new_draft: newDraft,
+          existing_note: targetNoteId !== null,
+          new_draft: targetNewDraft,
           duration_ms: Math.round(performance.now() - startedAt),
         });
         if (cancelled) {
@@ -150,7 +162,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
         }
         if (payload?.note) {
           await beginSessionFromNote(payload.note);
-        } else if (newDraft) {
+        } else if (targetNewDraft) {
           beginDraftSession();
         } else if (bootstrapState) {
           await beginSessionFromNote(bootstrapState.current);
@@ -172,7 +184,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
       cancelled = true;
       clearSaveTimer();
     };
-  }, [newDraft, noteId, noteLoadArmed, reloadRequestId]);
+  }, [targetNewDraft, targetNoteId, noteLoadArmed, reloadRequestId]);
 
   useEffect(() => {
     const currentId = session.id;
@@ -206,7 +218,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
   }, [session.id, windowLabel]);
 
   useEffect(() => {
-    const currentId = session.id ?? noteId;
+    const currentId = session.id ?? targetNoteId;
     if (!currentId) return;
 
     let unlisten: (() => void) | null = null;
@@ -221,7 +233,42 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
     return () => {
       unlisten?.();
     };
-  }, [noteId, session.id, windowLabel]);
+  }, [targetNoteId, session.id, windowLabel]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void listen<{ label: string; noteId: string | null }>(PREPARE_NOTE_WINDOW_EVENT, (event) => {
+      if (event.payload.label !== windowLabel) return;
+
+      clearSaveTimer();
+      setIsSpare(false);
+      setTargetNoteId(event.payload.noteId);
+      setTargetNewDraft(event.payload.noteId === null);
+      setSession(createDraftSession());
+      setNotePinned(false);
+      setDeleted(false);
+      setError(null);
+      setIsConflictCopy(false);
+      setSourceNoteId(null);
+      setStatus("Loading");
+      setDataDir(null);
+      setWindowReadyToReveal(false);
+      shellRevealedRef.current = true;
+      setNoteLoadArmed(true);
+      setReloadRequestId((current) => current + 1);
+      setFocusRequestId((current) => current + 1);
+      startupLog("spare_window_consumed", {
+        existing_note: event.payload.noteId !== null,
+        new_draft: event.payload.noteId === null,
+      });
+    }).then((nextUnlisten) => {
+      unlisten = nextUnlisten;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, [windowLabel]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -237,7 +284,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
     return () => {
       unlisten?.();
     };
-  }, [noteId]);
+  }, [targetNoteId]);
 
   useEffect(() => {
     if (!windowReadyToReveal) return;
@@ -304,7 +351,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
     clearSaveTimer();
     const { title, body_md } = await api.splitStoredNoteMarkdown(note.title, note.content_md);
     setSession({
-      kind: noteId ? "existing" : "draft",
+      kind: targetNoteId ? "existing" : "draft",
       id: note.id,
       title,
       bodyMd: body_md,
@@ -531,13 +578,13 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
     if (shellRevealedRef.current) return;
     shellRevealedRef.current = true;
     startupLog("window_reveal_requested", {
-      existing_note: noteId !== null,
-      new_draft: newDraft,
+      existing_note: targetNoteId !== null,
+      new_draft: targetNewDraft,
     });
     void revealCurrentWindowWhenReady().then(() => {
       startupLog("window_revealed", {
-        existing_note: noteId !== null,
-        new_draft: newDraft,
+        existing_note: targetNoteId !== null,
+        new_draft: targetNewDraft,
       });
     });
   }

@@ -1,8 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const webviewState = vi.hoisted(() => ({
-  all: [] as Array<{ close: () => Promise<void>; label: string }>,
+  all: [] as Array<{
+    close?: () => Promise<void>;
+    label: string;
+    setFocus?: () => Promise<void>;
+    setPosition?: () => Promise<void>;
+    show?: () => Promise<void>;
+    unminimize?: () => Promise<void>;
+  }>,
   byLabel: new Map<string, unknown>(),
+  constructed: [] as Array<{ label: string; options: { url?: string; visible?: boolean } }>,
 }));
 
 const invokeState = vi.hoisted(() => ({
@@ -21,6 +29,7 @@ vi.mock("@tauri-apps/api/webviewWindow", () => {
     constructor(label: string, options: { url?: string }) {
       this.label = label;
       this.options = options;
+      webviewState.constructed.push({ label, options });
     }
 
     static getByLabel(label: string) {
@@ -50,6 +59,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import {
+  ensureSpareNoteWindow,
   forgetNoteWindow,
   openNoteWindow,
   rememberNoteWindow,
@@ -64,6 +74,7 @@ describe("window routing", () => {
   beforeEach(() => {
     webviewState.all = [];
     webviewState.byLabel.clear();
+    webviewState.constructed = [];
     invokeState.calls = [];
     eventState.emits = [];
     localStorage.clear();
@@ -72,19 +83,25 @@ describe("window routing", () => {
   it("defaults to the note window route", () => {
     window.history.pushState({}, "", "/");
 
-    expect(readAppRoute()).toEqual({ mode: "note", noteId: null, newDraft: false });
+    expect(readAppRoute()).toEqual({ mode: "note", noteId: null, newDraft: false, spare: false });
   });
 
   it("reads explicit new draft note routes separately from startup restore routes", () => {
     window.history.pushState({}, "", "/?mode=note&newDraft=1");
 
-    expect(readAppRoute()).toEqual({ mode: "note", noteId: null, newDraft: true });
+    expect(readAppRoute()).toEqual({ mode: "note", noteId: null, newDraft: true, spare: false });
   });
 
   it("keeps saved note routes from being treated as new drafts", () => {
     window.history.pushState({}, "", "/?mode=note&noteId=note-id");
 
-    expect(readAppRoute()).toEqual({ mode: "note", noteId: "note-id", newDraft: false });
+    expect(readAppRoute()).toEqual({ mode: "note", noteId: "note-id", newDraft: false, spare: false });
+  });
+
+  it("reads spare note routes separately from explicit drafts", () => {
+    window.history.pushState({}, "", "/?mode=note&spare=1");
+
+    expect(readAppRoute()).toEqual({ mode: "note", noteId: null, newDraft: false, spare: true });
   });
 
   it("only defers note creation for the background main window", () => {
@@ -174,6 +191,51 @@ describe("window routing", () => {
       },
     ]);
     expect(localStorage.getItem("snapline.noteWindow.saved-note-id")).toBe("note-saved-note-id-replacement");
+  });
+
+  it("creates a hidden spare note window without arming a new draft", async () => {
+    const label = await ensureSpareNoteWindow();
+
+    expect(label).toMatch(/^note-spare-/);
+    expect(webviewState.constructed).toHaveLength(1);
+    expect(webviewState.constructed[0]).toMatchObject({
+      options: {
+        url: "/?mode=note&spare=1",
+        visible: false,
+      },
+    });
+    expect(webviewState.constructed[0].label).toMatch(/^note-spare-/);
+  });
+
+  it("uses a spare note window before falling back to backend creation", async () => {
+    const calls: string[] = [];
+    const spare = {
+      label: "note-spare-existing",
+      setPosition: async () => {
+        calls.push("setPosition");
+      },
+      show: async () => {
+        calls.push("show");
+      },
+      unminimize: async () => {
+        calls.push("unminimize");
+      },
+      setFocus: async () => {
+        calls.push("setFocus");
+      },
+    };
+    webviewState.all = [spare];
+
+    const label = await openNoteWindow("saved-note-id", { x: 100, y: 200 });
+
+    expect(label).toBe("note-spare-existing");
+    expect(invokeState.calls).toEqual([]);
+    expect(eventState.emits).toEqual([
+      { event: "snapline-prepare-note-window", payload: { label: "note-spare-existing", noteId: "saved-note-id" } },
+      { event: "snapline-close-note-windows", payload: { id: "saved-note-id", exceptLabel: "note-spare-existing" } },
+    ]);
+    expect(calls).toEqual(["setPosition", "show", "unminimize", "setFocus"]);
+    expect(localStorage.getItem("snapline.noteWindow.saved-note-id")).toBe("note-spare-existing");
   });
 
   it("opens a replacement saved note window before closing remembered old windows", async () => {
