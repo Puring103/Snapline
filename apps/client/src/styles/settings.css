@@ -1,0 +1,166 @@
+.settingsBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 10px;
+  background: rgba(78, 56, 24, 0.18);
+  backdrop-filter: blur(6px);
+  animation: fadeIn 160ms ease both;
+}
+
+.settingsPanel {
+  width: 100%;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  animation: panelRise 180ms ease both;
+}
+
+.settingsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex: none;
+  padding: 11px 11px 10px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-soft) 60%, var(--surface));
+  border-radius: 15px 15px 0 0;
+}
+
+.themeButtons {
+  display: flex;
+  gap: 4px;
+}
+
+.themeButtons .iconButton {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+.settingsPanelScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 11px 11px;
+}
+
+.settingsTitle {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.settingsSub {
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settingsField {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settingsGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-soft) 62%, transparent);
+}
+
+.settingsGroupTitle {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.settingsSyncStatus {
+  width: fit-content;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.settingsToggle {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settingsToggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.segmentedControl {
+  width: max-content;
+  display: inline-grid;
+  grid-template-columns: repeat(3, 34px);
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.segment {
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-transform: capitalize;
+}
+
+.themeSegment {
+  display: inline-grid;
+  place-items: center;
+}
+
+.themeSegment .flatIcon {
+  width: 16px;
+  height: 16px;
+}
+
+.segment.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.linkButton {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-weight: 700;
+}
+

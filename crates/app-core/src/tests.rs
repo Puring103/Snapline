@@ -379,6 +379,51 @@ fn importing_anonymous_notes_removes_old_anonymous_queue_rows() {
 }
 
 #[test]
+fn imported_anonymous_note_conflicts_with_remote_snapshot_for_same_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = AppPaths::from_data_dir(dir.path());
+    let repo = NoteRepository::open_in_memory().unwrap();
+    let mut core = AppCore::with_repo(paths, repo);
+
+    let local = core.create_note().unwrap();
+    core.save_note(
+        &local.id,
+        "Local before login",
+        "# Local before login\nOffline body",
+        false,
+    )
+    .unwrap();
+    core.save_sync_login("http://localhost:8080", "acct_a", "token", None, None, None)
+        .unwrap();
+    core.import_anonymous_notes_to_current_account().unwrap();
+
+    let mut remote = core.get_note(&local.id).unwrap();
+    remote.title = "Remote snapshot".to_string();
+    remote.content_md = "# Remote snapshot\nServer body".to_string();
+    remote.server_version = 7;
+    remote.last_modified_by_device = Some("device-b".to_string());
+    core.import_snapshot(&[remote], 12).unwrap();
+
+    let current = core.get_note(&local.id).unwrap();
+    assert_eq!(current.title, "Remote snapshot");
+    assert_eq!(current.content_md, "# Remote snapshot\nServer body");
+    assert_eq!(current.server_version, 7);
+    let conflict_copy = core
+        .bootstrap()
+        .unwrap()
+        .notes
+        .into_iter()
+        .find(|note| note.is_conflict_copy)
+        .unwrap();
+    assert_eq!(conflict_copy.source_note_id.as_ref(), Some(&local.id));
+    let loaded_copy = core.get_note(&conflict_copy.id).unwrap();
+    assert_eq!(loaded_copy.title, "Local before login (Conflict copy)");
+    assert_eq!(loaded_copy.content_md, "# Local before login\nOffline body");
+    assert!(core.pending_sync_changes().unwrap().is_empty());
+    assert_eq!(core.sync_state().unwrap().server_cursor, 12);
+}
+
+#[test]
 fn logged_in_account_cannot_modify_anonymous_note_by_id() {
     let dir = tempfile::tempdir().unwrap();
     let paths = AppPaths::from_data_dir(dir.path());

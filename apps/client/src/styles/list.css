@@ -1,0 +1,416 @@
+.listHeader {
+  flex: none;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 8px 10px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--surface-soft) 80%, var(--surface));
+  -webkit-app-region: drag;
+  cursor: default;
+}
+
+.listTitle {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.listSub {
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.listHeaderActions {
+  display: flex;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+}
+
+.searchBar {
+  flex: none;
+  padding: 0 10px;
+}
+
+.searchInput {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 11px;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  font-size: 13px;
+}
+
+.searchInput::placeholder {
+  color: var(--muted);
+}
+
+.searchInput:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.listPanel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 10px 10px;
+}
+
+.noteRow {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 13px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 6px 14px rgba(78, 56, 24, 0.065);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.noteRow:hover {
+  border-color: var(--line-strong);
+  transform: translateY(-1px);
+}
+
+.noteRow:focus-visible {
+  outline: 3px solid rgba(47, 111, 143, 0.18);
+  outline-offset: 2px;
+}
+
+.noteRow.pinned {
+  background: var(--canvas-strong);
+  border-color: var(--line-strong);
+}
+
+.noteRow.pinned::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 14px;
+  bottom: 14px;
+  width: 3px;
+  border-radius: 0 999px 999px 0;
+  background: var(--pin-active);
+}
+
+.noteRowHeader {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.noteRowTitleBlock {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.noteRowTitle {
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.searchHighlight {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--pin-active-bg) 74%, transparent);
+  color: var(--text);
+  padding: 0 1px;
+}
+
+html[data-theme="dark"] .searchHighlight {
+  background: color-mix(in srgb, #ffd35a 72%, transparent);
+  color: #17130a;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #ffe08a 58%, transparent);
+}
+
+.noteRowPreview {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.34;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.noteRowPreview .ProseMirror {
+  outline: none;
+}
+
+.noteRowPreview .ProseMirror > * {
+  margin: 0 0 0.28em;
+}
+
+.noteRowPreview .ProseMirror > *:last-child {
+  margin-bottom: 0;
+}
+
+.noteRowPreview .ProseMirror h1,
+.noteRowPreview .ProseMirror h2,
+.noteRowPreview .ProseMirror h3 {
+  color: var(--text);
+  font-size: 1em;
+  line-height: 1.25;
+  margin: 0 0 0.3em;
+}
+
+.noteRowPreview .ProseMirror blockquote {
+  margin: 0.15em 0 0.65em;
+  padding: 8px 12px 8px 14px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 10px 10px 0;
+  background: color-mix(in srgb, var(--accent-soft) 52%, transparent);
+  color: color-mix(in srgb, var(--text) 82%, var(--muted));
+}
+
+.noteRowPreview .ProseMirror blockquote > *:last-child {
+  margin-bottom: 0;
+}
+
+.noteRowPreview .ProseMirror ul,
+.noteRowPreview .ProseMirror ol {
+  margin: 0 0 0.5em;
+  padding-left: 1.5em;
+}
+
+.noteRowPreview .ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.noteRowPreview .ProseMirror li:has(> label input[type="checkbox"]),
+.noteRowPreview .ProseMirror li[data-type="taskItem"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  list-style: none;
+}
+
+.noteRowPreview .ProseMirror li:has(> label input[type="checkbox"]) > label,
+.noteRowPreview .ProseMirror li[data-type="taskItem"] > label {
+  flex: none;
+  margin-top: 0.22em;
+  display: inline-flex;
+  align-items: center;
+}
+
+.noteRowPreview .ProseMirror li:has(> label input[type="checkbox"]) input[type="checkbox"],
+.noteRowPreview .ProseMirror li[data-type="taskItem"] input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.noteRowPreview .ProseMirror li:has(> label input[type="checkbox"]) > div,
+.noteRowPreview .ProseMirror li[data-type="taskItem"] > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.noteRowPreview .ProseMirror li > p {
+  margin: 0;
+}
+
+.noteRowPreview .ProseMirror pre {
+  margin: 14px 0 0;
+  max-width: 100%;
+  overflow: auto;
+  padding: 13px 14px;
+  border: 1px solid var(--code-line);
+  border-radius: 10px;
+  background: var(--code-bg);
+  color: var(--code-text);
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.noteRowPreview .ProseMirror code {
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+.noteRowPreview .ProseMirror :not(pre) > code {
+  padding: 1px 4px;
+  border-radius: 5px;
+  background: var(--inline-code-bg);
+  color: var(--code-chip-text);
+  font-size: 0.92em;
+}
+
+.noteRowPreview .ProseMirror img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+
+.noteRowPreview .ProseMirror table {
+  width: 100%;
+  margin: 0 0 0.65em;
+  border-collapse: collapse;
+  border: 1px solid var(--note-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface) 58%, var(--canvas));
+  font-size: 13px;
+}
+
+.noteRowPreview .ProseMirror th,
+.noteRowPreview .ProseMirror td {
+  position: relative;
+  min-width: 34px;
+  border: 1px solid var(--note-line);
+  padding: 7px 9px;
+  vertical-align: top;
+}
+
+.noteRowPreview .ProseMirror th {
+  background: var(--note-strong);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.noteRowPreview .ProseMirror th p,
+.noteRowPreview .ProseMirror td p {
+  margin: 0;
+}
+
+.noteRowPreview.markdownSurface .ProseMirror {
+  min-height: 0;
+  font-size: 13px;
+  line-height: 1.34;
+}
+
+.noteRowPreview.markdownSurface .ProseMirror > *,
+.noteRowPreview.markdownSurface .ProseMirror p {
+  margin: 0 0 0.34em;
+}
+
+.noteRowPreview.markdownSurface .ProseMirror > *:last-child {
+  margin-bottom: 0;
+}
+
+.noteRowPreview.markdownSurface .ProseMirror h1,
+.noteRowPreview.markdownSurface .ProseMirror h2,
+.noteRowPreview.markdownSurface .ProseMirror h3 {
+  font-size: revert;
+  line-height: 1.2;
+  margin: 0.58em 0 0.32em;
+}
+
+.noteRowPreview.markdownSurface .ProseMirror pre {
+  margin: 14px 0 0;
+  padding: 13px 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  tab-size: 2;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36);
+}
+
+html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.noteRowPreview.markdownSurface .ProseMirror table {
+  font-size: 14px;
+}
+
+.noteRowTime {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.noteRowActions {
+  display: flex;
+  gap: 5px;
+  flex: none;
+  opacity: 0.72;
+  transition: opacity 160ms ease;
+}
+
+.noteRow:hover .noteRowActions,
+.noteRow.pinned .noteRowActions {
+  opacity: 1;
+}
+
+.noteRowActions .iconButton {
+  width: 27px;
+  height: 27px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 66%, transparent);
+  color: var(--icon);
+  box-shadow: none;
+  transform: none;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.noteRowActions .iconButton:hover {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  box-shadow: none;
+  transform: none;
+}
+
+.noteRowActions .iconButtonActive {
+  background: var(--pin-active-bg);
+  border-color: var(--line-strong);
+  color: var(--pin-active);
+  box-shadow: none;
+}
+
+.noteRowActions .iconButton.danger {
+  color: color-mix(in srgb, var(--danger) 76%, var(--icon));
+}
+
+.noteRowActions .iconButton.danger:hover {
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
+  color: var(--danger);
+}
+
+.noteRowActions .flatIcon,
+.noteRowActions .pinIcon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
+}
+
+.listFooter {
+  padding: 4px 2px 0;
+}
+
+.shortcutRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+

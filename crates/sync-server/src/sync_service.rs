@@ -582,8 +582,8 @@ mod tests {
             tx.commit().await.unwrap();
         }
 
-        let all_acct_a = pull_changes(&pool, &acct_a, 0).await.unwrap();
-        let after_first = pull_changes(&pool, &acct_a, all_acct_a[0].cursor)
+        let all_acct_a = pull_changes(pool, &acct_a, 0).await.unwrap();
+        let after_first = pull_changes(pool, &acct_a, all_acct_a[0].cursor)
             .await
             .unwrap();
 
@@ -635,7 +635,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (cursor, notes, assets) = snapshot(&pool, &acct_a).await.unwrap();
+        let (cursor, notes, assets) = snapshot(pool, &acct_a).await.unwrap();
 
         assert!(cursor > 0);
         assert_eq!(notes.len(), 1);

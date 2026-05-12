@@ -1,0 +1,79 @@
+.editorToolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 6px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-soft) 80%, var(--surface));
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.editorToolbarSpacer {
+  flex: 1;
+}
+
+.editorToolbarDivider {
+  width: 1px;
+  height: 14px;
+  background: var(--note-line);
+  margin: 0 1px;
+  flex-shrink: 0;
+}
+
+.editorToolbarBtn {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.editorToolbarBtn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.75;
+}
+
+.editorToolbarBtn:hover {
+  background: var(--surface-soft);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.editorToolbarBtnActive {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  color: var(--accent);
+}
+
+.editorToolbarBtnActive:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.editorHint {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  box-shadow: var(--shadow);
+}
+
