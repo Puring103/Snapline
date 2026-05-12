@@ -171,10 +171,13 @@ export function EditorPane({
 
   useEffect(() => {
     if (!editor) return;
-    startupLog("editor_ready");
+    startupLog("editor_ready", {
+      has_body: bodyMarkdown.length > 0,
+      has_data_dir: dataDir !== null,
+    });
     void hydrateEditorImageNodes(editor);
     void uploadTransientImages(editor);
-  }, [dataDir, editor]);
+  }, [bodyMarkdown.length, dataDir, editor]);
 
   useEffect(() => {
     if (!editor) return;

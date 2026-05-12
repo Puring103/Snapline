@@ -4,9 +4,11 @@ import type {
   BootstrapState,
   DraftParts,
   HydratedMarkdown,
+  ListNotesPayload,
   LoginSyncResult,
   MarkdownImageMapping,
   Note,
+  NoteWindowPayload,
   NoteSummary,
   SaveDraftResult,
   SyncAccountState,
@@ -17,6 +19,7 @@ export const api = {
   launchedInBackground: () => invoke<boolean>("launched_in_background"),
   bootstrap: () => invoke<BootstrapState>("bootstrap"),
   getDataDir: () => invoke<string>("get_data_dir"),
+  listNotesPayload: () => invoke<ListNotesPayload>("list_notes_payload"),
   deriveTitleFromMarkdown: (markdown: string) => invoke<string>("derive_title_from_markdown", { markdown }),
   composeDraftMarkdown: (title: string, bodyMd: string) =>
     invoke<string>("compose_draft_markdown", { title, bodyMd }),
@@ -32,6 +35,7 @@ export const api = {
     invoke<string>("restore_markdown_asset_sources", { markdown, mappings }),
   createNote: () => invoke<Note>("create_note"),
   getNote: (id: string) => invoke<Note>("get_note", { id }),
+  noteWindowPayload: (noteId: string | null) => invoke<NoteWindowPayload>("note_window_payload", { noteId }),
   getNoteSummary: (id: string) => invoke<NoteSummary>("get_note_summary", { id }),
   searchNotes: (query: string) => invoke<NoteSummary[]>("search_notes", { query }),
   saveNote: (id: string, title: string, contentMd: string, pinned: boolean) =>

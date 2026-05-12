@@ -44,6 +44,7 @@ export function NotesListWindow() {
   const [windowReadyToReveal, setWindowReadyToReveal] = useState(false);
   const searchQueryRef = useRef("");
   const searchMountedRef = useRef(false);
+  const quietRefreshTimerRef = useRef<number | null>(null);
 
   const refreshNotes = useCallback(async (quiet = false) => {
     try {
@@ -52,14 +53,20 @@ export function NotesListWindow() {
       if (!quiet) {
         setStatus("Loading");
       }
-      const state = await api.bootstrap();
-      setDataDir(state.data_dir);
       const currentSearchQuery = searchQueryRef.current;
-      const nextNotes = currentSearchQuery.trim()
-        ? await api.searchNotes(currentSearchQuery)
-        : state.notes;
-      startupLog("list_bootstrap_done", {
+      const trimmedSearchQuery = currentSearchQuery.trim();
+      const payload = trimmedSearchQuery ? null : await api.listNotesPayload();
+      const nextNotes = trimmedSearchQuery
+        ? await api.searchNotes(trimmedSearchQuery)
+        : payload?.notes ?? [];
+      if (payload) {
+        setDataDir(payload.data_dir);
+      } else if (dataDir === null) {
+        setDataDir(await api.getDataDir());
+      }
+      startupLog("list_notes_loaded", {
         quiet,
+        search: trimmedSearchQuery.length > 0,
         notes: nextNotes.length,
         duration_ms: Math.round(performance.now() - startedAt),
       });
@@ -78,7 +85,18 @@ export function NotesListWindow() {
         setWindowReadyToReveal(true);
       }
     }
-  }, []);
+  }, [dataDir]);
+
+  const scheduleQuietRefresh = useCallback(() => {
+    if (quietRefreshTimerRef.current !== null) {
+      window.clearTimeout(quietRefreshTimerRef.current);
+    }
+
+    quietRefreshTimerRef.current = window.setTimeout(() => {
+      quietRefreshTimerRef.current = null;
+      void refreshNotes(true);
+    }, 400);
+  }, [refreshNotes]);
 
   useEffect(() => {
     void refreshNotes();
@@ -108,7 +126,9 @@ export function NotesListWindow() {
         label: event.payload.has_conflicts ? "Conflict" : "Synced",
         detail: event.payload.detail,
       });
-      void refreshNotes(true);
+      if (event.payload.pulled > 0 || event.payload.conflicts > 0 || event.payload.has_conflicts) {
+        scheduleQuietRefresh();
+      }
     }).then((unlisten) => {
       unlistenStatus = unlisten;
     });
@@ -123,37 +143,38 @@ export function NotesListWindow() {
       unlistenStatus?.();
       unlistenError?.();
     };
-  }, [refreshNotes]);
+  }, [scheduleQuietRefresh]);
 
   useEffect(() => {
     let unlistenSaved: (() => void) | null = null;
     let unlistenDeleted: (() => void) | null = null;
-    const refreshQuietly = () => void refreshNotes(true);
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") {
-        refreshQuietly();
+        scheduleQuietRefresh();
       }
     };
 
-    void listen("note-saved", refreshQuietly).then((unlisten) => {
+    void listen("note-saved", scheduleQuietRefresh).then((unlisten) => {
       unlistenSaved = unlisten;
     });
-    void listen("note-deleted", refreshQuietly).then((unlisten) => {
+    void listen("note-deleted", scheduleQuietRefresh).then((unlisten) => {
       unlistenDeleted = unlisten;
     });
 
-    window.addEventListener("focus", refreshQuietly);
+    window.addEventListener("focus", scheduleQuietRefresh);
     document.addEventListener("visibilitychange", refreshWhenVisible);
-    const intervalId = window.setInterval(refreshWhenVisible, 2000);
 
     return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener("focus", refreshQuietly);
+      if (quietRefreshTimerRef.current !== null) {
+        window.clearTimeout(quietRefreshTimerRef.current);
+        quietRefreshTimerRef.current = null;
+      }
+      window.removeEventListener("focus", scheduleQuietRefresh);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
       unlistenSaved?.();
       unlistenDeleted?.();
     };
-  }, [refreshNotes]);
+  }, [scheduleQuietRefresh]);
 
   const visibleNotes = useMemo(() => sortNotes(notes), [notes]);
   const pendingConflict = useMemo(
@@ -168,8 +189,8 @@ export function NotesListWindow() {
       searchMountedRef.current = true;
       return;
     }
-    void refreshNotes(true);
-  }, [refreshNotes, searchQuery]);
+    scheduleQuietRefresh();
+  }, [scheduleQuietRefresh, searchQuery]);
 
   useEffect(() => {
     if (!windowReadyToReveal) return;
@@ -248,7 +269,9 @@ export function NotesListWindow() {
     try {
       const report = await api.syncNow();
       setSyncStatus({ label: report.has_conflicts ? "Conflict" : "Synced", detail: report.detail });
-      await refreshNotes(true);
+      if (report.pulled > 0 || report.conflicts > 0 || report.has_conflicts) {
+        await refreshNotes(true);
+      }
       return report;
     } catch (err) {
       const message = String(err);
@@ -262,7 +285,7 @@ export function NotesListWindow() {
     setSyncAccount(result.account);
     setSyncStatus({ label: result.account.is_logged_in ? "Synced" : "Sync", detail: null });
     setPendingImportCount(result.anonymous_note_count);
-    void refreshNotes(true);
+    scheduleQuietRefresh();
   }
 
   async function handleImportAnonymousNotes() {

@@ -33,6 +33,11 @@ impl AppCore {
             .search_notes_for_owner(query, 50, owner.as_deref())
     }
 
+    pub fn list_notes(&self) -> Result<Vec<NoteSummary>> {
+        let owner = self.current_account_id()?;
+        self.repo.list_recent_for_owner(50, owner.as_deref())
+    }
+
     pub fn save_note(
         &self,
         id: &NoteId,

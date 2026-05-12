@@ -33,6 +33,16 @@ export interface BootstrapState {
   data_dir: string;
 }
 
+export interface NoteWindowPayload {
+  note: Note | null;
+  data_dir: string;
+}
+
+export interface ListNotesPayload {
+  notes: NoteSummary[];
+  data_dir: string;
+}
+
 export interface AssetRef {
   markdown_path: string;
   filesystem_path: string;

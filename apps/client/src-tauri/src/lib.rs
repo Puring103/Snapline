@@ -63,6 +63,18 @@ struct SaveDraftResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct NoteWindowPayload {
+    note: Option<Note>,
+    data_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ListNotesPayload {
+    notes: Vec<NoteSummary>,
+    data_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct SyncReport {
     uploaded_assets: usize,
     pushed: usize,
@@ -142,6 +154,24 @@ fn get_data_dir(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn list_notes_payload(state: State<'_, AppState>) -> Result<ListNotesPayload, String> {
+    let started = std::time::Instant::now();
+    let core = state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?;
+    let payload = ListNotesPayload {
+        notes: core.list_notes().map_err(|err| err.to_string())?,
+        data_dir: core.data_dir().to_string_lossy().to_string(),
+    };
+    eprintln!(
+        "snapline.list_notes_payload_ms={}",
+        started.elapsed().as_millis()
+    );
+    Ok(payload)
+}
+
+#[tauri::command]
 fn create_note(state: State<'_, AppState>) -> Result<Note, String> {
     state
         .core
@@ -160,6 +190,33 @@ fn get_note(state: State<'_, AppState>, id: String) -> Result<Note, String> {
         .map_err(|_| "app state lock poisoned".to_string())?
         .get_note(&id)
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn note_window_payload(
+    state: State<'_, AppState>,
+    note_id: Option<String>,
+) -> Result<NoteWindowPayload, String> {
+    let started = std::time::Instant::now();
+    let note_id = note_id.map(|id| parse_note_id(&id)).transpose()?;
+    let core = state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?;
+    let note = note_id
+        .as_ref()
+        .map(|id| core.get_note(id))
+        .transpose()
+        .map_err(|err| err.to_string())?;
+    let payload = NoteWindowPayload {
+        note,
+        data_dir: core.data_dir().to_string_lossy().to_string(),
+    };
+    eprintln!(
+        "snapline.note_window_payload_ms={}",
+        started.elapsed().as_millis()
+    );
+    Ok(payload)
 }
 
 #[tauri::command]
@@ -437,14 +494,29 @@ async fn open_note_window(
     note_id: Option<String>,
     position: Option<WindowPosition>,
 ) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    eprintln!(
+        "snapline.open_note_window_requested existing_note={}",
+        note_id.is_some()
+    );
     if let Some(id) = note_id {
         let _ = parse_note_id(&id)?;
         let label = format!("note-{}-{}", id, uuid::Uuid::new_v4().simple());
         let label = build_note_window(&app, &label, &format!("/?mode=note&noteId={id}"), position)?;
+        eprintln!(
+            "snapline.webview_created_ms={} label={}",
+            started.elapsed().as_millis(),
+            label
+        );
         Ok(label)
     } else {
         let label = format!("note-{}", uuid::Uuid::new_v4().simple());
         let label = build_note_window(&app, &label, "/?mode=note&newDraft=1", position)?;
+        eprintln!(
+            "snapline.webview_created_ms={} label={}",
+            started.elapsed().as_millis(),
+            label
+        );
         Ok(label)
     }
 }
@@ -1034,6 +1106,7 @@ pub fn run() {
             launched_in_background,
             bootstrap,
             get_data_dir,
+            list_notes_payload,
             derive_title_from_markdown,
             compose_draft_markdown,
             split_draft_markdown,
@@ -1044,6 +1117,7 @@ pub fn run() {
             restore_markdown_asset_sources,
             create_note,
             get_note,
+            note_window_payload,
             get_note_summary,
             search_notes,
             save_note,

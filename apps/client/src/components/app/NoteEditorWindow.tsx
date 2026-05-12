@@ -41,6 +41,7 @@ const LazyEditorPane = lazy(() => import("../EditorPane").then((module) => ({ de
 
 export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; noteId: string | null }) {
   const windowLabel = useMemo(() => getCurrentWindow().label, []);
+  const shellRevealedRef = useRef(false);
   const [session, setSession] = useState<ActiveSession>(() => createDraftSession());
   const [notePinned, setNotePinned] = useState(false);
   const [windowAlwaysOnTop, setWindowAlwaysOnTop] = useState(false);
@@ -70,6 +71,17 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
   sessionRef.current = session;
   notePinnedRef.current = notePinned;
   deletedRef.current = deleted;
+
+  useEffect(() => {
+    startupLog("note_window_shell_mounted", {
+      existing_note: noteId !== null,
+      new_draft: newDraft,
+    });
+
+    if (noteId !== null || newDraft) {
+      revealShellWindow();
+    }
+  }, [newDraft, noteId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,21 +122,6 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
   }, [newDraft, noteId, windowLabel]);
 
   useEffect(() => {
-    void api
-      .getOpenShortcut()
-      .then((next) => {
-        setShortcut(next ?? DEFAULT_SHORTCUT);
-      })
-      .catch(() => {
-        setShortcut(DEFAULT_SHORTCUT);
-      });
-    void isEnabled()
-      .then(setAutostartEnabled)
-      .catch(() => setAutostartEnabled(false));
-    void api.getSyncAccountState().then(setSyncAccount).catch(() => setSyncAccount(null));
-  }, []);
-
-  useEffect(() => {
     if (!noteLoadArmed) return;
 
     let cancelled = false;
@@ -134,11 +131,12 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
         const startedAt = performance.now();
         setError(null);
 
-        const [bootstrapState, next, nextDataDir] = noteId
-          ? [null, ...(await Promise.all([api.getNote(noteId), api.getDataDir()]))] as const
-          : [await api.bootstrap(), null, null] as const;
+        const [bootstrapState, payload] = noteId || newDraft
+          ? [null, await api.noteWindowPayload(noteId)] as const
+          : [await api.bootstrap(), null] as const;
         startupLog("note_data_loaded", {
           existing_note: noteId !== null,
+          new_draft: newDraft,
           duration_ms: Math.round(performance.now() - startedAt),
         });
         if (cancelled) {
@@ -147,11 +145,11 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
 
         if (bootstrapState) {
           setDataDir(bootstrapState.data_dir);
-        } else if (nextDataDir) {
-          setDataDir(nextDataDir);
+        } else if (payload) {
+          setDataDir(payload.data_dir);
         }
-        if (next) {
-          await beginSessionFromNote(next);
+        if (payload?.note) {
+          await beginSessionFromNote(payload.note);
         } else if (newDraft) {
           beginDraftSession();
         } else if (bootstrapState) {
@@ -244,8 +242,25 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
   useEffect(() => {
     if (!windowReadyToReveal) return;
 
-    void revealCurrentWindowWhenReady();
+    revealShellWindow();
   }, [windowReadyToReveal]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+
+    void api
+      .getOpenShortcut()
+      .then((next) => {
+        setShortcut(next ?? DEFAULT_SHORTCUT);
+      })
+      .catch(() => {
+        setShortcut(DEFAULT_SHORTCUT);
+      });
+    void isEnabled()
+      .then(setAutostartEnabled)
+      .catch(() => setAutostartEnabled(false));
+    void api.getSyncAccountState().then(setSyncAccount).catch(() => setSyncAccount(null));
+  }, [settingsOpen]);
 
   useEffect(() => {
     if (session.id) {
@@ -510,6 +525,21 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
       window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
+  }
+
+  function revealShellWindow() {
+    if (shellRevealedRef.current) return;
+    shellRevealedRef.current = true;
+    startupLog("window_reveal_requested", {
+      existing_note: noteId !== null,
+      new_draft: newDraft,
+    });
+    void revealCurrentWindowWhenReady().then(() => {
+      startupLog("window_revealed", {
+        existing_note: noteId !== null,
+        new_draft: newDraft,
+      });
+    });
   }
 
   return (
