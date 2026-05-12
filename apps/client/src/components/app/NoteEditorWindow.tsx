@@ -5,6 +5,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, type MouseEvent }
 import { api } from "../../platform/api";
 import { startupLog } from "../../platform/startupLog";
 import {
+  CLOSE_NOTE_WINDOWS_EVENT,
   openListWindow,
   openNoteWindow,
   rememberNoteWindow,
@@ -133,8 +134,9 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
         const startedAt = performance.now();
         setError(null);
 
-        const bootstrapState = await api.bootstrap();
-        const next = noteId ? await api.getNote(noteId) : null;
+        const [bootstrapState, next, nextDataDir] = noteId
+          ? [null, ...(await Promise.all([api.getNote(noteId), api.getDataDir()]))] as const
+          : [await api.bootstrap(), null, null] as const;
         startupLog("note_data_loaded", {
           existing_note: noteId !== null,
           duration_ms: Math.round(performance.now() - startedAt),
@@ -143,12 +145,16 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
           return;
         }
 
-        setDataDir(bootstrapState.data_dir);
+        if (bootstrapState) {
+          setDataDir(bootstrapState.data_dir);
+        } else if (nextDataDir) {
+          setDataDir(nextDataDir);
+        }
         if (next) {
           await beginSessionFromNote(next);
         } else if (newDraft) {
           beginDraftSession();
-        } else {
+        } else if (bootstrapState) {
           await beginSessionFromNote(bootstrapState.current);
         }
         setStatus("Draft");
@@ -200,6 +206,24 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
       unlisten?.();
     };
   }, [session.id, windowLabel]);
+
+  useEffect(() => {
+    const currentId = session.id ?? noteId;
+    if (!currentId) return;
+
+    let unlisten: (() => void) | null = null;
+    void listen<{ id: string; exceptLabel?: string }>(CLOSE_NOTE_WINDOWS_EVENT, (event) => {
+      if (event.payload.id === currentId && event.payload.exceptLabel !== windowLabel) {
+        void getCurrentWindow().close();
+      }
+    }).then((nextUnlisten) => {
+      unlisten = nextUnlisten;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, [noteId, session.id, windowLabel]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;

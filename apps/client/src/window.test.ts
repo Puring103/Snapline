@@ -9,6 +9,10 @@ const invokeState = vi.hoisted(() => ({
   calls: [] as Array<{ command: string; args: unknown }>,
 }));
 
+const eventState = vi.hoisted(() => ({
+  emits: [] as Array<{ event: string; payload: unknown }>,
+}));
+
 vi.mock("@tauri-apps/api/webviewWindow", () => {
   class MockWebviewWindow {
     label: string;
@@ -34,7 +38,14 @@ vi.mock("@tauri-apps/api/webviewWindow", () => {
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args: unknown) => {
     invokeState.calls.push({ command, args });
-    return Promise.resolve("mock-window-label");
+    return Promise.resolve("note-saved-note-id-replacement");
+  },
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  emit: (event: string, payload?: unknown) => {
+    eventState.emits.push({ event, payload });
+    return Promise.resolve();
   },
 }));
 
@@ -54,6 +65,7 @@ describe("window routing", () => {
     webviewState.all = [];
     webviewState.byLabel.clear();
     invokeState.calls = [];
+    eventState.emits = [];
     localStorage.clear();
   });
 
@@ -149,48 +161,52 @@ describe("window routing", () => {
     ]);
   });
 
-  it("asks the backend to open saved note windows by note id when no local window is remembered", async () => {
+  it("asks the backend to open saved note windows by note id when no local window is known", async () => {
     await openNoteWindow("saved-note-id");
 
     expect(invokeState.calls).toEqual([
       { command: "open_note_window", args: { noteId: "saved-note-id", position: undefined } },
     ]);
+    expect(eventState.emits).toEqual([
+      {
+        event: "snapline-close-note-windows",
+        payload: { id: "saved-note-id", exceptLabel: "note-saved-note-id-replacement" },
+      },
+    ]);
+    expect(localStorage.getItem("snapline.noteWindow.saved-note-id")).toBe("note-saved-note-id-replacement");
   });
 
-  it("reveals a remembered draft window for a saved note instead of opening a duplicate", async () => {
+  it("opens a replacement saved note window before closing remembered old windows", async () => {
     const calls: string[] = [];
     const existing = {
       label: "note-draft-window",
       close: async () => {
         calls.push("closeExisting");
       },
-      setPosition: async () => {
-        calls.push("setPosition");
-      },
-      show: async () => {
-        calls.push("show");
-      },
-      unminimize: async () => {
-        calls.push("unminimize");
-      },
-      setFocus: async () => {
-        calls.push("setFocus");
-      },
     };
-    const duplicate = {
-      label: "note-other-window",
+    const stableExisting = {
+      label: "note-saved-note-id",
       close: async () => {
-        calls.push("closeDuplicate");
+        calls.push("closeStable");
       },
     };
     rememberNoteWindow("saved-note-id", existing.label);
     webviewState.byLabel.set(existing.label, existing);
-    webviewState.all = [existing, duplicate];
+    webviewState.byLabel.set(stableExisting.label, stableExisting);
 
     await openNoteWindow("saved-note-id", { x: 100, y: 200 });
 
-    expect(invokeState.calls).toEqual([]);
-    expect(calls).toEqual(["setPosition", "show", "unminimize", "setFocus", "closeDuplicate"]);
+    expect(invokeState.calls).toEqual([
+      { command: "open_note_window", args: { noteId: "saved-note-id", position: { x: 100, y: 200 } } },
+    ]);
+    expect(eventState.emits).toEqual([
+      {
+        event: "snapline-close-note-windows",
+        payload: { id: "saved-note-id", exceptLabel: "note-saved-note-id-replacement" },
+      },
+    ]);
+    expect(calls).toEqual(["closeExisting", "closeStable"]);
+    expect(localStorage.getItem("snapline.noteWindow.saved-note-id")).toBe("note-saved-note-id-replacement");
   });
 
   it("remembers and clears the window label for a saved note", () => {

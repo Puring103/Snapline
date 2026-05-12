@@ -157,49 +157,6 @@ pub fn build_note_window(
     Ok(label.to_string())
 }
 
-#[cfg(desktop)]
-pub fn reveal_window(
-    window: &tauri::WebviewWindow,
-    position: Option<&WindowPosition>,
-) -> Result<(), String> {
-    if let Some(position) = position {
-        window
-            .set_position(Position::Logical(tauri::LogicalPosition {
-                x: position.x,
-                y: position.y,
-            }))
-            .map_err(|err| err.to_string())?;
-    }
-    window.show().map_err(|err| err.to_string())?;
-    window.unminimize().map_err(|err| err.to_string())?;
-    window.set_focus().map_err(|err| err.to_string())?;
-    let _ = window.emit(FOCUS_EDITOR_EVENT, ());
-    Ok(())
-}
-
-#[cfg(not(desktop))]
-pub fn reveal_window(
-    _window: &tauri::WebviewWindow,
-    position: Option<&WindowPosition>,
-) -> Result<(), String> {
-    if let Some(position) = position {
-        let _ = (position.x, position.y);
-    }
-    Ok(())
-}
-
-#[cfg(desktop)]
-pub fn close_other_note_windows(app: &AppHandle, keep_label: &str) {
-    for (label, window) in app.webview_windows() {
-        if label != keep_label && label != "main" && label != "list" && label.starts_with("note-") {
-            let _ = window.close();
-        }
-    }
-}
-
-#[cfg(not(desktop))]
-pub fn close_other_note_windows(_app: &AppHandle, _keep_label: &str) {}
-
 #[cfg_attr(not(desktop), allow(dead_code))]
 fn position_near_cursor(cursor: CursorPoint, size: WindowSize, work_area: WorkArea) -> WindowPoint {
     let max_x = work_area.x + (work_area.width - size.width).max(0);

@@ -1,9 +1,11 @@
 import { LogicalPosition } from "@tauri-apps/api/dpi";
+import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { api } from "./api";
 
 export const CLOSE_OTHER_NOTES_EVENT = "snapline-close-other-note-windows";
+export const CLOSE_NOTE_WINDOWS_EVENT = "snapline-close-note-windows";
 export const FOCUS_EDITOR_EVENT = "snapline-focus-editor";
 
 export type AppWindowMode = "list" | "note" | "android";
@@ -86,26 +88,14 @@ export interface PointerWindowPosition {
 
 export async function openNoteWindow(noteId?: string | null, position?: PointerWindowPosition) {
   if (noteId) {
-    const existing = await revealExistingNoteWindow(noteId, position);
-    if (existing) {
-      return existing.label;
-    }
+    const label = await api.openNoteWindow(noteId, position);
+    await emit(CLOSE_NOTE_WINDOWS_EVENT, { id: noteId, exceptLabel: label });
+    await closeKnownNoteWindowsForNote(noteId, label);
+    rememberNoteWindow(noteId, label);
+    return label;
   }
 
-  return api.openNoteWindow(noteId ?? null, position);
-}
-
-async function closeOtherNoteWindows(keepLabel: string) {
-  try {
-    const all = await WebviewWindow.getAll();
-    await Promise.all(
-      all
-        .filter((w) => w.label !== keepLabel && w.label !== "main" && w.label !== "list" && w.label.startsWith("note-"))
-        .map((w) => w.close().catch(() => undefined)),
-    );
-  } catch {
-    // 忽略枚举失败，新窗口仍然能创建
-  }
+  return api.openNoteWindow(null, position);
 }
 
 export function rememberNoteWindow(noteId: string, label: string) {
@@ -158,25 +148,18 @@ function nextPaint() {
   });
 }
 
-async function revealExistingNoteWindow(noteId: string, position?: PointerWindowPosition) {
+async function closeKnownNoteWindowsForNote(noteId: string, exceptLabel: string) {
   const stableLabel = buildWindowLabel("note", noteId);
   const rememberedLabel = readRememberedNoteWindowLabel(noteId);
   const candidateLabels = rememberedLabel && rememberedLabel !== stableLabel
     ? [rememberedLabel, stableLabel]
     : [stableLabel];
 
-  for (const label of candidateLabels) {
+  await Promise.all(candidateLabels.map(async (label) => {
+    if (label === exceptLabel) return;
     const existing = await WebviewWindow.getByLabel(label);
-    if (existing) {
-      await revealExistingWindow(existing, position);
-      rememberNoteWindow(noteId, label);
-      await closeOtherNoteWindows(label);
-      return existing;
-    }
-  }
-
-  forgetNoteWindow(noteId);
-  return null;
+    await existing?.close().catch(() => undefined);
+  }));
 }
 
 function openAppWindow(mode: AppWindowMode, noteId: string | null = null, position?: PointerWindowPosition) {

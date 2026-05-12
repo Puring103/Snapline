@@ -19,9 +19,7 @@ use tauri::{RunEvent, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 #[cfg(desktop)]
 use windows::show_main_window;
-use windows::{
-    build_note_window, close_other_note_windows, hide_main_window, reveal_window, WindowPosition,
-};
+use windows::{build_note_window, hide_main_window, WindowPosition};
 
 const AUTOSTART_BACKGROUND_ARG: &str = "--background";
 const BACKGROUND_SYNC_INTERVAL_SECS: u64 = 60;
@@ -132,6 +130,15 @@ fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapState, String> {
         .map_err(|err| err.to_string());
     eprintln!("snapline.bootstrap_ms={}", started.elapsed().as_millis());
     result
+}
+
+#[tauri::command]
+fn get_data_dir(state: State<'_, AppState>) -> Result<String, String> {
+    state
+        .core
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())
+        .map(|core| core.data_dir().to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -432,20 +439,12 @@ async fn open_note_window(
 ) -> Result<String, String> {
     if let Some(id) = note_id {
         let _ = parse_note_id(&id)?;
-        let label = format!("note-{id}");
-        if let Some(window) = app.get_webview_window(&label) {
-            reveal_window(&window, position.as_ref())?;
-            close_other_note_windows(&app, &label);
-            return Ok(label);
-        }
-
+        let label = format!("note-{}-{}", id, uuid::Uuid::new_v4().simple());
         let label = build_note_window(&app, &label, &format!("/?mode=note&noteId={id}"), position)?;
-        close_other_note_windows(&app, &label);
         Ok(label)
     } else {
         let label = format!("note-{}", uuid::Uuid::new_v4().simple());
         let label = build_note_window(&app, &label, "/?mode=note&newDraft=1", position)?;
-        close_other_note_windows(&app, &label);
         Ok(label)
     }
 }
@@ -1034,6 +1033,7 @@ pub fn run() {
             log_startup,
             launched_in_background,
             bootstrap,
+            get_data_dir,
             derive_title_from_markdown,
             compose_draft_markdown,
             split_draft_markdown,

@@ -1,7 +1,7 @@
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../platform/api";
 import { blobUrlFromBytes } from "../features/assets/assetDisplay";
 import { fileUrlFromMarkdownPath } from "../features/assets/assetUrl";
@@ -54,6 +54,7 @@ export function EditorPane({
   showModeToggle = true,
   toolbarVariant = "compact",
 }: EditorPaneProps) {
+  const [toolbarStateVersion, setToolbarStateVersion] = useState(0);
   const suppressNextUpdate = useRef(false);
   const editorRef = useRef<Editor | null>(null);
   const uploadingImageSources = useRef(new Set<string>());
@@ -177,6 +178,24 @@ export function EditorPane({
 
   useEffect(() => {
     if (!editor) return;
+
+    const refreshToolbarState = () => setToolbarStateVersion((version) => version + 1);
+    editor.on("selectionUpdate", refreshToolbarState);
+    editor.on("transaction", refreshToolbarState);
+    editor.on("focus", refreshToolbarState);
+    editor.on("blur", refreshToolbarState);
+    refreshToolbarState();
+
+    return () => {
+      editor.off("selectionUpdate", refreshToolbarState);
+      editor.off("transaction", refreshToolbarState);
+      editor.off("focus", refreshToolbarState);
+      editor.off("blur", refreshToolbarState);
+    };
+  }, [editor]);
+
+  useEffect(() => {
+    if (!editor) return;
     editor.setEditable(!readOnly && mode === "preview");
   }, [editor, mode, readOnly]);
 
@@ -240,6 +259,7 @@ export function EditorPane({
           mode={mode}
           onModeToggle={onModeToggle}
           showModeToggle={showModeToggle}
+          stateVersion={toolbarStateVersion}
           variant={toolbarVariant}
         />
       ) : null}
@@ -455,12 +475,14 @@ function EditorToolbar({
   mode,
   onModeToggle,
   showModeToggle,
+  stateVersion: _stateVersion,
   variant,
 }: {
   editor: Editor | null;
   mode: EditorMode;
   onModeToggle: () => void;
   showModeToggle: boolean;
+  stateVersion: number;
   variant: "compact" | "full";
 }) {
   if (!editor && !showModeToggle) {
