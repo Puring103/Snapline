@@ -47,7 +47,7 @@ export function validateSyncConnection(fields: SyncConnectionFields): SyncConnec
 }
 
 export function importPromptText(count: number): string {
-  return `Detected ${count} local ${count === 1 ? "note" : "notes"}. Import into this account?`;
+  return `Detected ${count} local ${count === 1 ? "note" : "notes"} not assigned to this account. Import them and overwrite matching synced versions?`;
 }
 
 export function SyncSettings({ initial, onSaved }: SyncSettingsProps) {

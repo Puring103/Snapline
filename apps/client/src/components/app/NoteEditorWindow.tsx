@@ -53,7 +53,6 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
   const [dataDir, setDataDir] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [syncAccount, setSyncAccount] = useState<SyncAccountState | null>(null);
-  const [syncInFlight, setSyncInFlight] = useState(false);
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [themeMode, setThemeMode] = useThemeMode();
@@ -325,8 +324,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
       setNotePinned(saved.pinned ?? false);
       setStatus("Saved");
       await emit("note-saved", { id: saved.id });
-      setSyncInFlight(true);
-      void api.syncNow().catch(() => undefined).finally(() => setSyncInFlight(false));
+      void api.syncNow().catch(() => undefined);
       return saved;
     } catch (err) {
       setError(String(err));
@@ -412,6 +410,40 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
 
   function handleSyncSaved(result: LoginSyncResult) {
     setSyncAccount(result.account);
+    if (result.anonymous_note_count > 0) {
+      setError(`Detected ${result.anonymous_note_count} local notes not assigned to this account. Open Settings from the list window to import or skip them before continuing sync.`);
+    }
+  }
+
+  async function handleKeepServerVersion() {
+    if (!session.id) return;
+    try {
+      setError(null);
+      await api.deleteNote(session.id);
+      if (sourceNoteId) {
+        await openNoteWindow(sourceNoteId);
+      }
+      await getCurrentWindow().close();
+    } catch (err) {
+      setError(String(err));
+      setStatus("Error");
+    }
+  }
+
+  async function handleKeepLocalVersion() {
+    if (!session.id || !sourceNoteId) return;
+    try {
+      setError(null);
+      const local = await api.getNote(session.id);
+      await api.saveNote(sourceNoteId, local.title, local.content_md, local.pinned ?? notePinned);
+      await api.deleteNote(session.id);
+      void api.syncNow().catch(() => undefined);
+      await openNoteWindow(sourceNoteId);
+      await getCurrentWindow().close();
+    } catch (err) {
+      setError(String(err));
+      setStatus("Error");
+    }
   }
 
   async function persistShortcut(nextShortcut: string): Promise<boolean> {
@@ -508,15 +540,16 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
           {isConflictCopy ? (
             <div className="conflictBanner">
               <ConflictIcon />
-              <span>This is a conflict copy — your local changes conflicted with a remote update.</span>
+              <span>This is a conflict copy. Choose which version should be saved.</span>
               {sourceNoteId ? (
-                <button
-                  className="linkButton"
-                  onClick={() => void openNoteWindow(sourceNoteId)}
-                  type="button"
-                >
-                  View original
-                </button>
+                <>
+                  <button className="linkButton" onClick={() => void handleKeepServerVersion()} type="button">
+                    Save server version
+                  </button>
+                  <button className="linkButton" onClick={() => void handleKeepLocalVersion()} type="button">
+                    Save local version
+                  </button>
+                </>
               ) : null}
             </div>
           ) : null}
@@ -529,7 +562,7 @@ export function NoteEditorWindow({ newDraft, noteId }: { newDraft: boolean; note
               onBodyChange={handleBodyChange}
               onModeToggle={() => setEditorMode((mode) => toggleEditorMode(mode))}
               onRequestImageSave={handleRequestImageSave}
-              readOnly={deleted || syncInFlight}
+              readOnly={deleted}
             />
           </Suspense>
         </section>

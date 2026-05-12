@@ -19,7 +19,7 @@ import { startupLog } from "../../platform/startupLog";
 import { openNoteWindow, revealCurrentWindowWhenReady, shouldStartWindowDrag } from "../../platform/window";
 import { importPromptText } from "../SyncSettings";
 import { useThemeMode } from "../../hooks/theme";
-import { deleteConfirmationFor, sortNotes, upsertNote } from "../../features/sync/session";
+import { conflictPromptText, deleteConfirmationFor, sortNotes, upsertNote } from "../../features/sync/session";
 import { HighlightedText } from "../../features/search/highlight";
 import type { LoginSyncResult, NoteSummary, SyncAccountState, SyncReport, SyncStatusState } from "../../types";
 
@@ -39,6 +39,7 @@ export function NotesListWindow() {
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [themeMode, setThemeMode] = useThemeMode();
   const [pendingImportCount, setPendingImportCount] = useState(0);
+  const [promptedConflictIds, setPromptedConflictIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [windowReadyToReveal, setWindowReadyToReveal] = useState(false);
   const searchQueryRef = useRef("");
@@ -155,6 +156,11 @@ export function NotesListWindow() {
   }, [refreshNotes]);
 
   const visibleNotes = useMemo(() => sortNotes(notes), [notes]);
+  const pendingConflict = useMemo(
+    () => visibleNotes.find((note) => note.is_conflict_copy && !promptedConflictIds.includes(note.id)) ?? null,
+    [promptedConflictIds, visibleNotes],
+  );
+  const conflictToPrompt = pendingImportCount > 0 ? null : pendingConflict;
 
   useEffect(() => {
     searchQueryRef.current = searchQuery;
@@ -270,6 +276,47 @@ export function NotesListWindow() {
       setError(String(err));
       setStatus("Error");
     }
+  }
+
+  async function handleKeepServerVersion(conflict: NoteSummary) {
+    try {
+      setError(null);
+      const nextNotes = await api.deleteNote(conflict.id);
+      setNotes(nextNotes);
+    } catch (err) {
+      setError(String(err));
+      setStatus("Error");
+    }
+  }
+
+  async function handleKeepLocalVersion(conflict: NoteSummary) {
+    if (!conflict.source_note_id) return;
+
+    try {
+      setError(null);
+      const local = await api.getNote(conflict.id);
+      const saved = await api.saveNote(conflict.source_note_id, local.title, local.content_md, local.pinned ?? false);
+      const afterDelete = await api.deleteNote(conflict.id);
+      setNotes(upsertNote(afterDelete, {
+        id: saved.id,
+        title: saved.title,
+        preview: saved.content_md,
+        preview_md: saved.content_md,
+        pinned: saved.pinned,
+        updated_at: saved.updated_at,
+        is_conflict_copy: saved.is_conflict_copy,
+        source_note_id: saved.source_note_id,
+        owner_account_id: saved.owner_account_id,
+      }));
+      void api.syncNow().catch(() => undefined);
+    } catch (err) {
+      setError(String(err));
+      setStatus("Error");
+    }
+  }
+
+  function markConflictPrompted(conflictId: string) {
+    setPromptedConflictIds((current) => current.includes(conflictId) ? current : [...current, conflictId]);
   }
 
   function handleHeaderDrag(event: MouseEvent<HTMLElement>) {
@@ -391,6 +438,22 @@ export function NotesListWindow() {
           syncAccount={syncAccount}
           onSyncSaved={handleSyncSaved}
         />
+      ) : null}
+
+      {conflictToPrompt ? (
+        <div className="connectionDialogBackdrop">
+          <div className="connectionDialog" role="dialog" aria-modal="true">
+            <div className="connectionDialogTitle">发现冲突版本</div>
+            <div className="connectionDialogSub">
+              {conflictPromptText(conflictToPrompt.title)}
+            </div>
+            <div className="connectionDialogActions conflictDialogActions">
+              <button type="button" onClick={() => markConflictPrompted(conflictToPrompt.id)}>稍后</button>
+              <button type="button" onClick={() => void handleKeepServerVersion(conflictToPrompt)}>保存服务器版</button>
+              <button type="button" onClick={() => void handleKeepLocalVersion(conflictToPrompt)}>保存本地版</button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {pendingImportCount > 0 ? (

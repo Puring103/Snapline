@@ -1657,6 +1657,15 @@ html[data-theme="dark"] .noteRowPreview.markdownSurface .ProseMirror pre {
   min-width: 78px;
 }
 
+.conflictDialogActions {
+  justify-content: stretch;
+}
+
+.conflictDialogActions button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .connectionModeToggle {
   display: grid;
   grid-template-columns: 1fr 1fr;

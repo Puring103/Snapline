@@ -26,7 +26,7 @@ describe("sync connection validation", () => {
   });
 
   it("describes local draft import after login", () => {
-    expect(importPromptText(1)).toBe("Detected 1 local note. Import into this account?");
-    expect(importPromptText(3)).toBe("Detected 3 local notes. Import into this account?");
+    expect(importPromptText(1)).toBe("Detected 1 local note not assigned to this account. Import them and overwrite matching synced versions?");
+    expect(importPromptText(3)).toBe("Detected 3 local notes not assigned to this account. Import them and overwrite matching synced versions?");
   });
 });

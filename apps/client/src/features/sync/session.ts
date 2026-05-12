@@ -58,6 +58,10 @@ export function deleteConfirmationFor(currentNoteId: string | null, targetNoteId
   return currentNoteId === targetNoteId ? null : targetNoteId;
 }
 
+export function conflictPromptText(title: string): string {
+  return `"${title.trim() || "Untitled"}" has both a server version and a local version. Choose which one to save.`;
+}
+
 export function matchesShortcut(event: KeyboardEvent, shortcut: string): boolean {
   const parts = shortcut.split("+").map((part) => part.trim()).filter(Boolean);
   if (parts.length === 0) return false;

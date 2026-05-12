@@ -483,8 +483,10 @@
 .mobileRoot .noteRowPreview.markdownSurface {
   display: block;
   margin: 8px 0 0;
-  max-height: 3.2em;
+  max-height: 5.8em;
   overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 72%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 72%, transparent 100%);
 }
 
 .mobileRoot .noteRowPreview.markdownSurface .ProseMirror {
@@ -504,14 +506,6 @@
   padding: 12px 12px max(14px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface-soft) 64%, var(--surface));
-}
-
-.drawerSettings.accountSettings {
-  margin: 0 0 12px;
-  padding: 0 0 12px;
-  border-top: 0;
-  border-bottom: 1px solid var(--line);
-  background: transparent;
 }
 
 .drawerSettingsTrigger {
@@ -555,6 +549,11 @@
   gap: 10px;
   padding-top: 8px;
   animation: mobilePanelDrop 170ms ease both;
+}
+
+.drawerSettingsSubpanel {
+  display: grid;
+  gap: 8px;
 }
 
 .drawerSettings h3 {
@@ -723,6 +722,10 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.conflictDialogActions {
+  grid-template-columns: 1fr;
 }
 
 .segmented button svg {

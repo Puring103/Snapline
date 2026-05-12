@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createDraftSession,
+  conflictPromptText,
   deleteConfirmationFor,
   hasMeaningfulDraftContent,
   isSessionDirty,
@@ -90,6 +91,13 @@ describe("session helpers", () => {
     expect(deleteConfirmationFor(null, "a")).toBe("a");
     expect(deleteConfirmationFor("a", "a")).toBe(null);
     expect(deleteConfirmationFor("a", "b")).toBe("b");
+  });
+
+  it("describes conflict resolution as an explicit save choice", () => {
+    expect(conflictPromptText("Roadmap")).toBe(
+      '"Roadmap" has both a server version and a local version. Choose which one to save.',
+    );
+    expect(conflictPromptText(" ")).toContain("Untitled");
   });
 
 });

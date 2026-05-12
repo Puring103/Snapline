@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { EditorPane } from "../components/EditorPane";
 import { MarkdownPreview } from "../components/MarkdownPreview";
-import { SyncSettings } from "../components/SyncSettings";
+import { importPromptText, SyncSettings } from "../components/SyncSettings";
 import { api } from "../platform/api";
 import { ChevronDownIcon, IconButton, ListIcon, LogoIcon, PinIcon, PlusIcon, PreviewModeIcon, SettingsIcon, SourceModeIcon, ThemeDarkIcon, ThemeLightIcon, ThemeSystemIcon } from "../components/app/AppIcons";
 import { SearchIcon } from "./icons";
 import { HighlightedText } from "../features/search/highlight";
+import { conflictPromptText } from "../features/sync/session";
 import { loadLastNoteId, loadTheme, saveLastNoteId, saveTheme } from "./storage";
 import type { EditorMode, Note, ThemeMode } from "./types";
 import type { LoginSyncResult, Note as StoredNote, NoteSummary, SavedAsset, SyncAccountState } from "../types";
@@ -32,6 +33,9 @@ function draftFromStored(note: StoredNote): Note {
     body: note.content_md,
     pinned: note.pinned ?? false,
     updatedAt: Date.parse(note.updated_at),
+    isConflictCopy: note.is_conflict_copy ?? false,
+    sourceNoteId: note.source_note_id ?? null,
+    ownerAccountId: note.owner_account_id ?? null,
   };
 }
 
@@ -42,6 +46,9 @@ function noteFromSummary(summary: NoteSummary): Note {
     body: summary.preview_md ?? summary.preview ?? "",
     pinned: summary.pinned ?? false,
     updatedAt: Date.parse(summary.updated_at),
+    isConflictCopy: summary.is_conflict_copy ?? false,
+    sourceNoteId: summary.source_note_id ?? null,
+    ownerAccountId: summary.owner_account_id ?? null,
   };
 }
 
@@ -122,9 +129,10 @@ export function AndroidApp() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsExpanded, setSettingsExpanded] = useState(false);
   const [syncAccount, setSyncAccount] = useState<SyncAccountState | null>(null);
+  const [pendingImportCount, setPendingImportCount] = useState(0);
+  const [promptedConflictIds, setPromptedConflictIds] = useState<string[]>([]);
   const keyboardOffset = useKeyboardOffset();
   const [isSaving, setIsSaving] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
   const saveQueueRef = useRef(Promise.resolve());
   const syncQueueRef = useRef(Promise.resolve());
   const autoSyncTimerRef = useRef<number | null>(null);
@@ -138,6 +146,11 @@ export function AndroidApp() {
     if (!needle) return sorted;
     return sorted.filter((note) => `${note.title}\n${note.body}`.toLowerCase().includes(needle));
   }, [notes, query]);
+  const pendingConflict = useMemo(
+    () => visibleNotes.find((note) => note.isConflictCopy && !promptedConflictIds.includes(note.id)) ?? null,
+    [promptedConflictIds, visibleNotes],
+  );
+  const conflictToPrompt = pendingImportCount > 0 ? null : pendingConflict;
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -242,13 +255,11 @@ export function AndroidApp() {
   }
 
   function queueAutoSync() {
-    setIsSyncing(true);
     syncQueueRef.current = syncQueueRef.current
       .catch(() => undefined)
       .then(() => api.syncNow())
       .then(() => undefined)
-      .catch(() => undefined)
-      .finally(() => setIsSyncing(false));
+      .catch(() => undefined);
   }
 
   function updateDraft(patch: Partial<Note>) {
@@ -295,15 +306,62 @@ export function AndroidApp() {
 
   function handleSyncSaved(result: LoginSyncResult) {
     setSyncAccount(result.account);
+    setPendingImportCount(result.anonymous_note_count);
     if (result.account.is_logged_in) {
-      setIsSyncing(true);
       void api.syncNow().catch(() => undefined).finally(() => {
-        setIsSyncing(false);
         void refreshNotes().catch(() => undefined);
       });
       return;
     }
     void refreshNotes().catch(() => undefined);
+  }
+
+  async function handleImportAnonymousNotes() {
+    try {
+      const imported = await api.importAnonymousNotes();
+      setNotes(sortNotes(imported.map(noteFromSummary).filter(hasMeaningfulContent)));
+      setPendingImportCount(0);
+      void api.syncNow().catch(() => undefined);
+    } catch {
+      setPendingImportCount(0);
+    }
+  }
+
+  async function handleKeepServerVersion(conflict: Note) {
+    try {
+      const nextNotes = await api.deleteNote(conflict.id);
+      setNotes(sortNotes(nextNotes.map(noteFromSummary).filter(hasMeaningfulContent)));
+      if (draft.id === conflict.id) {
+        void refreshNotes(conflict.sourceNoteId ?? null).catch(() => undefined);
+      }
+    } catch {
+      markConflictPrompted(conflict.id);
+    }
+  }
+
+  async function handleKeepLocalVersion(conflict: Note) {
+    if (!conflict.sourceNoteId) return;
+
+    try {
+      const local = await api.getNote(conflict.id);
+      const saved = await api.saveNote(conflict.sourceNoteId, local.title, local.content_md, local.pinned ?? false);
+      const nextNotes = await api.deleteNote(conflict.id);
+      const savedDraft = draftFromStored(saved);
+      setNotes(sortNotes([
+        savedDraft,
+        ...nextNotes.map(noteFromSummary).filter((note) => note.id !== saved.id && hasMeaningfulContent(note)),
+      ]));
+      if (draft.id === conflict.id || draft.id === conflict.sourceNoteId) {
+        setDraft(savedDraft);
+      }
+      void api.syncNow().catch(() => undefined);
+    } catch {
+      markConflictPrompted(conflict.id);
+    }
+  }
+
+  function markConflictPrompted(conflictId: string) {
+    setPromptedConflictIds((current) => current.includes(conflictId) ? current : [...current, conflictId]);
   }
 
   async function handleRequestImageSave(bytes: number[]): Promise<SavedAsset | null> {
@@ -358,7 +416,7 @@ export function AndroidApp() {
               onBodyChange={(body) => updateDraft({ body })}
               onModeToggle={() => setEditorMode((mode) => mode === "preview" ? "source" : "preview")}
               onRequestImageSave={handleRequestImageSave}
-              readOnly={isSyncing}
+              readOnly={false}
               showModeToggle={false}
               toolbarVariant="full"
             />
@@ -383,26 +441,6 @@ export function AndroidApp() {
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索笔记" />
             </label>
 
-            <section className="drawerSettings accountSettings">
-              <button
-                aria-expanded={settingsExpanded}
-                className="drawerSettingsTrigger"
-                onClick={() => setSettingsExpanded((open) => !open)}
-                type="button"
-              >
-                <span><SettingsIcon />账号登录</span>
-                <ChevronDownIcon className={settingsExpanded ? "drawerSettingsIcon open" : "drawerSettingsIcon"} />
-              </button>
-              {settingsExpanded ? (
-                <div className="drawerSettingsPanel">
-                  <SyncSettings
-                    initial={syncAccount}
-                    onSaved={handleSyncSaved}
-                  />
-                </div>
-              ) : null}
-            </section>
-
             <div className="noteFeed">
               {visibleNotes.map((note) => (
                 <article
@@ -415,6 +453,7 @@ export function AndroidApp() {
                         <span className="noteRowTitle">
                           <HighlightedText query={query} text={note.title.trim() || "Untitled"} />
                         </span>
+                        {note.isConflictCopy ? <span className="conflictBadge">冲突</span> : null}
                       </div>
                       <span className="noteRowTime">{formatTime(note.updatedAt)}</span>
                     </div>
@@ -438,16 +477,51 @@ export function AndroidApp() {
               </button>
               {settingsExpanded ? (
                 <div className="drawerSettingsPanel">
+                  <div className="drawerSettingsSubpanel">
+                    <h3>账号登录</h3>
+                    <SyncSettings
+                      initial={syncAccount}
+                      onSaved={handleSyncSaved}
+                    />
+                  </div>
+                  <div className="drawerSettingsSubpanel">
                   <h3>外观</h3>
                   <div className="segmented">
                     <button className={theme === "system" ? "selected" : ""} onClick={() => setTheme("system")} type="button"><ThemeSystemIcon />系统</button>
                     <button className={theme === "dark" ? "selected" : ""} onClick={() => setTheme("dark")} type="button"><ThemeDarkIcon />暗色</button>
                     <button className={theme === "light" ? "selected" : ""} onClick={() => setTheme("light")} type="button"><ThemeLightIcon />浅色</button>
                   </div>
+                  </div>
                 </div>
               ) : null}
             </section>
           </aside>
+        </div>
+      ) : null}
+      {conflictToPrompt ? (
+        <div className="connectionDialogBackdrop">
+          <div className="connectionDialog" role="dialog" aria-modal="true">
+            <div className="connectionDialogTitle">发现冲突版本</div>
+            <div className="connectionDialogSub">
+              {conflictPromptText(conflictToPrompt.title)}
+            </div>
+            <div className="connectionDialogActions conflictDialogActions">
+              <button type="button" onClick={() => markConflictPrompted(conflictToPrompt.id)}>稍后</button>
+              <button type="button" onClick={() => void handleKeepServerVersion(conflictToPrompt)}>保存服务器版</button>
+              <button type="button" onClick={() => void handleKeepLocalVersion(conflictToPrompt)}>保存本地版</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {pendingImportCount > 0 ? (
+        <div className="connectionDialogBackdrop">
+          <div className="connectionDialog" role="dialog" aria-modal="true">
+            <div className="connectionDialogTitle">{importPromptText(pendingImportCount)}</div>
+            <div className="connectionDialogActions">
+              <button type="button" onClick={() => setPendingImportCount(0)}>不导入</button>
+              <button type="button" onClick={() => void handleImportAnonymousNotes()}>导入</button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>

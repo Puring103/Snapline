@@ -4,6 +4,9 @@ export interface Note {
   body: string;
   pinned: boolean;
   updatedAt: number;
+  isConflictCopy?: boolean;
+  sourceNoteId?: string | null;
+  ownerAccountId?: string | null;
 }
 
 export type EditorMode = "source" | "preview";
