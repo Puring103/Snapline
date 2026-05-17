@@ -40,7 +40,7 @@ interface EditorPaneProps {
   onRequestImageSave: (bytes: number[]) => Promise<SavedAsset | null>;
   readOnly?: boolean;
   showModeToggle?: boolean;
-  toolbarVariant?: "compact" | "full";
+  toolbarVariant?: "compact" | "full" | "mobile";
 }
 
 export function EditorPane({

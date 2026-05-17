@@ -8,7 +8,7 @@ interface EditorToolbarProps {
   onModeToggle: () => void;
   showModeToggle: boolean;
   stateVersion: number;
-  variant: "compact" | "full";
+  variant: "compact" | "full" | "mobile";
 }
 
 export function EditorToolbar({
@@ -26,147 +26,9 @@ export function EditorToolbar({
   return (
     <div className="editorToolbar">
       {editor ? (
-        <>
-          {variant === "full" ? (
-            <>
-              <ToolbarButton
-                active={editor.isActive("heading", { level: 1 })}
-                label="Heading 1"
-                onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-              >
-                <HeadingIcon level={1} />
-              </ToolbarButton>
-              <ToolbarButton
-                active={editor.isActive("heading", { level: 2 })}
-                label="Heading 2"
-                onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-              >
-                <HeadingIcon level={2} />
-              </ToolbarButton>
-              <ToolbarButton
-                active={editor.isActive("heading", { level: 3 })}
-                label="Heading 3"
-                onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-              >
-                <HeadingIcon level={3} />
-              </ToolbarButton>
-              <div className="editorToolbarDivider" />
-            </>
-          ) : null}
-          <ToolbarButton
-            active={editor.isActive("bold")}
-            label="Bold"
-            onClick={() => editor.chain().focus().toggleBold().run()}
-          >
-            <BoldIcon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={editor.isActive("italic")}
-            label="Italic"
-            onClick={() => editor.chain().focus().toggleItalic().run()}
-          >
-            <ItalicIcon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={editor.isActive("strike")}
-            label="Strikethrough"
-            onClick={() => editor.chain().focus().toggleStrike().run()}
-          >
-            <StrikeIcon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={editor.isActive("underline")}
-            label="Underline"
-            onClick={() => editor.chain().focus().toggleUnderline().run()}
-          >
-            <UnderlineIcon />
-          </ToolbarButton>
-          <ToolbarButton
-            active={editor.isActive("code")}
-            label="Inline code"
-            onClick={() => editor.chain().focus().toggleCode().run()}
-          >
-            <InlineCodeIcon />
-          </ToolbarButton>
-          <div className="editorToolbarDivider" />
-          {variant === "full" ? (
-            <>
-              <ToolbarButton
-                disabled={!editor.can().undo()}
-                active={false}
-                label="Undo"
-                onClick={() => editor.chain().focus().undo().run()}
-              >
-                <UndoIcon />
-              </ToolbarButton>
-              <ToolbarButton
-                disabled={!editor.can().redo()}
-                active={false}
-                label="Redo"
-                onClick={() => editor.chain().focus().redo().run()}
-              >
-                <RedoIcon />
-              </ToolbarButton>
-              <div className="editorToolbarDivider" />
-            </>
-          ) : null}
-          {variant === "full" ? (
-            <>
-              <ToolbarButton
-                active={editor.isActive("bulletList")}
-                label="Bullet list"
-                onClick={() => editor.chain().focus().toggleBulletList().run()}
-              >
-                <BulletListIcon />
-              </ToolbarButton>
-              <ToolbarButton
-                active={editor.isActive("orderedList")}
-                label="Ordered list"
-                onClick={() => editor.chain().focus().toggleOrderedList().run()}
-              >
-                <OrderedListIcon />
-              </ToolbarButton>
-              <ToolbarButton
-                active={false}
-                label="Indent"
-                onClick={() => indentSelection(editor)}
-              >
-                <IndentIcon />
-              </ToolbarButton>
-              <ToolbarButton
-                active={false}
-                label="Outdent"
-                onClick={() => outdentSelection(editor)}
-              >
-                <OutdentIcon />
-              </ToolbarButton>
-            </>
-          ) : null}
-          <ToolbarButton
-            active={editor.isActive("taskList")}
-            label="Task list"
-            onClick={() => editor.chain().focus().toggleTaskList().run()}
-          >
-            <TaskListIcon />
-          </ToolbarButton>
-          <div className="editorToolbarDivider" />
-          {variant === "full" ? (
-            <ToolbarButton
-              active={editor.isActive("blockquote")}
-              label="Blockquote"
-              onClick={() => editor.chain().focus().toggleBlockquote().run()}
-            >
-              <BlockquoteIcon />
-            </ToolbarButton>
-          ) : null}
-          <ToolbarButton
-            active={editor.isActive("codeBlock")}
-            label="Code block"
-            onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-          >
-            <CodeBlockIcon />
-          </ToolbarButton>
-        </>
+        variant === "mobile"
+          ? <MobileToolbarControls editor={editor} />
+          : <DefaultToolbarControls editor={editor} variant={variant} />
       ) : null}
       {showModeToggle ? (
         <>
@@ -182,6 +44,238 @@ export function EditorToolbar({
         </>
       ) : null}
     </div>
+  );
+}
+
+function MobileToolbarControls({ editor }: { editor: Editor }) {
+  return (
+    <>
+      <IndentControls editor={editor} />
+      <div className="editorToolbarDivider" />
+      <HistoryControls editor={editor} />
+      <div className="editorToolbarDivider" />
+      <ListControls editor={editor} includeIndent={false} />
+      <div className="editorToolbarDivider" />
+      <HeadingControls editor={editor} />
+      <TextStyleControls editor={editor} />
+      <div className="editorToolbarDivider" />
+      <BlockControls editor={editor} includeBlockquote />
+    </>
+  );
+}
+
+function DefaultToolbarControls({
+  editor,
+  variant,
+}: {
+  editor: Editor;
+  variant: "compact" | "full";
+}) {
+  return (
+    <>
+      {variant === "full" ? (
+        <>
+          <HeadingControls editor={editor} />
+          <div className="editorToolbarDivider" />
+        </>
+      ) : null}
+      <TextStyleControls editor={editor} />
+      <div className="editorToolbarDivider" />
+      {variant === "full" ? (
+        <>
+          <HistoryControls editor={editor} />
+          <div className="editorToolbarDivider" />
+          <ListControls editor={editor} includeIndent />
+        </>
+      ) : null}
+      <ToolbarButton
+        active={editor.isActive("taskList")}
+        label="Task list"
+        onClick={() => editor.chain().focus().toggleTaskList().run()}
+      >
+        <TaskListIcon />
+      </ToolbarButton>
+      <div className="editorToolbarDivider" />
+      <BlockControls editor={editor} includeBlockquote={variant === "full"} />
+    </>
+  );
+}
+
+function HeadingControls({ editor }: { editor: Editor }) {
+  return (
+    <>
+      <ToolbarButton
+        active={editor.isActive("heading", { level: 1 })}
+        label="Heading 1"
+        onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+      >
+        <HeadingIcon level={1} />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("heading", { level: 2 })}
+        label="Heading 2"
+        onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+      >
+        <HeadingIcon level={2} />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("heading", { level: 3 })}
+        label="Heading 3"
+        onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+      >
+        <HeadingIcon level={3} />
+      </ToolbarButton>
+    </>
+  );
+}
+
+function TextStyleControls({ editor }: { editor: Editor }) {
+  return (
+    <>
+      <ToolbarButton
+        active={editor.isActive("bold")}
+        label="Bold"
+        onClick={() => editor.chain().focus().toggleBold().run()}
+      >
+        <BoldIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("italic")}
+        label="Italic"
+        onClick={() => editor.chain().focus().toggleItalic().run()}
+      >
+        <ItalicIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("strike")}
+        label="Strikethrough"
+        onClick={() => editor.chain().focus().toggleStrike().run()}
+      >
+        <StrikeIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("underline")}
+        label="Underline"
+        onClick={() => editor.chain().focus().toggleUnderline().run()}
+      >
+        <UnderlineIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("code")}
+        label="Inline code"
+        onClick={() => editor.chain().focus().toggleCode().run()}
+      >
+        <InlineCodeIcon />
+      </ToolbarButton>
+    </>
+  );
+}
+
+function HistoryControls({ editor }: { editor: Editor }) {
+  return (
+    <>
+      <ToolbarButton
+        disabled={!editor.can().undo()}
+        active={false}
+        label="Undo"
+        onClick={() => editor.chain().focus().undo().run()}
+      >
+        <UndoIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        disabled={!editor.can().redo()}
+        active={false}
+        label="Redo"
+        onClick={() => editor.chain().focus().redo().run()}
+      >
+        <RedoIcon />
+      </ToolbarButton>
+    </>
+  );
+}
+
+function ListControls({
+  editor,
+  includeIndent,
+}: {
+  editor: Editor;
+  includeIndent: boolean;
+}) {
+  return (
+    <>
+      <ToolbarButton
+        active={editor.isActive("bulletList")}
+        label="Bullet list"
+        onClick={() => editor.chain().focus().toggleBulletList().run()}
+      >
+        <BulletListIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        active={editor.isActive("orderedList")}
+        label="Ordered list"
+        onClick={() => editor.chain().focus().toggleOrderedList().run()}
+      >
+        <OrderedListIcon />
+      </ToolbarButton>
+      {includeIndent ? <IndentControls editor={editor} /> : null}
+      <ToolbarButton
+        active={editor.isActive("taskList")}
+        label="Task list"
+        onClick={() => editor.chain().focus().toggleTaskList().run()}
+      >
+        <TaskListIcon />
+      </ToolbarButton>
+    </>
+  );
+}
+
+function IndentControls({ editor }: { editor: Editor }) {
+  return (
+    <>
+      <ToolbarButton
+        active={false}
+        label="Indent"
+        onClick={() => indentSelection(editor)}
+      >
+        <IndentIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        active={false}
+        label="Outdent"
+        onClick={() => outdentSelection(editor)}
+      >
+        <OutdentIcon />
+      </ToolbarButton>
+    </>
+  );
+}
+
+function BlockControls({
+  editor,
+  includeBlockquote,
+}: {
+  editor: Editor;
+  includeBlockquote: boolean;
+}) {
+  return (
+    <>
+      {includeBlockquote ? (
+        <ToolbarButton
+          active={editor.isActive("blockquote")}
+          label="Blockquote"
+          onClick={() => editor.chain().focus().toggleBlockquote().run()}
+        >
+          <BlockquoteIcon />
+        </ToolbarButton>
+      ) : null}
+      <ToolbarButton
+        active={editor.isActive("codeBlock")}
+        label="Code block"
+        onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+      >
+        <CodeBlockIcon />
+      </ToolbarButton>
+    </>
   );
 }
 

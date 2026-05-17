@@ -418,7 +418,7 @@ export function AndroidApp() {
               onRequestImageSave={handleRequestImageSave}
               readOnly={false}
               showModeToggle={false}
-              toolbarVariant="full"
+              toolbarVariant="mobile"
             />
           </section>
         </section>
