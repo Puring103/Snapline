@@ -1,0 +1,10 @@
+/target/
+.env
+.env.*
+!.env.example
+*.log
+/data/
+/backups/
+/apps/desktop/node_modules/
+/apps/desktop/dist/
+

@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS schema_migrations_guard (
+    id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
