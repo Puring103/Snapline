@@ -42,3 +42,29 @@ cargo test --workspace
 - 部署脚本具备 release 指针、Caddy 备份、三次连续健康门槛和失败回滚。
 
 已知部署约束：当前入口是临时 HTTP，正式输入真实账号凭据前仍需域名和 HTTPS。
+
+## M5 桌面本地存储与加密
+
+环境：Windows 11、Rust 1.95.0、Tauri 2.11、WebView2、Windows Credential Manager。
+
+2026-08-01 已执行：
+
+```powershell
+cargo clippy -p snapline-crypto -p snapline-desktop-core -p snapline-desktop --all-targets -- -D warnings
+cargo test -p snapline-crypto -p snapline-desktop-core -p snapline-desktop
+$env:SNAPLINE_LIVE_TEST='1'
+cargo test -p snapline-desktop live_server_register_unlock_save_and_login_again -- --ignored --nocapture
+npm test -- --run
+npm run build
+npm run tauri -- build --no-bundle
+```
+
+结果：
+
+- 加密 crate 5 个测试通过，覆盖密码/恢复密钥解锁、错误密码、密文篡改、对象替换、跨分块附件往返、截断和错误密钥。
+- 本地仓库 5 个测试通过，覆盖记录 CRUD/版本、错误 UMK、数据库明文扫描、加密附件往返、磁盘明文扫描和密文篡改。
+- Tauri 原生边界 3 个常规测试通过，另有 1 个真实 myServer 测试通过；真实测试覆盖注册、Windows Credential Manager、保存本地加密记录、再次登录和重新解密。测试账号完成后已精确删除。
+- Windows Release 可执行文件构建成功，并在真实 WebView2 窗口中完成登录界面启动与视觉验收。
+- React 2 个交互测试和生产构建通过；CodeMirror 主包仍有非阻塞体积警告，后续在 M6 做按需拆包。
+
+安全边界：UMK 只存在于原生进程内存，退出时随状态释放并零化；Refresh Token 只写入 Windows Credential Manager；记录敏感字段和附件内容均以 XChaCha20-Poly1305 加密后落盘。当前公网 API 仍为临时 HTTP，只使用专用随机测试凭据完成验证，正式使用真实账号前必须切换 HTTPS。

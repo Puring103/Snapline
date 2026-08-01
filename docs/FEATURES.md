@@ -9,4 +9,6 @@
 | M2 服务端加密同步 | 完成 | 幂等、隔离、冲突、pull/ack 真实 PostgreSQL 测试通过 |
 | M3 服务端附件 | 完成 | 真实 PostgreSQL 分片、状态、哈希、下载和隔离测试通过 |
 | M4 myServer 部署 | 完成 | 公网健康、注册、密文同步、备份恢复通过 |
-| M5-M11 桌面端 | 进行中 | 见 `IMPLEMENTATION_PLAN.md` |
+| M5 桌面本地存储与加密 | 完成 | 原生注册/登录、Windows 凭据、UMK/DEK、记录与分块附件加密测试及真实 myServer 登录通过 |
+| M6 Markdown 与快速记录 | 进行中 | React 工作台和快速记录界面已完成，原生快捷键与独立窗口待验收 |
+| M7-M11 桌面媒体、AI、Agent 与同步 | 计划 | 见 `IMPLEMENTATION_PLAN.md` |
