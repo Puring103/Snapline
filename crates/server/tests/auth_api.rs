@@ -29,6 +29,9 @@ async fn test_app() -> (Router, PgPool) {
         access_token_ttl_seconds: 300,
         refresh_token_ttl_seconds: 3600,
         object_dir: PathBuf::from("target/test-objects-auth"),
+        attachment_quota_bytes: 10 * 1024 * 1024 * 1024,
+        upload_ttl_seconds: 86_400,
+        upload_cleanup_interval_seconds: 3_600,
     };
     (app(pool.clone(), &config), pool)
 }
@@ -162,4 +165,15 @@ async fn complete_auth_and_device_lifecycle() {
             .await
             .unwrap();
     assert_eq!(plaintext_secret_count, 0);
+}
+
+#[tokio::test]
+async fn readiness_depends_on_postgres() {
+    let (app, pool) = test_app().await;
+    let (status, _) = json_request(app.clone(), "GET", "/health/ready", Value::Null, None).await;
+    assert_eq!(status, StatusCode::OK);
+    pool.close().await;
+    let (status, body) = json_request(app, "GET", "/health/ready", Value::Null, None).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["code"], "internal_error");
 }

@@ -37,7 +37,10 @@ pub fn app(pool: PgPool, config: &Config) -> Router {
         .route("/api/v1/sync/pull", get(sync::pull))
         .route("/api/v1/sync/ack", post(sync::ack))
         .route("/api/v1/attachments", post(attachments::create))
-        .route("/api/v1/attachments/{id}", get(attachments::status))
+        .route(
+            "/api/v1/attachments/{id}",
+            get(attachments::status).delete(attachments::delete),
+        )
         .route(
             "/api/v1/attachments/{id}/parts/{part}",
             axum::routing::put(attachments::upload_part).layer(DefaultBodyLimit::max(
@@ -62,9 +65,18 @@ async fn live() -> Json<HealthResponse> {
     })
 }
 
-async fn ready() -> Json<HealthResponse> {
-    Json(HealthResponse {
+async fn ready(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> Result<Json<HealthResponse>, crate::error::ApiError> {
+    sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "readiness database check failed");
+            crate::error::ApiError::Internal
+        })?;
+    Ok(Json(HealthResponse {
         status: "ok",
         service: "snapline-server",
-    })
+    }))
 }

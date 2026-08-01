@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use snapline_domain::{ATTACHMENT_PART_BYTES, MAX_ATTACHMENT_BYTES};
@@ -62,6 +63,51 @@ pub async fn create(
 ) -> Result<Json<AttachmentResponse>, ApiError> {
     let claims = authenticated(&state, &headers).await?;
     validate_create(&request)?;
+    let mut transaction = state.pool.begin().await.map_err(internal)?;
+    let existing = sqlx::query_as::<_, (i64, i64, i32, String)>(
+        "SELECT total_size,part_size,total_parts,ciphertext_sha256 FROM attachments \
+         WHERE user_id=$1 AND id=$2",
+    )
+    .bind(claims.sub)
+    .bind(request.id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(internal)?;
+    if let Some(existing) = existing {
+        if existing
+            != (
+                request.total_size as i64,
+                request.part_size as i64,
+                request.total_parts as i32,
+                request.ciphertext_sha256.clone(),
+            )
+        {
+            return Err(ApiError::Conflict);
+        }
+        transaction.commit().await.map_err(internal)?;
+        return status_response(&state, claims.sub, request.id)
+            .await
+            .map(Json);
+    }
+    sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(claims.sub)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(internal)?;
+    let reserved = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(total_size),0)::BIGINT FROM attachments WHERE user_id=$1",
+    )
+    .bind(claims.sub)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(internal)?;
+    if reserved as u64
+        > state
+            .attachment_quota_bytes
+            .saturating_sub(request.total_size)
+    {
+        return Err(ApiError::QuotaExceeded);
+    }
     sqlx::query(
         "INSERT INTO attachments \
          (id,user_id,device_id,total_size,part_size,total_parts,ciphertext_sha256,encrypted_metadata) \
@@ -75,9 +121,10 @@ pub async fn create(
     .bind(request.total_parts as i32)
     .bind(&request.ciphertext_sha256)
     .bind(&request.encrypted_metadata)
-    .execute(&state.pool)
+    .execute(&mut *transaction)
     .await
     .map_err(internal)?;
+    transaction.commit().await.map_err(internal)?;
     status_response(&state, claims.sub, request.id)
         .await
         .map(Json)
@@ -92,6 +139,27 @@ pub async fn status(
     status_response(&state, claims.sub, id).await.map(Json)
 }
 
+pub async fn delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    let claims = authenticated(&state, &headers).await?;
+    let deleted = sqlx::query_scalar::<_, String>(
+        "DELETE FROM attachments WHERE user_id=$1 AND id=$2 RETURNING status",
+    )
+    .bind(claims.sub)
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(internal)?;
+    if deleted.is_none() {
+        return Err(ApiError::NotFound);
+    }
+    remove_attachment_files(&state.object_dir, claims.sub, id).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn upload_part(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -99,7 +167,17 @@ pub async fn upload_part(
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
     let claims = authenticated(&state, &headers).await?;
-    let attachment = get_attachment(&state, claims.sub, id).await?;
+    let mut transaction = state.pool.begin().await.map_err(internal)?;
+    let attachment = sqlx::query_as::<_, AttachmentRow>(
+        "UPDATE attachments SET updated_at=now() WHERE user_id=$1 AND id=$2 AND status='uploading' \
+         RETURNING total_size,part_size,total_parts,ciphertext_sha256,status,encrypted_metadata",
+    )
+    .bind(claims.sub)
+    .bind(id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(internal)?
+    .ok_or(ApiError::NotFound)?;
     if attachment.status != "uploading"
         || part_number >= attachment.total_parts as u32
         || body.is_empty()
@@ -127,9 +205,10 @@ pub async fn upload_part(
     .bind(part_number as i32)
     .bind(body.len() as i64)
     .bind(checksum_bytes(&body))
-    .execute(&state.pool)
+    .execute(&mut *transaction)
     .await
     .map_err(internal)?;
+    transaction.commit().await.map_err(internal)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -139,8 +218,19 @@ pub async fn complete(
     AxumPath(id): AxumPath<Uuid>,
 ) -> Result<Json<AttachmentResponse>, ApiError> {
     let claims = authenticated(&state, &headers).await?;
-    let attachment = get_attachment(&state, claims.sub, id).await?;
+    let mut transaction = state.pool.begin().await.map_err(internal)?;
+    let attachment = sqlx::query_as::<_, AttachmentRow>(
+        "SELECT total_size,part_size,total_parts,ciphertext_sha256,status,encrypted_metadata \
+         FROM attachments WHERE user_id=$1 AND id=$2 FOR UPDATE",
+    )
+    .bind(claims.sub)
+    .bind(id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(internal)?
+    .ok_or(ApiError::NotFound)?;
     if attachment.status == "complete" {
+        transaction.commit().await.map_err(internal)?;
         return status_response(&state, claims.sub, id).await.map(Json);
     }
     let parts = sqlx::query_as::<_, PartRow>(
@@ -149,7 +239,7 @@ pub async fn complete(
     )
     .bind(claims.sub)
     .bind(id)
-    .fetch_all(&state.pool)
+    .fetch_all(&mut *transaction)
     .await
     .map_err(internal)?;
     if parts.len() != attachment.total_parts as usize
@@ -193,15 +283,73 @@ pub async fn complete(
         .await
         .map_err(internal)?;
     sqlx::query(
-        "UPDATE attachments SET status='complete',completed_at=now() WHERE user_id=$1 AND id=$2",
+        "UPDATE attachments SET status='complete',completed_at=now(),updated_at=now() WHERE user_id=$1 AND id=$2",
     )
     .bind(claims.sub)
     .bind(id)
-    .execute(&state.pool)
+    .execute(&mut *transaction)
     .await
     .map_err(internal)?;
+    transaction.commit().await.map_err(internal)?;
     let _ = fs::remove_dir_all(parts_dir(&state.object_dir, claims.sub, id)).await;
     status_response(&state, claims.sub, id).await.map(Json)
+}
+
+pub async fn cleanup_stale_uploads(
+    state: &AppState,
+    now: DateTime<Utc>,
+) -> Result<usize, ApiError> {
+    let cutoff = now - Duration::seconds(state.upload_ttl_seconds);
+    let stale = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "DELETE FROM attachments WHERE status='uploading' AND updated_at < $1 RETURNING user_id,id",
+    )
+    .bind(cutoff)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(internal)?;
+    for (user_id, id) in &stale {
+        remove_attachment_files(&state.object_dir, *user_id, *id).await;
+    }
+    Ok(stale.len())
+}
+
+async fn remove_attachment_files(root: &Path, user_id: Uuid, id: Uuid) {
+    let paths = [
+        (parts_dir(root, user_id, id), true),
+        (object_path(root, user_id, id), false),
+        (
+            root.join(user_id.to_string()).join(format!("{id}.tmp")),
+            false,
+        ),
+    ];
+    for (path, directory) in paths {
+        let result = if directory {
+            fs::remove_dir_all(&path).await
+        } else {
+            fs::remove_file(&path).await
+        };
+        if let Err(error) = result
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%user_id, %id, %error, path = %path.display(), "failed to remove attachment storage");
+        }
+    }
+}
+
+pub fn spawn_cleanup(state: AppState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            state.upload_cleanup_interval_seconds,
+        ));
+        loop {
+            interval.tick().await;
+            match cleanup_stale_uploads(&state, Utc::now()).await {
+                Ok(removed) if removed > 0 => tracing::info!(removed, "removed stale uploads"),
+                Ok(_) => {}
+                Err(error) => tracing::error!(%error, "stale upload cleanup failed"),
+            }
+        }
+    });
 }
 
 pub async fn download(

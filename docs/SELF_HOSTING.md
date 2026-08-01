@@ -26,17 +26,37 @@ Compose 中的 `object-init` 是一次性初始化服务，只负责把密文对
 
 ## 状态与日志
 
-```bash
-ssh myserver
-cd /opt/snapline/current
-sudo docker compose --env-file /opt/snapline/.env -f deploy/compose.yml ps
-sudo docker compose --env-file /opt/snapline/.env -f deploy/compose.yml logs -f api
+```powershell
+./deploy/status.ps1
+./deploy/logs.ps1 -Lines 200
+./deploy/logs.ps1 -Follow
+```
+
+`/health/live` 只证明进程存活；`/health/ready` 会执行 PostgreSQL 查询，数据库不可用时部署健康门槛不会放行。
+
+附件生命周期默认配置如下，可在 Compose 环境中调整：
+
+```text
+SNAPLINE_ATTACHMENT_QUOTA_BYTES=10737418240
+SNAPLINE_UPLOAD_TTL_SECONDS=86400
+SNAPLINE_UPLOAD_CLEANUP_INTERVAL_SECONDS=3600
 ```
 
 ## 备份
 
-```bash
-ssh myserver 'sudo sh /opt/snapline/current/deploy/backup.sh'
+```powershell
+./deploy/backup.ps1
 ```
 
-备份包含 PostgreSQL 自定义格式转储、密文对象归档和 SHA-256 清单。恢复前必须停止 API，在新数据库验证转储后再切换。每次升级前执行备份并保留上一版本源码与镜像，健康检查失败时使用上一版本执行 Compose 构建和启动。
+备份包含 PostgreSQL 自定义格式转储、密文对象归档和使用相对文件名的 SHA-256 清单。每次已有版本升级前会自动备份。
+
+## 恢复与回滚
+
+```powershell
+./deploy/restore.ps1 -Backup 20260801T092023Z -ConfirmRestore
+./deploy/rollback.ps1 -Release previous -ConfirmRollback
+```
+
+两个操作默认拒绝执行，必须提供确认开关。恢复会停止 API、校验当前备份副本、重建数据库、恢复密文对象卷、修复非 root 所有权并等待健康检查。回滚会先备份当前状态，再切换 release 指针；目标版本不健康时自动恢复原 release。
+
+2026-08-01 已在 `myserver` 使用独立 Compose 项目、独立 PostgreSQL/对象卷和回环端口 `58081` 执行同一份恢复与回滚脚本。恢复库的 9 张业务表逐表计数与备份源一致，API 健康；回滚从 `20260801T000001Z` 切换到 `20260801T000000Z` 并产生回滚前备份。所有隔离容器、卷、网络和临时目录随后删除。

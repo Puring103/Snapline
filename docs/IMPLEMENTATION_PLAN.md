@@ -133,11 +133,14 @@ POST   /api/v1/attachments
 PUT    /api/v1/attachments/{id}/parts/{part}
 POST   /api/v1/attachments/{id}/complete
 GET    /api/v1/attachments/{id}
+DELETE /api/v1/attachments/{id}
 GET    /health/live
 GET    /health/ready
 ```
 
 所有资源查询必须同时约束已认证 `user_id`。上传大小、分片数、游标 limit 和请求体均设上限。错误响应使用稳定机器码，不泄露数据库或认证细节。
+
+每用户默认保留 10 GiB 密文附件空间，上传中对象也计入配额，创建时通过用户行锁保证并发核算原子性。未完成上传默认 24 小时过期，由服务端每小时清理数据库记录、分片和临时文件。记录 tombstone 经服务端确认后，客户端以 durable outbox 删除不再被其他记录引用的远端附件，成功后再移除本地密文。
 
 ### 6.3 PostgreSQL
 

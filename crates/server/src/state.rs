@@ -10,6 +10,9 @@ pub struct AppState {
     pub tokens: TokenService,
     pub login_limiter: LoginLimiter,
     pub object_dir: PathBuf,
+    pub attachment_quota_bytes: u64,
+    pub upload_ttl_seconds: i64,
+    pub upload_cleanup_interval_seconds: u64,
 }
 
 impl AppState {
@@ -23,6 +26,9 @@ impl AppState {
             ),
             login_limiter: LoginLimiter::default(),
             object_dir: config.object_dir.clone(),
+            attachment_quota_bytes: config.attachment_quota_bytes,
+            upload_ttl_seconds: config.upload_ttl_seconds,
+            upload_cleanup_interval_seconds: config.upload_cleanup_interval_seconds,
         }
     }
 }

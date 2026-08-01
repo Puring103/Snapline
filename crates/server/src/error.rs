@@ -19,6 +19,8 @@ pub enum ApiError {
     Internal,
     #[error("too many requests")]
     RateLimited,
+    #[error("attachment storage quota exceeded")]
+    QuotaExceeded,
 }
 
 impl ApiError {
@@ -30,6 +32,7 @@ impl ApiError {
             Self::Conflict => (StatusCode::CONFLICT, "conflict"),
             Self::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
             Self::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+            Self::QuotaExceeded => (StatusCode::PAYLOAD_TOO_LARGE, "quota_exceeded"),
         }
     }
 }

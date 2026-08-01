@@ -80,6 +80,9 @@ async fn encrypted_sync_is_idempotent_isolated_and_conflict_aware() {
         access_token_ttl_seconds: 300,
         refresh_token_ttl_seconds: 3600,
         object_dir: PathBuf::from("target/test-objects-sync"),
+        attachment_quota_bytes: 10 * 1024 * 1024 * 1024,
+        upload_ttl_seconds: 86_400,
+        upload_cleanup_interval_seconds: 3_600,
     };
     let app = app(pool, &config);
     let owner = register(app.clone(), &format!("sync-{}@example.com", Uuid::new_v4())).await;

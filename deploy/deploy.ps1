@@ -39,6 +39,9 @@ if sudo docker image inspect snapline-api:latest >/dev/null 2>&1; then
 fi
 sudo docker compose --env-file /opt/snapline/.env -f deploy/compose.yml build
 sudo caddy validate --config "$release_dir/deploy/Caddyfile" --adapter caddyfile
+if [ -n "$previous_release" ]; then
+  sudo sh "$previous_release/deploy/backup.sh"
+fi
 if ! sudo cmp -s "$release_dir/deploy/Caddyfile" /etc/caddy/Caddyfile; then
   sudo cp /etc/caddy/Caddyfile "/opt/snapline/backups/Caddyfile.$release"
   sudo install -o root -g root -m 644 "$release_dir/deploy/Caddyfile" /etc/caddy/Caddyfile

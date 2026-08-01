@@ -59,6 +59,7 @@ export interface SyncResult {
   conflicts: number;
   attachments_uploaded: number;
   attachments_downloaded: number;
+  attachments_deleted: number;
 }
 
 export interface SyncConflict {
@@ -138,7 +139,7 @@ export async function askAgent(question: string): Promise<AgentAnswer> {
 }
 
 export async function syncNow(): Promise<SyncResult> {
-  if (!isTauri()) return { pushed: 0, pulled: 0, conflicts: 0, attachments_uploaded: 0, attachments_downloaded: 0 };
+  if (!isTauri()) return { pushed: 0, pulled: 0, conflicts: 0, attachments_uploaded: 0, attachments_downloaded: 0, attachments_deleted: 0 };
   return invoke<SyncResult>('sync_now');
 }
 

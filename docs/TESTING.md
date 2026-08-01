@@ -28,7 +28,7 @@ cargo test --workspace
 
 ## M3 服务端附件
 
-环境同 M1，附件使用测试临时目录。2026-08-01 已执行完整工作区格式、Clippy 和测试。结果：9 个单元/集成测试通过，0 个失败、0 个忽略。附件测试覆盖密文分片、已上传分片查询、完整哈希验证、流式下载和跨用户不可见。
+环境同 M1，附件使用测试临时目录。2026-08-01 已执行完整工作区格式、Clippy 和测试。附件测试覆盖密文分片、已上传分片查询、完整哈希、流式下载、跨用户不可见、原子用户配额、配额释放、24 小时过期清理及数据库/密文文件删除。就绪探针测试还覆盖 PostgreSQL 连接关闭后返回 500。
 
 ## M4 myServer 部署
 
@@ -40,6 +40,9 @@ cargo test --workspace
 - PostgreSQL 和密文对象卷完成备份、SHA-256 校验；转储恢复到临时数据库后验证 10 张 public 表并清理临时库。
 - API 仅绑定 `127.0.0.1:58080`，PostgreSQL 无主机端口。
 - 部署脚本具备 release 指针、Caddy 备份、三次连续健康门槛和失败回滚。
+- `status.ps1`、`logs.ps1`、`backup.ps1` 在真实服务器通过；`restore.ps1` 与 `rollback.ps1` 无确认开关时正确拒绝。
+- 相对 SHA-256 清单在复制后的备份目录独立校验；同一 `restore.sh` 在隔离项目恢复 9 张业务表和对象卷，API 在 `58081` 健康。
+- 同一 `rollback.sh` 在隔离项目执行升级前备份、release 指针切换和健康检查。两套隔离资源均已清理。
 
 已知部署约束：当前入口是临时 HTTP，正式输入真实账号凭据前仍需域名和 HTTPS。
 
@@ -166,11 +169,16 @@ cargo test -p snapline-desktop --offline
 - Access Token 在到期前两分钟使用 Windows Credential Manager 中的 Refresh Token 轮换；401 会强制刷新一次。设备撤销或刷新失效会删除凭据并清空 UMK、仓库和会话状态。
 - 每次登录、自动保存、删除、快捷记录完成、恢复联网及每 30 秒触发同步。pull 分页应用后持久化 cursor 并 ack；push 使用由设备和 outbox 序列派生的稳定幂等键，校验逐项确认对象。
 - 附件先于引用记录上传，使用 8 MiB 分片并跳过服务端已持有分片。加密附件元数据由 UMK 认证加密；下载流式写入临时密文文件，大小、SHA-256 和对象 ID 验证通过后原子导入，不产生明文临时文件。
-- Vitest 8 个测试文件、27 个测试通过；Rust 最终完整工作区在 `myserver` 一次性 PostgreSQL 17 上共 43 个常规测试通过、0 失败、4 个条件忽略；Clippy 零警告，生产前端构建通过。
+- Vitest 8 个测试文件、27 个测试通过；Rust 最终完整工作区在 `myserver` 一次性 PostgreSQL 17 上共 46 个常规测试通过、0 失败、4 个条件忽略；Clippy 零警告，生产前端构建通过。
 - 更新后的服务端已部署到 `myserver`，API 仍仅绑定 `127.0.0.1:58080`，PostgreSQL 无主机端口。对象卷由一次性 root 初始化容器设置给非 root API UID `10001`，API 继续以非 root 运行。
 - 真实 `myserver` 双设备测试通过：设备 A 上传一条记录和约 9 MiB 加密视频，设备 B 增量拉取、校验并完整解密；撤销设备 A 后刷新被拒绝且本地会话清空。两个测试账号和对应密文对象目录均已精确删除。
+- 最终双设备复验增加删除生命周期：设备 B 的记录 tombstone 获确认后才放行附件删除；服务端对象返回 404，本地密文移除，测试账号与空对象目录精确清理。
 - 当前公网入口仍为开发用 HTTP。测试仅使用随机临时凭据与内容；正式账号、真实记录和长期同步必须先配置 HTTPS。
 
 ## Windows Release
 
-2026-08-01 执行 `npm run tauri -- build --no-bundle` 成功，优化后的原生可执行文件位于 `target/release/snapline-desktop.exe`。前端主包约 247 kB，完整 CodeMirror 保持为独立懒加载 chunk；其体积提示不影响快速入口首屏。
+2026-08-01 执行完整 NSIS 构建成功，安装包位于 `target/release/bundle/nsis/Snapline_0.1.0_x64-setup.exe`。静默安装到一次性目录和静默卸载均返回 0，安装内容包含桌面可执行文件与卸载器。前端主包约 247 kB，完整 CodeMirror 保持为独立懒加载 chunk；其体积提示不影响快速入口首屏。
+
+最终安装包大小为 4,418,962 字节，SHA-256 为 `6164EA0FE13B014493FAECBBFDF402549586A4D144916116C9BE5A506E475C9E`。
+
+当前安装包未配置 Authenticode 证书，`Get-AuthenticodeSignature` 返回 `NotSigned`。这不影响功能测试，但正式对外分发前需要签名以消除未知发布者警告。

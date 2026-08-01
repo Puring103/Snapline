@@ -97,6 +97,7 @@ pub struct SyncResult {
     pub conflicts: usize,
     pub attachments_uploaded: usize,
     pub attachments_downloaded: usize,
+    pub attachments_deleted: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -914,6 +915,35 @@ async fn download_attachments(
     Ok(downloaded)
 }
 
+async fn delete_remote_attachments(
+    state: &DesktopState,
+    repository: &Repository,
+) -> Result<usize, String> {
+    let mut deleted = 0;
+    loop {
+        let pending = repository
+            .pending_attachment_deletions(10)
+            .map_err(|_| "无法读取附件删除队列".to_string())?;
+        if pending.is_empty() {
+            return Ok(deleted);
+        }
+        for id in pending {
+            let path = format!("attachments/{id}");
+            let response = send_authorized(state, |token| {
+                state.client.delete(state.api_url(&path)).bearer_auth(token)
+            })
+            .await?;
+            if !response.status().is_success() && response.status() != StatusCode::NOT_FOUND {
+                return Err(sync_http_error(response.status()));
+            }
+            repository
+                .complete_attachment_deletion(id)
+                .map_err(|_| "无法提交附件删除状态".to_string())?;
+            deleted += 1;
+        }
+    }
+}
+
 struct SyncProcessingGuard<'a>(&'a AtomicBool);
 
 impl Drop for SyncProcessingGuard<'_> {
@@ -931,6 +961,7 @@ async fn sync_now(state: State<'_, DesktopState>) -> Result<SyncResult, String> 
             conflicts: 0,
             attachments_uploaded: 0,
             attachments_downloaded: 0,
+            attachments_deleted: 0,
         });
     }
     let _guard = SyncProcessingGuard(&state.sync_processing);
@@ -954,6 +985,7 @@ async fn sync_now(state: State<'_, DesktopState>) -> Result<SyncResult, String> 
         Err(error) => return Err(error),
     };
     pulled += pull_remote(&state, &repository, &master_key, device_id).await?;
+    let attachments_deleted = delete_remote_attachments(&state, &repository).await?;
     let attachments_downloaded = download_attachments(&state, &repository, &master_key).await?;
     let conflicts = repository
         .list_sync_conflicts(&master_key)
@@ -965,6 +997,7 @@ async fn sync_now(state: State<'_, DesktopState>) -> Result<SyncResult, String> 
         conflicts,
         attachments_uploaded,
         attachments_downloaded,
+        attachments_deleted,
     })
 }
 
@@ -1062,9 +1095,9 @@ fn save_item(state: State<'_, DesktopState>, input: SaveItem) -> Result<Item, St
 
 #[tauri::command]
 fn delete_item(state: State<'_, DesktopState>, id: Uuid) -> Result<(), String> {
-    with_repository(&state, |repository, _| {
+    with_repository(&state, |repository, master_key| {
         repository
-            .delete(id)
+            .delete(master_key, id)
             .map_err(|_| "无法删除本地记录".to_string())
     })
 }
@@ -2476,6 +2509,35 @@ mod tests {
             .read_attachment(&second_key, attachment_id, &mut restored)
             .unwrap();
         assert_eq!(restored, attachment_plaintext);
+
+        second_repository.delete(&second_key, item_id).unwrap();
+        assert_eq!(
+            push_local(
+                &second,
+                &second_repository,
+                &second_key,
+                logged_in.device_id
+            )
+            .await
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            delete_remote_attachments(&second, &second_repository)
+                .await
+                .unwrap(),
+            1
+        );
+        assert!(!second_repository.has_attachment(attachment_id).unwrap());
+        let deleted_attachment = send_authorized(&second, |token| {
+            second
+                .client
+                .get(second.api_url(&format!("attachments/{attachment_id}")))
+                .bearer_auth(token)
+        })
+        .await
+        .unwrap();
+        assert_eq!(deleted_attachment.status(), StatusCode::NOT_FOUND);
 
         let revoke = second
             .client

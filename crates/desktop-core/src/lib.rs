@@ -420,7 +420,24 @@ impl Repository {
         .collect()
     }
 
-    pub fn delete(&self, id: Uuid) -> Result<(), StorageError> {
+    pub fn delete(&self, master_key: &MasterKey, id: Uuid) -> Result<(), StorageError> {
+        let items = self.list(master_key, true)?;
+        let target = items
+            .iter()
+            .find(|item| item.id == id)
+            .ok_or(StorageError::NotFound)?;
+        let referenced_elsewhere = items
+            .iter()
+            .filter(|item| item.id != id)
+            .flat_map(|item| item.content.attachment_ids.iter().copied())
+            .collect::<std::collections::HashSet<_>>();
+        let attachments = target
+            .content
+            .attachment_ids
+            .iter()
+            .filter(|attachment| !referenced_elsewhere.contains(attachment))
+            .copied()
+            .collect::<Vec<_>>();
         let now = Utc::now().to_rfc3339();
         let mut connection = self.connection.lock().expect("repository mutex poisoned");
         let transaction = connection.transaction()?;
@@ -431,9 +448,52 @@ impl Repository {
             "INSERT INTO outbox (object_id,operation,created_at) VALUES (?1,'delete',?2)",
             params![id.to_string(), now],
         )?;
+        for attachment in attachments {
+            transaction.execute(
+                "DELETE FROM outbox WHERE object_id=?1 AND operation IN ('attachment','attachment_delete')",
+                [attachment.to_string()],
+            )?;
+            transaction.execute(
+                "INSERT INTO outbox (object_id,operation,created_at) VALUES (?1,'attachment_delete',?2)",
+                params![attachment.to_string(), now],
+            )?;
+        }
         transaction.commit()?;
         self.remove_from_index(id)?;
         Ok(())
+    }
+
+    pub fn pending_attachment_deletions(&self, limit: usize) -> Result<Vec<Uuid>, StorageError> {
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        let mut statement = connection.prepare(
+            "SELECT object_id FROM outbox WHERE operation='attachment_delete' \
+             AND NOT EXISTS(SELECT 1 FROM outbox WHERE operation IN ('upsert','delete')) \
+             AND NOT EXISTS(SELECT 1 FROM sync_conflicts) ORDER BY sequence LIMIT ?1",
+        )?;
+        statement
+            .query_map([limit as i64], |row| row.get::<_, String>(0))?
+            .map(|row| Uuid::parse_str(&row?).map_err(|_| StorageError::InvalidSyncState))
+            .collect()
+    }
+
+    pub fn complete_attachment_deletion(&self, id: Uuid) -> Result<(), StorageError> {
+        let directory = self
+            .attachment_dir
+            .as_ref()
+            .ok_or(StorageError::AttachmentStorageUnavailable)?;
+        let mut connection = self.connection.lock().expect("repository mutex poisoned");
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM attachments WHERE id=?1", [id.to_string()])?;
+        transaction.execute(
+            "DELETE FROM outbox WHERE object_id=?1 AND operation='attachment_delete'",
+            [id.to_string()],
+        )?;
+        transaction.commit()?;
+        match fs::remove_file(directory.join(format!("{id}.blob"))) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub fn pending_sync_changes(
@@ -1470,7 +1530,7 @@ mod tests {
         assert_eq!(updated.version, 2);
         assert_eq!(repository.get(&key, id).unwrap().content, saved.content);
         assert_eq!(repository.list(&key, false).unwrap().len(), 1);
-        repository.delete(id).unwrap();
+        repository.delete(&key, id).unwrap();
         assert!(matches!(
             repository.get(&key, id),
             Err(StorageError::NotFound)
@@ -1560,6 +1620,78 @@ mod tests {
         let mut restored = Vec::new();
         repository.read_attachment(&key, id, &mut restored).unwrap();
         assert_eq!(restored, plaintext);
+    }
+
+    #[test]
+    fn record_delete_durably_queues_and_completes_attachment_cleanup() {
+        let directory = TempDir::new().unwrap();
+        let repository = Repository::open(directory.path().join("snapline.db")).unwrap();
+        let key = MasterKey::generate();
+        let attachment_id = Uuid::new_v4();
+        repository
+            .save_attachment(&key, attachment_id, b"encrypted cleanup".as_slice())
+            .unwrap();
+        repository
+            .save_attachment_descriptor(&AttachmentDescriptor {
+                id: attachment_id,
+                media_type: "image/png".into(),
+            })
+            .unwrap();
+        let item_id = Uuid::new_v4();
+        repository
+            .save(
+                &key,
+                SaveItem {
+                    id: item_id,
+                    content: ItemContent {
+                        attachment_ids: vec![attachment_id],
+                        ..private_content()
+                    },
+                    archived: false,
+                    pinned: false,
+                },
+            )
+            .unwrap();
+
+        repository.delete(&key, item_id).unwrap();
+        assert!(
+            repository
+                .pending_attachment_deletions(10)
+                .unwrap()
+                .is_empty()
+        );
+        let device_id = Uuid::new_v4();
+        let tombstone = repository
+            .pending_sync_changes(&key, device_id, 10)
+            .unwrap()
+            .into_iter()
+            .find(|change| change.envelope.object_id == item_id)
+            .unwrap();
+        repository
+            .complete_sync_push(&[(item_id, 1, tombstone.sequence)])
+            .unwrap();
+        assert_eq!(
+            repository.pending_attachment_deletions(10).unwrap(),
+            vec![attachment_id]
+        );
+        assert!(repository.has_attachment(attachment_id).unwrap());
+        repository
+            .complete_attachment_deletion(attachment_id)
+            .unwrap();
+        assert!(
+            repository
+                .pending_attachment_deletions(10)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!repository.has_attachment(attachment_id).unwrap());
+        assert!(
+            !directory
+                .path()
+                .join("attachments")
+                .join(format!("{attachment_id}.blob"))
+                .exists()
+        );
     }
 
     #[test]

@@ -18,7 +18,7 @@
 | 无 Embedding Agent 搜索 | 完成 | 内存 FTS5、结构化过滤、七个只读工具、多轮限制和真实引用；无向量数据库 |
 | AI Key 安全 | 完成 | 仅存 Windows Credential Manager，客户端直连 AI 服务，不进入 Snapline 服务端 |
 | Rust 技术栈 | 完成 | Axum、SQLx、Tauri、Rust 加密与本地仓库；React 只负责桌面界面 |
-| 测试与文档 | 完成 | 前端 27 项、Rust 43 项、真实媒体/服务器测试、Release 构建；功能、安全、自部署和测试文档持续维护 |
+| 测试与文档 | 完成 | 前端 27 项、Rust 46 项、真实媒体/服务器测试、NSIS Release 构建；功能、安全、自部署和测试文档持续维护 |
 | Git 模块提交 | 完成 | M0-M11 分模块实现、测试、文档化并独立提交 |
 | Android | 本阶段排除 | 未实现，不计入 Windows/服务端里程碑完成条件 |
 | 正式公网 HTTPS | 待外部条件 | 当前 `http://122.51.119.75/snapline/` 仅供开发验收；需要域名、DNS 与可信证书后才能使用真实长期账号和内容 |
@@ -26,3 +26,7 @@
 ## 发布结论
 
 Windows 桌面端与 `myserver` 服务端在当前范围内功能闭环，Release 可执行文件构建成功。正式生产上线仍以 HTTPS 为硬门槛；端到端内容加密不能保护明文 HTTP 中的密码、Access Token 和 Refresh Token。
+
+服务端最终加固还覆盖默认 10 GiB 用户附件配额、上传超龄清理、附件删除回收和 PostgreSQL 就绪检查。备份、恢复与回滚均使用真实脚本在 `myserver` 隔离 Compose 项目验证。
+
+Windows NSIS x64 安装包已完成安装/卸载冒烟。当前没有 Authenticode 签名证书，安装包会显示未知发布者；代码签名和正式 HTTPS 都是对外生产发布前的外部配置门槛。
