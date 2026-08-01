@@ -3,6 +3,7 @@ pub mod config;
 pub mod error;
 pub mod rate_limit;
 pub mod state;
+pub mod sync;
 
 use axum::{
     Json, Router,
@@ -30,6 +31,9 @@ pub fn app(pool: PgPool, config: &Config) -> Router {
         .route("/api/v1/auth/logout", post(auth::logout))
         .route("/api/v1/devices", get(auth::list_devices))
         .route("/api/v1/devices/{id}", delete(auth::revoke_device))
+        .route("/api/v1/sync/push", post(sync::push))
+        .route("/api/v1/sync/pull", get(sync::pull))
+        .route("/api/v1/sync/ack", post(sync::ack))
         .with_state(state)
 }
 
