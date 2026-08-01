@@ -29,3 +29,16 @@ cargo test --workspace
 ## M3 服务端附件
 
 环境同 M1，附件使用测试临时目录。2026-08-01 已执行完整工作区格式、Clippy 和测试。结果：9 个单元/集成测试通过，0 个失败、0 个忽略。附件测试覆盖密文分片、已上传分片查询、完整哈希验证、流式下载和跨用户不可见。
+
+## M4 myServer 部署
+
+2026-08-01 部署到 SSH Host `myserver`：
+
+- Docker 离线 vendor 构建成功，API 和 PostgreSQL 容器持续运行。
+- Caddy 保留原有根应用及 `/hermes`，新增 `/snapline/`。
+- 公网健康检查、注册、密文 push/pull 冒烟通过，测试用户随后清理。
+- PostgreSQL 和密文对象卷完成备份、SHA-256 校验；转储恢复到临时数据库后验证 10 张 public 表并清理临时库。
+- API 仅绑定 `127.0.0.1:58080`，PostgreSQL 无主机端口。
+- 部署脚本具备 release 指针、Caddy 备份、三次连续健康门槛和失败回滚。
+
+已知部署约束：当前入口是临时 HTTP，正式输入真实账号凭据前仍需域名和 HTTPS。

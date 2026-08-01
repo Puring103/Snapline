@@ -1,0 +1,47 @@
+name: snapline
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: snapline
+      POSTGRES_PASSWORD: ${SNAPLINE_POSTGRES_PASSWORD}
+      POSTGRES_DB: snapline
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U snapline -d snapline"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [backend]
+
+  api:
+    build:
+      context: ..
+      dockerfile: crates/server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SNAPLINE_BIND: 0.0.0.0:8080
+      SNAPLINE_DATABASE_URL: postgres://snapline:${SNAPLINE_POSTGRES_PASSWORD}@postgres:5432/snapline
+      SNAPLINE_JWT_SECRET: ${SNAPLINE_JWT_SECRET}
+      SNAPLINE_ACCESS_TOKEN_TTL_SECONDS: 900
+      SNAPLINE_REFRESH_TOKEN_TTL_SECONDS: 2592000
+      SNAPLINE_OBJECT_DIR: /data/objects
+      RUST_LOG: snapline_server=info,tower_http=info
+    ports:
+      - "127.0.0.1:58080:8080"
+    volumes:
+      - object-data:/data/objects
+    networks: [backend]
+
+networks:
+  backend:
+
+volumes:
+  postgres-data:
+  object-data:

@@ -5,6 +5,6 @@
 *.log
 /data/
 /backups/
+/vendor/
 /apps/desktop/node_modules/
 /apps/desktop/dist/
-

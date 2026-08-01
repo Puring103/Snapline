@@ -8,5 +8,5 @@
 | M1 服务端认证与设备 | 完成 | 真实 PostgreSQL HTTP 生命周期测试通过 |
 | M2 服务端加密同步 | 完成 | 幂等、隔离、冲突、pull/ack 真实 PostgreSQL 测试通过 |
 | M3 服务端附件 | 完成 | 真实 PostgreSQL 分片、状态、哈希、下载和隔离测试通过 |
-| M4 myServer 部署 | 进行中 | 健康、登录、同步、备份恢复冒烟 |
-| M5-M11 桌面端 | 计划 | 见 `IMPLEMENTATION_PLAN.md` |
+| M4 myServer 部署 | 完成 | 公网健康、注册、密文同步、备份恢复通过 |
+| M5-M11 桌面端 | 进行中 | 见 `IMPLEMENTATION_PLAN.md` |

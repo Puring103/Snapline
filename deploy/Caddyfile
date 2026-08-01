@@ -1,0 +1,20 @@
+http://122.51.119.75 {
+	redir /hermes /hermes/ 308
+	@hermes path /hermes/*
+	handle @hermes {
+		uri strip_prefix /hermes
+		reverse_proxy 127.0.0.1:9119 {
+			header_down Location ^/(.*)$ /hermes/$1
+		}
+	}
+
+	redir /snapline /snapline/ 308
+	handle_path /snapline/* {
+		reverse_proxy 127.0.0.1:58080
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:5230
+	}
+}
+
