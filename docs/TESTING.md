@@ -170,3 +170,7 @@ cargo test -p snapline-desktop --offline
 - 更新后的服务端已部署到 `myserver`，API 仍仅绑定 `127.0.0.1:58080`，PostgreSQL 无主机端口。对象卷由一次性 root 初始化容器设置给非 root API UID `10001`，API 继续以非 root 运行。
 - 真实 `myserver` 双设备测试通过：设备 A 上传一条记录和约 9 MiB 加密视频，设备 B 增量拉取、校验并完整解密；撤销设备 A 后刷新被拒绝且本地会话清空。两个测试账号和对应密文对象目录均已精确删除。
 - 当前公网入口仍为开发用 HTTP。测试仅使用随机临时凭据与内容；正式账号、真实记录和长期同步必须先配置 HTTPS。
+
+## Windows Release
+
+2026-08-01 执行 `npm run tauri -- build --no-bundle` 成功，优化后的原生可执行文件位于 `target/release/snapline-desktop.exe`。前端主包约 247 kB，完整 CodeMirror 保持为独立懒加载 chunk；其体积提示不影响快速入口首屏。
