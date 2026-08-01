@@ -51,3 +51,29 @@ it('applies Markdown formatting at the cursor and uses the editor history', asyn
   fireEvent.click(screen.getByRole('button', { name: '二级标题' }));
   await waitFor(() => expect(screen.getByTestId('markdown')).toHaveTextContent('##'));
 });
+
+it('requires explicit confirmation before permanently deleting a record', () => {
+  const remove = vi.fn();
+  render(<EditorPane item={initialItem} onChange={() => undefined} onDelete={remove} onRecord={() => undefined} onSave={async () => undefined} />);
+  fireEvent.click(screen.getByRole('button', { name: '删除记录' }));
+  expect(remove).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+  expect(remove).toHaveBeenCalledWith(initialItem.id);
+});
+
+it('creates a normalized custom marker in the full editor and automatically saves it', async () => {
+  const saves = vi.fn();
+  function Harness() {
+    const [item, setItem] = useState(initialItem);
+    return <EditorPane item={item} onChange={setItem} onDelete={() => undefined} onRecord={() => undefined} onSave={async (changed) => { saves(changed); }} />;
+  }
+
+  render(<Harness />);
+  fireEvent.click(screen.getByRole('button', { name: '特殊标记' }));
+  const input = screen.getByPlaceholderText('新建特殊标记');
+  fireEvent.change(input, { target: { value: '  客户   反馈  ' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  expect(screen.getByText('客户 反馈')).toBeInTheDocument();
+  await waitFor(() => expect(saves).toHaveBeenCalledTimes(1));
+  expect(saves.mock.calls[0][0].content.markers).toEqual(['客户 反馈']);
+});

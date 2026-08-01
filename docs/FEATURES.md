@@ -12,4 +12,7 @@
 | M5 桌面本地存储与加密 | 完成 | 原生注册/登录、Windows 凭据、UMK/DEK、记录与分块附件加密测试及真实 myServer 登录通过 |
 | M6 Markdown 与快速记录 | 完成 | 完整 Markdown、选区格式化、撤销/重做、粘贴图片、自动保存、全局快捷键、托盘、独立记录窗口及单窗口复用通过测试 |
 | M7 桌面媒体 | 完成 | 原生主屏截图、麦克风 WAV 录音、图片/视频流式加密导入、自定义协议 Range 预览与严格 ACL/CSP 通过自动化验收 |
-| M8-M11 历史、AI、Agent 与同步 | 计划 | 见 `IMPLEMENTATION_PLAN.md` |
+| M8 历史、标签和特殊标记 | 完成 | 历史抽屉、50 条分页、收藏/归档/删除、普通标签、自定义特殊标记及来源/标签/标记组合筛选通过测试 |
+| M9 单模型多模态处理 | 计划 | 见 `IMPLEMENTATION_PLAN.md` |
+| M10 Agent 搜索与对话 | 计划 | 见 `IMPLEMENTATION_PLAN.md` |
+| M11 桌面同步闭环 | 计划 | 见 `IMPLEMENTATION_PLAN.md` |

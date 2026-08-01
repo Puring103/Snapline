@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { App } from './App';
 
@@ -60,5 +60,78 @@ describe('desktop workspace', () => {
     });
     expect(screen.queryByText('收入')).not.toBeInTheDocument();
     expect(screen.queryByText('支出')).not.toBeInTheDocument();
+  });
+
+  it('creates a custom special marker in quick capture and automatically saves it', async () => {
+    history.replaceState(null, '', '/?capture=text');
+    render(<App />);
+    await screen.findByPlaceholderText('记录标题');
+    fireEvent.click(screen.getByRole('button', { name: '特殊标记' }));
+    const input = screen.getByPlaceholderText('新建特殊标记');
+    fireEvent.change(input, { target: { value: '  等待   回复  ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => {
+      const items = JSON.parse(localStorage.getItem('snapline-dev-items-v1') || '[]') as Array<{ content: { markers: string[] } }>;
+      expect(items.some((item) => item.content.markers.includes('等待 回复'))).toBe(true);
+    });
+  });
+
+  it('opens searchable history and jumps to the selected record', async () => {
+    render(<App />);
+    await screen.findByText('关于新产品首页的想法');
+    fireEvent.click(screen.getByRole('button', { name: '历史记录' }));
+    expect(screen.getByRole('dialog', { name: '历史记录' })).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('搜索历史记录'), { target: { value: '语音' } });
+    fireEvent.click(within(screen.getByRole('dialog', { name: '历史记录' })).getByRole('button', { name: /散步时的语音想法/ }));
+    expect(screen.queryByRole('dialog', { name: '历史记录' })).not.toBeInTheDocument();
+    expect(await screen.findByDisplayValue('散步时的语音想法')).toBeInTheDocument();
+  });
+
+  it('archives and restores a record from the timeline action menu', async () => {
+    render(<App />);
+    await screen.findByText('团队午餐票据');
+    fireEvent.click(screen.getByRole('button', { name: '更多操作：团队午餐票据' }));
+    fireEvent.click(screen.getByRole('button', { name: '归档：团队午餐票据' }));
+    await waitFor(() => {
+      const items = JSON.parse(localStorage.getItem('snapline-dev-items-v1') || '[]') as Array<{ content: { title: string }; archived: boolean }>;
+      expect(items.find((item) => item.content.title === '团队午餐票据')?.archived).toBe(true);
+    });
+    fireEvent.click(within(screen.getByRole('navigation')).getByRole('button', { name: '归档' }));
+    expect(await screen.findByText('团队午餐票据')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '更多操作：团队午餐票据' }));
+    fireEvent.click(screen.getByRole('button', { name: '恢复：团队午餐票据' }));
+    await waitFor(() => {
+      const items = JSON.parse(localStorage.getItem('snapline-dev-items-v1') || '[]') as Array<{ content: { title: string }; archived: boolean }>;
+      expect(items.find((item) => item.content.title === '团队午餐票据')?.archived).toBe(false);
+    });
+  });
+
+  it('adds and removes a record from favorites', async () => {
+    render(<App />);
+    await screen.findByText('团队午餐票据');
+    fireEvent.click(screen.getByRole('button', { name: '更多操作：团队午餐票据' }));
+    fireEvent.click(screen.getByRole('button', { name: '收藏：团队午餐票据' }));
+    fireEvent.click(within(screen.getByRole('navigation')).getByRole('button', { name: '收藏' }));
+    expect(screen.getByText('团队午餐票据')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '更多操作：团队午餐票据' }));
+    fireEvent.click(screen.getByRole('button', { name: '取消收藏：团队午餐票据' }));
+    await waitFor(() => expect(screen.queryByText('团队午餐票据')).not.toBeInTheDocument());
+  });
+
+  it('combines source, marker, and tag filters and can clear them', async () => {
+    render(<App />);
+    await screen.findByText('团队午餐票据');
+    fireEvent.click(screen.getByRole('button', { name: '筛选' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '图片' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '账目' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '#项目' }));
+    expect(screen.getByText('团队午餐票据')).toBeInTheDocument();
+    expect(screen.queryByText('关于新产品首页的想法')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '重要' }));
+    expect(screen.getByText('没有找到记录')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '清除' }));
+    expect(screen.getByText('团队午餐票据')).toBeInTheDocument();
+    expect(screen.getByText('关于新产品首页的想法')).toBeInTheDocument();
   });
 });

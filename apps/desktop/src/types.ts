@@ -33,3 +33,9 @@ export interface Item {
 }
 
 export type View = 'all' | 'pinned' | 'archive' | `marker:${string}` | `tag:${string}`;
+
+export interface RecordFilters {
+  sourceTypes: SourceType[];
+  tags: string[];
+  markers: string[];
+}

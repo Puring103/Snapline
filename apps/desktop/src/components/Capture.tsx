@@ -12,6 +12,7 @@ import {
 import type { Item, SourceType } from '../types';
 import { emptyContent, saveItem } from '../lib/repository';
 import { attachmentMarkdown } from '../lib/attachments';
+import { addMarker, BUILT_IN_MARKERS } from '../lib/markers';
 import { Logo } from './Logo';
 
 function hasContent(item: Item) {
@@ -48,6 +49,7 @@ export function Capture({ initialType = 'text', onClose, onCreated }: { initialT
   const [saveState, setSaveState] = useState('等待输入');
   const [recording, setRecording] = useState(false);
   const [markerOpen, setMarkerOpen] = useState(false);
+  const [markerInput, setMarkerInput] = useState('');
   const [seconds, setSeconds] = useState(0);
   const [error, setError] = useState('');
   const itemRef = useRef(item);
@@ -55,7 +57,7 @@ export function Capture({ initialType = 'text', onClose, onCreated }: { initialT
   const fileInput = useRef<HTMLInputElement>(null);
   const initialized = useRef(false);
   const lastSavedSignature = useRef('');
-  const markerOptions = ['账目', '重要', '待办', '稍后处理', '需跟进'];
+  const markerOptions = [...new Set([...BUILT_IN_MARKERS, ...item.content.markers])];
   itemRef.current = item;
   recordingRef.current = recording;
 
@@ -216,6 +218,6 @@ export function Capture({ initialType = 'text', onClose, onCreated }: { initialT
       {error && <div className="capture-error" role="alert">{error}</div>}
       {recording && <div className="recording-strip"><span className="record-dot" /><div className="live-wave">{Array.from({ length: 42 }, (_, i) => <i key={i} style={{ height: `${5 + ((i * 11) % 20)}px` }} />)}</div><time>{String(Math.floor(seconds / 60)).padStart(2, '0')}:{String(seconds % 60).padStart(2, '0')}</time><button className="stop-button" title="停止录音" aria-label="停止录音" onClick={() => void finishRecording()}><Square size={12} fill="currentColor" /></button></div>}
     </section>
-    <footer className="capture-footer"><div className="capture-tools"><button className={recording ? 'active' : ''} onClick={() => void (recording ? finishRecording() : beginRecording())} title="录音"><Mic size={17} /></button><button onClick={() => void screenshot()} title="截图"><Camera size={17} /></button><button onClick={() => fileInput.current?.click()} title="添加图片"><ImagePlus size={17} /></button><button onClick={() => void importFile()} title="导入图片或视频"><Film size={17} /></button><input ref={fileInput} className="visually-hidden" type="file" accept="image/*" onChange={(event) => { void addImage(event.target.files?.[0]); event.currentTarget.value = ''; }} /><span /><div className="capture-marker-wrap"><button className="marker-quick" aria-expanded={markerOpen} onClick={() => setMarkerOpen(!markerOpen)}><Sparkles size={15} />特殊标记</button>{markerOpen && <div className="marker-menu capture-marker-menu">{markerOptions.map((marker) => <button key={marker} onClick={() => { if (!item.content.markers.includes(marker)) setItem({ ...item, content: { ...item.content, markers: [...item.content.markers, marker] } }); setMarkerOpen(false); }}><span className="marker-dot" />{marker}{item.content.markers.includes(marker) && <Check size={14} />}</button>)}</div>}</div></div><div className="capture-hint"><Check size={14} />内容会自动保存</div><button className="icon-button" title="更多" aria-label="更多"><MoreHorizontal size={17} /></button></footer>
+    <footer className="capture-footer"><div className="capture-tools"><button className={recording ? 'active' : ''} onClick={() => void (recording ? finishRecording() : beginRecording())} title="录音"><Mic size={17} /></button><button onClick={() => void screenshot()} title="截图"><Camera size={17} /></button><button onClick={() => fileInput.current?.click()} title="添加图片"><ImagePlus size={17} /></button><button onClick={() => void importFile()} title="导入图片或视频"><Film size={17} /></button><input ref={fileInput} className="visually-hidden" type="file" accept="image/*" onChange={(event) => { void addImage(event.target.files?.[0]); event.currentTarget.value = ''; }} /><span /><div className="capture-marker-wrap"><button className="marker-quick" aria-expanded={markerOpen} onClick={() => setMarkerOpen(!markerOpen)}><Sparkles size={15} />特殊标记</button>{markerOpen && <div className="marker-menu capture-marker-menu"><div className="marker-create"><input value={markerInput} onChange={(event) => setMarkerInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { const markers = addMarker(item.content.markers, markerInput); if (markers !== item.content.markers) setItem({ ...item, content: { ...item.content, markers } }); setMarkerInput(''); setMarkerOpen(false); } }} placeholder="新建特殊标记" /></div>{markerOptions.map((marker) => <button key={marker} onClick={() => { const markers = addMarker(item.content.markers, marker); if (markers !== item.content.markers) setItem({ ...item, content: { ...item.content, markers } }); setMarkerOpen(false); }}><span className="marker-dot" />{marker}{item.content.markers.includes(marker) && <Check size={14} />}</button>)}</div>}</div></div><div className="capture-hint"><Check size={14} />内容会自动保存</div><button className="icon-button" title="更多" aria-label="更多"><MoreHorizontal size={17} /></button></footer>
   </main>;
 }

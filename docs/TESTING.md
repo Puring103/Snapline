@@ -96,3 +96,22 @@ cargo clippy -p snapline-desktop-core -p snapline-desktop --all-targets --offlin
 - 跨多个 1 MiB 加密分块的视频导入、解密及字节一致性测试通过；粘贴图片限制 32 MiB，文件导入限制 2 GiB。
 - `snapline-attachment` 协议要求已解锁会话，支持最大 64 MiB 的 Range 分段响应；跨密文分块范围读取、长度推导、后缀范围、越界和篡改拒绝通过测试。图片/音频/视频在记录中直接预览，不创建明文临时文件。
 - Tauri capability 仅授权 `main` 和 `capture` 窗口，CSP 仅额外放行本应用附件协议。
+
+## M8 历史、标签和特殊标记
+
+2026-08-01 已验收：
+
+```powershell
+cd apps/desktop
+npm test -- --run
+npm run build
+cd ../..
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --offline -- -D warnings
+cargo test --workspace --offline
+```
+
+- Vitest 5 个测试文件、19 个交互/工具测试通过。M8 覆盖可搜索历史抽屉、120 条记录的 50 条稳定分页、历史跳转、收藏与取消收藏、归档与恢复、删除二次确认、自定义特殊标记的规范化和自动保存。
+- 来源类型采用包含匹配；多个普通标签和特殊标记分别采用 AND 匹配。测试覆盖 `图片 + 账目 + #项目` 的组合命中、加入不相容标记后的空结果以及一键清除恢复。
+- `账目` 始终作为系统预置特殊标记提供，但其记录行为与用户自定义标记完全一致，不存在金额、收支、统计或报表逻辑。
+- 前端生产构建通过，完整 CodeMirror 仍保持独立懒加载 chunk；其体积警告不影响快速记录首屏。
