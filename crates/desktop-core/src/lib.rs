@@ -384,6 +384,18 @@ impl Repository {
             .map_err(StorageError::Crypto)
     }
 
+    pub fn attachment_ciphertext_bytes(&self, id: Uuid) -> Result<u64, StorageError> {
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        connection
+            .query_row(
+                "SELECT ciphertext_bytes FROM attachments WHERE id=?1",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(StorageError::NotFound)
+    }
+
     pub fn delete_attachment(&self, id: Uuid) -> Result<(), StorageError> {
         let directory = self
             .attachment_dir
@@ -570,6 +582,10 @@ mod tests {
         let stored = repository
             .save_attachment(&key, id, plaintext.as_slice())
             .unwrap();
+        assert_eq!(
+            repository.attachment_ciphertext_bytes(id).unwrap(),
+            stored.ciphertext_bytes
+        );
         assert!(stored.ciphertext_bytes > plaintext.len() as u64);
         assert_eq!(stored.ciphertext_sha256.len(), 64);
         let encrypted = fs::read(

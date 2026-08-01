@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { Bot, Camera, History, Mic, Plus, RotateCw, Search, Sparkles } from 'lucide-react';
 import { AiPanel } from './components/AiPanel';
 import { Capture } from './components/Capture';
-import { EditorPane } from './components/EditorPane';
 import { Login } from './components/Login';
 import { Sidebar } from './components/Sidebar';
 import { Timeline } from './components/Timeline';
 import { deleteItem, emptyContent, listItems, saveItem } from './lib/repository';
 import { logout, sessionStatus } from './lib/native';
 import type { Item, SourceType, View } from './types';
+
+const EditorPane = lazy(() => import('./components/EditorPane'));
 
 function captureTypeFromUrl(): SourceType | null {
   const type = new URLSearchParams(location.search).get('capture');
@@ -64,7 +65,7 @@ export function App() {
     <Sidebar items={items} view={view} onView={setView} onNew={() => create()} onAi={() => setAiOpen(true)} onLogout={() => { void logout().finally(() => { setItems([]); setAuthenticated(false); }); }} />
     <section className="workspace">
       <header className="workspace-toolbar"><div className="quick-actions"><button className="primary-button" onClick={() => create()}><Plus size={16} />文本</button><button className="tool-button" onClick={() => setCaptureType('screenshot')}><Camera size={16} />截图</button><button className="tool-button" onClick={() => setCaptureType('audio')}><Mic size={16} />录音</button></div><div className="workspace-actions"><span className="sync-indicator"><RotateCw size={13} />已加密同步</span><button className="tool-button"><History size={16} />历史记录</button><button className="icon-button" title="全局搜索" aria-label="全局搜索"><Search size={17} /></button><button className="icon-button ai-toggle" title="AI 对话" aria-label="AI 对话" onClick={() => setAiOpen(!aiOpen)}><Bot size={17} /></button></div></header>
-      <div className="workspace-grid"><Timeline items={filteredItems} selectedId={selectedId} query={query} onQuery={setQuery} onSelect={setSelectedId} /><EditorPane item={selected} onChange={changeItem} onSave={persistItem} onDelete={(id) => void remove(id)} /></div>
+      <div className="workspace-grid"><Timeline items={filteredItems} selectedId={selectedId} query={query} onQuery={setQuery} onSelect={setSelectedId} /><Suspense fallback={<section className="editor-pane empty-editor"><Sparkles size={24} /><span>正在打开 Markdown 编辑器…</span></section>}><EditorPane item={selected} onChange={changeItem} onSave={persistItem} onDelete={(id) => void remove(id)} onRecord={() => setCaptureType('audio')} /></Suspense></div>
     </section>
     {aiOpen && <AiPanel configured={false} onClose={() => setAiOpen(false)} />}
   </main>;

@@ -1,3 +1,3 @@
 fn main() {
-    snapline_desktop::run();
+    snapline_desktop_lib::run();
 }

@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: data: blob: https:; media-src 'self' asset: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ipc: http://ipc.localhost http://122.51.119.75 https:"
+      "csp": "default-src 'self'; img-src 'self' asset: snapline-attachment: http://snapline-attachment.localhost data: blob: https:; media-src 'self' asset: snapline-attachment: http://snapline-attachment.localhost blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ipc: http://ipc.localhost http://122.51.119.75 https:"
     }
   },
   "bundle": {

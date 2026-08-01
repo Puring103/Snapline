@@ -68,3 +68,31 @@ npm run tauri -- build --no-bundle
 - React 2 个交互测试和生产构建通过；CodeMirror 主包仍有非阻塞体积警告，后续在 M6 做按需拆包。
 
 安全边界：UMK 只存在于原生进程内存，退出时随状态释放并零化；Refresh Token 只写入 Windows Credential Manager；记录敏感字段和附件内容均以 XChaCha20-Poly1305 加密后落盘。当前公网 API 仍为临时 HTTP，只使用专用随机测试凭据完成验证，正式使用真实账号前必须切换 HTTPS。
+
+## M6 Markdown 与快速记录
+
+环境：Windows 11、Tauri 2.11、WebView2、CodeMirror 6。
+
+2026-08-01 已验收：
+
+- Vitest 3 个测试文件、9 个交互/工具测试通过，覆盖自动保存、空快捷草稿不落盘、特殊标记、`账目` 仅作为普通标记、Markdown 格式化、撤销和克隆返回对象不导致保存循环。
+- 快捷记录使用轻量 `textarea`，完整 CodeMirror 按需加载；首屏 JS 由约 850 kB 降至 229 kB，生产构建通过。
+- 真实 Release 中 `Ctrl+Shift+1` 从其他应用打开唯一的 `Snapline 快速记录` 窗口，重复触发保持同一窗口 ID。未登录时正确显示登录页，不允许绕过认证。
+- 本机 `Ctrl+Shift+Space` 已被现有 `snapline-client` 进程占用；已验证 Snapline 会报告该组合不可用但不崩溃，其他快捷键仍正常注册。
+
+## M7 桌面媒体
+
+2026-08-01 已验收：
+
+```powershell
+$env:SNAPLINE_MEDIA_TEST='1'
+cargo test -p snapline-desktop --offline live_windows_screen_is_encrypted_and_decodable -- --ignored --nocapture
+cargo test -p snapline-desktop-core -p snapline-desktop --offline
+cargo clippy -p snapline-desktop-core -p snapline-desktop --all-targets --offline -- -D warnings
+```
+
+- 真实主屏截图成功，加密落盘后解密校验 PNG 文件头并完整解码。
+- 麦克风 PCM 样本仅在内存缓冲，WAV 仅在内存编码后直接加密；样本转换、WAV 往返和 30 分钟上限逻辑通过测试。当前自动化环境无输入设备，真实录音返回可操作的 `未找到可用麦克风` 错误，硬件实录需在有麦克风的 Windows 机器复验。
+- 跨多个 1 MiB 加密分块的视频导入、解密及字节一致性测试通过；粘贴图片限制 32 MiB，文件导入限制 2 GiB。
+- `snapline-attachment` 协议要求已解锁会话，支持最大 64 MiB 的 Range 分段响应；跨密文分块范围读取、长度推导、后缀范围、越界和篡改拒绝通过测试。图片/音频/视频在记录中直接预览，不创建明文临时文件。
+- Tauri capability 仅授权 `main` 和 `capture` 窗口，CSP 仅额外放行本应用附件协议。

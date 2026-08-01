@@ -1,16 +1,43 @@
-use std::{fs, path::PathBuf, sync::Mutex};
+use std::{
+    fs::{self, File},
+    io::Cursor,
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
 
 use chrono::{DateTime, Utc};
+use cpal::{
+    SampleFormat, Stream, StreamConfig,
+    traits::{DeviceTrait, HostTrait, StreamTrait},
+};
+use image::{DynamicImage, ImageFormat};
 use keyring::Entry;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use snapline_crypto::{KeyEnvelope, MasterKey, RecoveryKey};
-use snapline_desktop_core::{Item, Repository, SaveItem};
-use tauri::{AppHandle, Manager, State};
+use snapline_desktop_core::{Attachment, Item, Repository, SaveItem};
+use tauri::{
+    AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+};
+use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutState};
 use uuid::Uuid;
+use xcap::Monitor;
 
 const DEFAULT_SERVER_URL: &str = "http://122.51.119.75/snapline";
 const CREDENTIAL_SERVICE: &str = "app.snapline.desktop.refresh-token";
+const MAX_PASTED_ATTACHMENT_BYTES: usize = 32 * 1024 * 1024;
+const MAX_IMPORTED_ATTACHMENT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_RECORDING_SECONDS: usize = 30 * 60;
+const ATTACHMENT_CHUNK_BYTES: u64 = 1024 * 1024;
+const ATTACHMENT_FRAME_OVERHEAD: u64 = 20;
+const MAX_PROTOCOL_RANGE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AuthResult {
@@ -25,6 +52,16 @@ pub struct SessionStatus {
     pub user_id: Option<Uuid>,
     pub device_id: Option<Uuid>,
     pub access_expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MediaAttachment {
+    pub id: Uuid,
+    pub media_type: String,
+    pub display_name: String,
+    pub ciphertext_bytes: u64,
+    pub ciphertext_sha256: String,
+    pub duration_seconds: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -71,9 +108,17 @@ struct Session {
 
 #[derive(Default)]
 struct UnlockedState {
-    master_key: Option<MasterKey>,
-    repository: Option<Repository>,
+    master_key: Option<Arc<MasterKey>>,
+    repository: Option<Arc<Repository>>,
     session: Option<Session>,
+}
+
+struct RecordingSession {
+    stream: Stream,
+    samples: Arc<Mutex<Vec<i16>>>,
+    overflowed: Arc<AtomicBool>,
+    config: StreamConfig,
+    started_at: Instant,
 }
 
 pub struct DesktopState {
@@ -81,6 +126,7 @@ pub struct DesktopState {
     server_url: String,
     data_dir: PathBuf,
     unlocked: Mutex<UnlockedState>,
+    recording: Mutex<Option<RecordingSession>>,
 }
 
 impl DesktopState {
@@ -94,6 +140,7 @@ impl DesktopState {
             server_url: server_url.trim_end_matches('/').to_string(),
             data_dir,
             unlocked: Mutex::new(UnlockedState::default()),
+            recording: Mutex::new(None),
         })
     }
 
@@ -118,8 +165,8 @@ impl DesktopState {
             .lock()
             .map_err(|_| "本地会话状态不可用".to_string())?;
         *unlocked = UnlockedState {
-            master_key: Some(master_key),
-            repository: Some(repository),
+            master_key: Some(Arc::new(master_key)),
+            repository: Some(Arc::new(repository)),
             session: Some(Session {
                 user_id: response.user_id,
                 device_id: response.device_id,
@@ -313,6 +360,25 @@ fn with_repository<T>(
     operation(repository, master_key)
 }
 
+fn crypto_context(state: &DesktopState) -> Result<(Arc<Repository>, Arc<MasterKey>), String> {
+    let unlocked = state
+        .unlocked
+        .lock()
+        .map_err(|_| "本地会话状态不可用".to_string())?;
+    Ok((
+        unlocked
+            .repository
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "请先登录并解锁".to_string())?,
+        unlocked
+            .master_key
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "请先登录并解锁".to_string())?,
+    ))
+}
+
 #[tauri::command]
 fn list_items(state: State<'_, DesktopState>) -> Result<Vec<Item>, String> {
     with_repository(&state, |repository, master_key| {
@@ -340,6 +406,586 @@ fn delete_item(state: State<'_, DesktopState>, id: Uuid) -> Result<(), String> {
     })
 }
 
+fn media_attachment(
+    attachment: Attachment,
+    media_type: impl Into<String>,
+    display_name: impl Into<String>,
+    duration_seconds: Option<u64>,
+) -> MediaAttachment {
+    MediaAttachment {
+        id: attachment.id,
+        media_type: media_type.into(),
+        display_name: display_name.into(),
+        ciphertext_bytes: attachment.ciphertext_bytes,
+        ciphertext_sha256: attachment.ciphertext_sha256,
+        duration_seconds,
+    }
+}
+
+#[tauri::command]
+fn store_attachment_bytes(
+    state: State<'_, DesktopState>,
+    bytes: Vec<u8>,
+    media_type: String,
+    display_name: String,
+) -> Result<MediaAttachment, String> {
+    if bytes.is_empty() || bytes.len() > MAX_PASTED_ATTACHMENT_BYTES {
+        return Err("粘贴附件为空或超过 32 MiB".to_string());
+    }
+    if !matches!(
+        media_type.as_str(),
+        "image/png" | "image/jpeg" | "image/webp" | "image/gif"
+    ) {
+        return Err("不支持该粘贴图片格式".to_string());
+    }
+    let (repository, master_key) = crypto_context(&state)?;
+    let id = Uuid::new_v4();
+    let attachment = repository
+        .save_attachment(&master_key, id, bytes.as_slice())
+        .map_err(|_| "无法加密保存粘贴图片".to_string())?;
+    Ok(media_attachment(
+        attachment,
+        media_type,
+        sanitize_display_name(&display_name),
+        None,
+    ))
+}
+
+#[tauri::command]
+fn capture_screenshot(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<MediaAttachment, String> {
+    let (repository, master_key) = crypto_context(&state)?;
+    let hidden = window.is_visible().unwrap_or(false);
+    if hidden {
+        let _ = window.hide();
+        std::thread::sleep(std::time::Duration::from_millis(140));
+    }
+    let result = capture_screenshot_to(&repository, &master_key);
+    if hidden {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    result
+}
+
+fn capture_screenshot_to(
+    repository: &Repository,
+    master_key: &MasterKey,
+) -> Result<MediaAttachment, String> {
+    let monitors = Monitor::all().map_err(|_| "无法读取屏幕列表".to_string())?;
+    let monitor = monitors
+        .iter()
+        .find(|monitor| monitor.is_primary().unwrap_or(false))
+        .or_else(|| monitors.first())
+        .ok_or_else(|| "未找到可截图的显示器".to_string())?;
+    let image = monitor
+        .capture_image()
+        .map_err(|_| "屏幕截图失败".to_string())?;
+    let mut png = Vec::new();
+    DynamicImage::ImageRgba8(image)
+        .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
+        .map_err(|_| "无法编码截图".to_string())?;
+    let id = Uuid::new_v4();
+    let attachment = repository
+        .save_attachment(master_key, id, png.as_slice())
+        .map_err(|_| "无法加密保存截图".to_string())?;
+    Ok(media_attachment(
+        attachment,
+        "image/png",
+        format!("截图-{}.png", Utc::now().format("%Y%m%d-%H%M%S")),
+        None,
+    ))
+}
+
+#[tauri::command]
+fn pick_and_import_attachment(
+    app: AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<Option<MediaAttachment>, String> {
+    let selected = app
+        .dialog()
+        .file()
+        .add_filter(
+            "图片和视频",
+            &[
+                "png", "jpg", "jpeg", "webp", "gif", "mp4", "mov", "webm", "mkv",
+            ],
+        )
+        .blocking_pick_file();
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let path = selected
+        .into_path()
+        .map_err(|_| "无法读取所选文件路径".to_string())?;
+    let (repository, master_key) = crypto_context(&state)?;
+    import_attachment_from_path(&repository, &master_key, &path).map(Some)
+}
+
+fn import_attachment_from_path(
+    repository: &Repository,
+    master_key: &MasterKey,
+    path: &Path,
+) -> Result<MediaAttachment, String> {
+    let metadata = fs::metadata(path).map_err(|_| "无法读取所选文件".to_string())?;
+    if metadata.len() == 0 || metadata.len() > MAX_IMPORTED_ATTACHMENT_BYTES {
+        return Err("附件为空或超过 2 GiB".to_string());
+    }
+    let media_type = media_type_from_path(path)?;
+    let display_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(sanitize_display_name)
+        .ok_or_else(|| "附件文件名无效".to_string())?;
+    let id = Uuid::new_v4();
+    let input = File::open(path).map_err(|_| "无法打开所选文件".to_string())?;
+    let attachment = repository
+        .save_attachment(master_key, id, input)
+        .map_err(|_| "无法加密导入附件".to_string())?;
+    Ok(media_attachment(attachment, media_type, display_name, None))
+}
+
+fn media_type_from_path(path: &Path) -> Result<&'static str, String> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Ok("image/png"),
+        "jpg" | "jpeg" => Ok("image/jpeg"),
+        "webp" => Ok("image/webp"),
+        "gif" => Ok("image/gif"),
+        "mp4" => Ok("video/mp4"),
+        "mov" => Ok("video/quicktime"),
+        "webm" => Ok("video/webm"),
+        "mkv" => Ok("video/x-matroska"),
+        _ => Err("不支持该图片或视频格式".to_string()),
+    }
+}
+
+fn sanitize_display_name(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(180)
+        .collect::<String>();
+    if sanitized.trim().is_empty() {
+        "附件".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn build_input_stream<T>(
+    device: &cpal::Device,
+    config: &StreamConfig,
+    samples: Arc<Mutex<Vec<i16>>>,
+    overflowed: Arc<AtomicBool>,
+    max_samples: usize,
+    convert: fn(T) -> i16,
+) -> Result<Stream, String>
+where
+    T: cpal::SizedSample + Copy + Send + 'static,
+{
+    let stream_overflow = overflowed.clone();
+    device
+        .build_input_stream(
+            config,
+            move |input: &[T], _| {
+                if let Ok(mut output) = samples.try_lock() {
+                    let available = max_samples.saturating_sub(output.len());
+                    if input.len() > available {
+                        stream_overflow.store(true, Ordering::Relaxed);
+                    }
+                    output.extend(input.iter().take(available).copied().map(convert));
+                }
+            },
+            move |_| overflowed.store(true, Ordering::Relaxed),
+            None,
+        )
+        .map_err(|_| "无法打开麦克风输入流".to_string())
+}
+
+fn sample_f32_to_i16(sample: f32) -> i16 {
+    (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
+}
+
+fn sample_u16_to_i16(sample: u16) -> i16 {
+    (sample as i32 - 32_768) as i16
+}
+
+#[tauri::command]
+fn start_recording(state: State<'_, DesktopState>) -> Result<(), String> {
+    let _ = crypto_context(&state)?;
+    let mut active = state
+        .recording
+        .lock()
+        .map_err(|_| "录音状态不可用".to_string())?;
+    if active.is_some() {
+        return Ok(());
+    }
+    *active = Some(new_recording_session()?);
+    Ok(())
+}
+
+fn new_recording_session() -> Result<RecordingSession, String> {
+    let device = cpal::default_host()
+        .default_input_device()
+        .ok_or_else(|| "未找到可用麦克风".to_string())?;
+    let supported = device
+        .default_input_config()
+        .map_err(|_| "无法读取麦克风配置".to_string())?;
+    let config: StreamConfig = supported.clone().into();
+    let samples = Arc::new(Mutex::new(Vec::new()));
+    let overflowed = Arc::new(AtomicBool::new(false));
+    let max_samples =
+        config.sample_rate.0 as usize * config.channels as usize * MAX_RECORDING_SECONDS;
+    let stream = match supported.sample_format() {
+        SampleFormat::F32 => build_input_stream(
+            &device,
+            &config,
+            samples.clone(),
+            overflowed.clone(),
+            max_samples,
+            sample_f32_to_i16,
+        )?,
+        SampleFormat::I16 => build_input_stream(
+            &device,
+            &config,
+            samples.clone(),
+            overflowed.clone(),
+            max_samples,
+            |sample: i16| sample,
+        )?,
+        SampleFormat::U16 => build_input_stream(
+            &device,
+            &config,
+            samples.clone(),
+            overflowed.clone(),
+            max_samples,
+            sample_u16_to_i16,
+        )?,
+        _ => return Err("麦克风采样格式暂不受支持".to_string()),
+    };
+    stream.play().map_err(|_| "无法开始录音".to_string())?;
+    Ok(RecordingSession {
+        stream,
+        samples,
+        overflowed,
+        config,
+        started_at: Instant::now(),
+    })
+}
+
+#[tauri::command]
+fn stop_recording(state: State<'_, DesktopState>) -> Result<MediaAttachment, String> {
+    let session = state
+        .recording
+        .lock()
+        .map_err(|_| "录音状态不可用".to_string())?
+        .take()
+        .ok_or_else(|| "当前没有正在进行的录音".to_string())?;
+    let (repository, master_key) = crypto_context(&state)?;
+    finish_recording_session(session, &repository, &master_key)
+}
+
+fn finish_recording_session(
+    session: RecordingSession,
+    repository: &Repository,
+    master_key: &MasterKey,
+) -> Result<MediaAttachment, String> {
+    let duration = session.started_at.elapsed().as_secs().max(1);
+    drop(session.stream);
+    if session.overflowed.load(Ordering::Relaxed) {
+        return Err("录音已达到 30 分钟上限或输入流发生中断".to_string());
+    }
+    let samples = session
+        .samples
+        .lock()
+        .map_err(|_| "无法读取录音数据".to_string())?;
+    if samples.is_empty() {
+        return Err("没有采集到音频数据".to_string());
+    }
+    let wav = encode_wav(&samples, &session.config)?;
+    drop(samples);
+    let id = Uuid::new_v4();
+    let attachment = repository
+        .save_attachment(master_key, id, wav.as_slice())
+        .map_err(|_| "无法加密保存录音".to_string())?;
+    Ok(media_attachment(
+        attachment,
+        "audio/wav",
+        format!("录音-{}.wav", Utc::now().format("%Y%m%d-%H%M%S")),
+        Some(duration),
+    ))
+}
+
+fn encode_wav(samples: &[i16], config: &StreamConfig) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    {
+        let cursor = Cursor::new(&mut bytes);
+        let mut writer = hound::WavWriter::new(
+            cursor,
+            hound::WavSpec {
+                channels: config.channels,
+                sample_rate: config.sample_rate.0,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .map_err(|_| "无法初始化 WAV 编码器".to_string())?;
+        for sample in samples {
+            writer
+                .write_sample(*sample)
+                .map_err(|_| "无法编码录音".to_string())?;
+        }
+        writer
+            .finalize()
+            .map_err(|_| "无法完成 WAV 编码".to_string())?;
+    }
+    Ok(bytes)
+}
+
+struct RangeCollector {
+    cursor: u64,
+    start: u64,
+    end: u64,
+    bytes: Vec<u8>,
+}
+
+impl std::io::Write for RangeCollector {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        let buffer_start = self.cursor;
+        let buffer_end = buffer_start.saturating_add(buffer.len() as u64);
+        let overlap_start = buffer_start.max(self.start);
+        let overlap_end = buffer_end.min(self.end.saturating_add(1));
+        if overlap_start < overlap_end {
+            let from = (overlap_start - buffer_start) as usize;
+            let to = (overlap_end - buffer_start) as usize;
+            self.bytes.extend_from_slice(&buffer[from..to]);
+        }
+        self.cursor = buffer_end;
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn attachment_plaintext_bytes(ciphertext_bytes: u64) -> Option<u64> {
+    if ciphertext_bytes == ATTACHMENT_FRAME_OVERHEAD {
+        return Some(0);
+    }
+    if ciphertext_bytes < ATTACHMENT_FRAME_OVERHEAD * 2 {
+        return None;
+    }
+    let framed_payload = ciphertext_bytes.checked_sub(ATTACHMENT_FRAME_OVERHEAD)?;
+    let frames = framed_payload.div_ceil(ATTACHMENT_CHUNK_BYTES + ATTACHMENT_FRAME_OVERHEAD);
+    let plaintext = ciphertext_bytes.checked_sub((frames + 1) * ATTACHMENT_FRAME_OVERHEAD)?;
+    if frames == 0
+        || plaintext <= (frames - 1) * ATTACHMENT_CHUNK_BYTES
+        || plaintext > frames * ATTACHMENT_CHUNK_BYTES
+    {
+        return None;
+    }
+    Some(plaintext)
+}
+
+fn protocol_media_type(path: &str) -> &'static str {
+    match Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "wav" => "audio/wav",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        "webm" => "video/webm",
+        "mkv" => "video/x-matroska",
+        _ => "application/octet-stream",
+    }
+}
+
+fn parse_protocol_range(value: Option<&str>, total: u64) -> Result<(u64, u64, bool), String> {
+    if total == 0 {
+        return Ok((0, 0, false));
+    }
+    let Some(value) = value else {
+        let end = (total - 1).min(MAX_PROTOCOL_RANGE_BYTES - 1);
+        return Ok((0, end, end + 1 < total));
+    };
+    let range = value
+        .strip_prefix("bytes=")
+        .and_then(|value| value.split(',').next())
+        .ok_or_else(|| "无效的附件范围".to_string())?;
+    let (start, requested_end) = range
+        .split_once('-')
+        .ok_or_else(|| "无效的附件范围".to_string())?;
+    let (start, end) = if start.is_empty() {
+        let suffix = requested_end
+            .parse::<u64>()
+            .map_err(|_| "无效的附件范围".to_string())?
+            .min(total);
+        (total - suffix, total - 1)
+    } else {
+        let start = start
+            .parse::<u64>()
+            .map_err(|_| "无效的附件范围".to_string())?;
+        let end = if requested_end.is_empty() {
+            total - 1
+        } else {
+            requested_end
+                .parse::<u64>()
+                .map_err(|_| "无效的附件范围".to_string())?
+                .min(total - 1)
+        };
+        (start, end)
+    };
+    if start >= total || end < start {
+        return Err("附件范围超出边界".to_string());
+    }
+    let capped_end = end.min(start.saturating_add(MAX_PROTOCOL_RANGE_BYTES - 1));
+    Ok((start, capped_end, true))
+}
+
+fn protocol_error(
+    status: tauri::http::StatusCode,
+    message: &str,
+) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(status)
+        .header(
+            tauri::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )
+        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .body(message.as_bytes().to_vec())
+        .expect("static attachment error response is valid")
+}
+
+fn read_attachment_range(
+    repository: &Repository,
+    master_key: &MasterKey,
+    id: Uuid,
+    total: u64,
+    start: u64,
+    end: u64,
+) -> Result<Vec<u8>, String> {
+    let mut collector = RangeCollector {
+        cursor: 0,
+        start,
+        end,
+        bytes: if total == 0 {
+            Vec::new()
+        } else {
+            Vec::with_capacity((end - start + 1) as usize)
+        },
+    };
+    repository
+        .read_attachment(master_key, id, &mut collector)
+        .map_err(|_| "attachment authentication failed".to_string())?;
+    let expected = if total == 0 { 0 } else { end - start + 1 };
+    if collector.cursor != total || collector.bytes.len() as u64 != expected {
+        return Err("attachment is incomplete".to_string());
+    }
+    Ok(collector.bytes)
+}
+
+fn attachment_protocol_response(
+    app: &AppHandle,
+    request: tauri::http::Request<Vec<u8>>,
+) -> tauri::http::Response<Vec<u8>> {
+    if request.method() != tauri::http::Method::GET && request.method() != tauri::http::Method::HEAD
+    {
+        return protocol_error(
+            tauri::http::StatusCode::METHOD_NOT_ALLOWED,
+            "method not allowed",
+        );
+    }
+    let path = request.uri().path().trim_start_matches('/');
+    let Some(id_segment) = path.split('/').next() else {
+        return protocol_error(
+            tauri::http::StatusCode::BAD_REQUEST,
+            "missing attachment id",
+        );
+    };
+    let Ok(id) = Uuid::parse_str(id_segment) else {
+        return protocol_error(
+            tauri::http::StatusCode::BAD_REQUEST,
+            "invalid attachment id",
+        );
+    };
+    let state = app.state::<DesktopState>();
+    let Ok((repository, master_key)) = crypto_context(&state) else {
+        return protocol_error(tauri::http::StatusCode::UNAUTHORIZED, "locked");
+    };
+    let Ok(ciphertext_bytes) = repository.attachment_ciphertext_bytes(id) else {
+        return protocol_error(tauri::http::StatusCode::NOT_FOUND, "attachment not found");
+    };
+    let Some(total) = attachment_plaintext_bytes(ciphertext_bytes) else {
+        return protocol_error(
+            tauri::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid attachment",
+        );
+    };
+    let range_header = request
+        .headers()
+        .get(tauri::http::header::RANGE)
+        .and_then(|value| value.to_str().ok());
+    let Ok((start, end, partial)) = parse_protocol_range(range_header, total) else {
+        return tauri::http::Response::builder()
+            .status(tauri::http::StatusCode::RANGE_NOT_SATISFIABLE)
+            .header(
+                tauri::http::header::CONTENT_RANGE,
+                format!("bytes */{total}"),
+            )
+            .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .body(Vec::new())
+            .expect("static range response is valid");
+    };
+    let expected = if total == 0 { 0 } else { end - start + 1 };
+    let bytes = if request.method() == tauri::http::Method::HEAD {
+        Vec::new()
+    } else {
+        match read_attachment_range(&repository, &master_key, id, total, start, end) {
+            Ok(bytes) => bytes,
+            Err(message) => {
+                return protocol_error(tauri::http::StatusCode::UNPROCESSABLE_ENTITY, &message);
+            }
+        }
+    };
+    let mut response = tauri::http::Response::builder()
+        .status(if partial {
+            tauri::http::StatusCode::PARTIAL_CONTENT
+        } else {
+            tauri::http::StatusCode::OK
+        })
+        .header(tauri::http::header::CONTENT_TYPE, protocol_media_type(path))
+        .header(tauri::http::header::ACCEPT_RANGES, "bytes")
+        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(tauri::http::header::CACHE_CONTROL, "no-store")
+        .header(tauri::http::header::CONTENT_LENGTH, expected.to_string());
+    if partial && total > 0 {
+        response = response.header(
+            tauri::http::header::CONTENT_RANGE,
+            format!("bytes {start}-{end}/{total}"),
+        );
+    }
+    response
+        .body(bytes)
+        .expect("validated attachment response is valid")
+}
+
 fn server_url() -> String {
     std::env::var("SNAPLINE_SERVER_URL").unwrap_or_else(|_| DEFAULT_SERVER_URL.to_string())
 }
@@ -350,12 +996,126 @@ fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|_| "无法定位应用数据目录".to_string())
 }
 
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn open_capture_window(app: &AppHandle, kind: &str) -> Result<(), String> {
+    let kind = match kind {
+        "text" | "screenshot" | "audio" | "image" | "video" => kind,
+        _ => return Err("无效的快速记录类型".to_string()),
+    };
+    if let Some(window) = app.get_webview_window("capture") {
+        window
+            .eval(format!("location.href = '/?capture={kind}'"))
+            .map_err(|_| "无法切换快速记录类型".to_string())?;
+        window
+            .show()
+            .map_err(|_| "无法显示快速记录窗口".to_string())?;
+        let _ = window.unminimize();
+        window
+            .set_focus()
+            .map_err(|_| "无法聚焦快速记录窗口".to_string())?;
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        app,
+        "capture",
+        WebviewUrl::App(format!("index.html?capture={kind}").into()),
+    )
+    .title("Snapline 快速记录")
+    .inner_size(920.0, 640.0)
+    .min_inner_size(620.0, 440.0)
+    .center()
+    .build()
+    .map_err(|_| "无法创建快速记录窗口".to_string())?;
+    Ok(())
+}
+
+fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
+    let show = MenuItem::with_id(app, "show", "打开 Snapline", true, None::<&str>)?;
+    let capture = MenuItem::with_id(app, "capture", "新建快速记录", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &capture, &quit])?;
+    let mut tray = TrayIconBuilder::with_id("snapline")
+        .menu(&menu)
+        .tooltip("Snapline")
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => show_main_window(app),
+            "capture" => {
+                let _ = open_capture_window(app, "text");
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 pub fn run() {
+    let shortcuts = tauri_plugin_global_shortcut::Builder::new()
+        .with_handler(|app, shortcut, event| {
+            if event.state != ShortcutState::Pressed {
+                return;
+            }
+            let modifiers = Modifiers::CONTROL | Modifiers::SHIFT;
+            let kind = if shortcut.matches(modifiers, Code::Space) {
+                Some("text")
+            } else if shortcut.matches(modifiers, Code::Digit1) {
+                Some("screenshot")
+            } else if shortcut.matches(modifiers, Code::Digit2) {
+                Some("audio")
+            } else if shortcut.matches(modifiers, Code::KeyV) {
+                Some("image")
+            } else {
+                None
+            };
+            if let Some(kind) = kind {
+                let _ = open_capture_window(app, kind);
+            }
+        })
+        .build();
+
     tauri::Builder::default()
+        .register_uri_scheme_protocol("snapline-attachment", |context, request| {
+            attachment_protocol_response(context.app_handle(), request)
+        })
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            show_main_window(app);
+        }))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(shortcuts)
         .setup(|app| {
             let state = DesktopState::new(app_data_dir(app.handle())?, server_url())?;
             app.manage(state);
+            setup_tray(app.handle())?;
+            for shortcut in [
+                "ctrl+shift+space",
+                "ctrl+shift+1",
+                "ctrl+shift+2",
+                "ctrl+shift+v",
+            ] {
+                if let Err(error) = app.global_shortcut().register(shortcut) {
+                    eprintln!("Snapline global shortcut {shortcut} is unavailable: {error}");
+                }
+            }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == "main"
+                && let WindowEvent::CloseRequested { api, .. } = event
+            {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             auth_status,
@@ -364,7 +1124,12 @@ pub fn run() {
             logout_account,
             list_items,
             save_item,
-            delete_item
+            delete_item,
+            store_attachment_bytes,
+            capture_screenshot,
+            pick_and_import_attachment,
+            start_recording,
+            stop_recording
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Snapline desktop application");
@@ -417,6 +1182,126 @@ mod tests {
             DesktopState::new(directory.path().to_path_buf(), "http://localhost".into()).unwrap();
         let result = with_repository(&state, |_, _| Ok(()));
         assert_eq!(result.unwrap_err(), "请先登录并解锁");
+    }
+
+    #[test]
+    fn wav_encoder_produces_readable_pcm_without_disk_files() {
+        let config = StreamConfig {
+            channels: 1,
+            sample_rate: cpal::SampleRate(16_000),
+            buffer_size: cpal::BufferSize::Default,
+        };
+        let samples = (0..16_000)
+            .map(|index| ((index % 200) as i16 - 100) * 100)
+            .collect::<Vec<_>>();
+        let wav = encode_wav(&samples, &config).unwrap();
+        let mut reader = hound::WavReader::new(Cursor::new(wav)).unwrap();
+        assert_eq!(reader.spec().channels, 1);
+        assert_eq!(reader.spec().sample_rate, 16_000);
+        assert_eq!(
+            reader
+                .samples::<i16>()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            samples
+        );
+        assert_eq!(sample_f32_to_i16(-2.0), -i16::MAX);
+        assert_eq!(sample_f32_to_i16(2.0), i16::MAX);
+        assert_eq!(sample_u16_to_i16(0), i16::MIN);
+        assert_eq!(sample_u16_to_i16(u16::MAX), i16::MAX);
+    }
+
+    #[test]
+    fn attachment_import_validation_rejects_unknown_extensions_and_control_names() {
+        assert_eq!(
+            media_type_from_path(Path::new("capture.MP4")).unwrap(),
+            "video/mp4"
+        );
+        assert!(media_type_from_path(Path::new("secret.exe")).is_err());
+        assert_eq!(sanitize_display_name("a\0b\n.png"), "ab.png");
+        assert_eq!(sanitize_display_name("\n\t"), "附件");
+    }
+
+    #[test]
+    fn video_import_streams_through_encryption_and_round_trips() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.mp4");
+        let plaintext = (0..ATTACHMENT_CHUNK_BYTES as usize * 2 + 701)
+            .map(|index| (index % 239) as u8)
+            .collect::<Vec<_>>();
+        fs::write(&path, &plaintext).unwrap();
+        let repository = Repository::open(directory.path().join("snapline.db")).unwrap();
+        let master_key = MasterKey::generate();
+        let imported = import_attachment_from_path(&repository, &master_key, &path).unwrap();
+        assert_eq!(imported.media_type, "video/mp4");
+        assert_eq!(imported.display_name, "capture.mp4");
+        let mut restored = Vec::new();
+        repository
+            .read_attachment(&master_key, imported.id, &mut restored)
+            .unwrap();
+        assert_eq!(restored, plaintext);
+    }
+
+    #[test]
+    fn attachment_protocol_lengths_and_ranges_are_bounded() {
+        for plaintext in [0, 1, ATTACHMENT_CHUNK_BYTES, ATTACHMENT_CHUNK_BYTES + 1] {
+            let frames = if plaintext == 0 {
+                0
+            } else {
+                plaintext.div_ceil(ATTACHMENT_CHUNK_BYTES)
+            };
+            let ciphertext = plaintext + (frames + 1) * ATTACHMENT_FRAME_OVERHEAD;
+            assert_eq!(attachment_plaintext_bytes(ciphertext), Some(plaintext));
+        }
+        assert_eq!(
+            parse_protocol_range(Some("bytes=10-19"), 100).unwrap(),
+            (10, 19, true)
+        );
+        assert_eq!(
+            parse_protocol_range(Some("bytes=-10"), 100).unwrap(),
+            (90, 99, true)
+        );
+        assert!(parse_protocol_range(Some("bytes=100-"), 100).is_err());
+        assert_eq!(
+            parse_protocol_range(None, MAX_PROTOCOL_RANGE_BYTES + 1).unwrap(),
+            (0, MAX_PROTOCOL_RANGE_BYTES - 1, true)
+        );
+    }
+
+    #[test]
+    fn attachment_protocol_decrypts_only_the_requested_plaintext_range() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = Repository::open(directory.path().join("snapline.db")).unwrap();
+        let master_key = MasterKey::generate();
+        let id = Uuid::new_v4();
+        let plaintext = (0..ATTACHMENT_CHUNK_BYTES as usize * 2 + 137)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let attachment = repository
+            .save_attachment(&master_key, id, plaintext.as_slice())
+            .unwrap();
+        let total = attachment_plaintext_bytes(attachment.ciphertext_bytes).unwrap();
+        let start = ATTACHMENT_CHUNK_BYTES - 17;
+        let end = ATTACHMENT_CHUNK_BYTES + 33;
+        let range = read_attachment_range(&repository, &master_key, id, total, start, end).unwrap();
+        assert_eq!(range, plaintext[start as usize..=end as usize]);
+    }
+
+    #[test]
+    #[ignore = "requires SNAPLINE_MEDIA_TEST=1 and an interactive desktop"]
+    fn live_windows_screen_is_encrypted_and_decodable() {
+        assert_eq!(std::env::var("SNAPLINE_MEDIA_TEST").as_deref(), Ok("1"));
+        let directory = tempfile::tempdir().unwrap();
+        let repository = Repository::open(directory.path().join("snapline.db")).unwrap();
+        let master_key = MasterKey::generate();
+
+        let screenshot = capture_screenshot_to(&repository, &master_key).unwrap();
+        let mut png = Vec::new();
+        repository
+            .read_attachment(&master_key, screenshot.id, &mut png)
+            .unwrap();
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        assert!(image::load_from_memory_with_format(&png, ImageFormat::Png).is_ok());
     }
 
     #[tokio::test]

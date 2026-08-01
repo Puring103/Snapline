@@ -18,6 +18,15 @@ export interface SessionStatus {
   access_expires_at?: string | null;
 }
 
+export interface MediaAttachment {
+  id: string;
+  media_type: string;
+  display_name: string;
+  ciphertext_bytes: number;
+  ciphertext_sha256: string;
+  duration_seconds: number | null;
+}
+
 export async function sessionStatus(): Promise<SessionStatus> {
   if (!isTauri()) {
     return {
@@ -51,4 +60,28 @@ export async function logout(): Promise<void> {
     return;
   }
   await invoke<void>('logout_account');
+}
+
+export async function captureNativeScreenshot(): Promise<MediaAttachment> {
+  return invoke<MediaAttachment>('capture_screenshot');
+}
+
+export async function startNativeRecording(): Promise<void> {
+  await invoke<void>('start_recording');
+}
+
+export async function stopNativeRecording(): Promise<MediaAttachment> {
+  return invoke<MediaAttachment>('stop_recording');
+}
+
+export async function storePastedImage(file: File): Promise<MediaAttachment> {
+  return invoke<MediaAttachment>('store_attachment_bytes', {
+    bytes: Array.from(new Uint8Array(await file.arrayBuffer())),
+    mediaType: file.type,
+    displayName: file.name || '粘贴的图片',
+  });
+}
+
+export async function pickAndImportAttachment(): Promise<MediaAttachment | null> {
+  return invoke<MediaAttachment | null>('pick_and_import_attachment');
 }
