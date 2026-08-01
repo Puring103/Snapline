@@ -19,7 +19,7 @@ use keyring::Entry;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use snapline_crypto::{KeyEnvelope, MasterKey, RecoveryKey};
-use snapline_desktop_core::{Attachment, Item, Repository, SaveItem};
+use snapline_desktop_core::{Attachment, AttachmentDescriptor, Item, Repository, SaveItem};
 use tauri::{
     AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
     menu::{Menu, MenuItem},
@@ -30,8 +30,14 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutS
 use uuid::Uuid;
 use xcap::Monitor;
 
+mod ai;
+mod media_ai;
+
+use ai::{AiAttachment, AiConfig, OpenAiCompatibleClient, validate_config};
+
 const DEFAULT_SERVER_URL: &str = "http://122.51.119.75/snapline";
 const CREDENTIAL_SERVICE: &str = "app.snapline.desktop.refresh-token";
+const AI_CREDENTIAL_SERVICE: &str = "app.snapline.desktop.ai-config";
 const MAX_PASTED_ATTACHMENT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_IMPORTED_ATTACHMENT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_RECORDING_SECONDS: usize = 30 * 60;
@@ -62,6 +68,27 @@ pub struct MediaAttachment {
     pub ciphertext_bytes: u64,
     pub ciphertext_sha256: String,
     pub duration_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AiConfigStatus {
+    pub configured: bool,
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    pub processing: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AiProcessResult {
+    pub completed: usize,
+    pub failed: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredAiConfig {
+    base_url: String,
+    model: String,
+    api_key: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -127,6 +154,7 @@ pub struct DesktopState {
     data_dir: PathBuf,
     unlocked: Mutex<UnlockedState>,
     recording: Mutex<Option<RecordingSession>>,
+    ai_processing: AtomicBool,
 }
 
 impl DesktopState {
@@ -141,6 +169,7 @@ impl DesktopState {
             data_dir,
             unlocked: Mutex::new(UnlockedState::default()),
             recording: Mutex::new(None),
+            ai_processing: AtomicBool::new(false),
         })
     }
 
@@ -181,6 +210,34 @@ impl DesktopState {
 fn credential_entry(user_id: Uuid) -> Result<Entry, String> {
     Entry::new(CREDENTIAL_SERVICE, &user_id.to_string())
         .map_err(|_| "Windows 凭据管理器不可用".to_string())
+}
+
+fn ai_credential_entry(user_id: Uuid) -> Result<Entry, String> {
+    Entry::new(AI_CREDENTIAL_SERVICE, &user_id.to_string())
+        .map_err(|_| "Windows 凭据管理器不可用".to_string())
+}
+
+fn current_user_id(state: &DesktopState) -> Result<Uuid, String> {
+    state
+        .unlocked
+        .lock()
+        .map_err(|_| "本地会话状态不可用".to_string())?
+        .session
+        .as_ref()
+        .map(|session| session.user_id)
+        .ok_or_else(|| "请先登录并解锁".to_string())
+}
+
+fn stored_ai_config(state: &DesktopState) -> Result<Option<StoredAiConfig>, String> {
+    let user_id = current_user_id(state)?;
+    let entry = ai_credential_entry(user_id)?;
+    match entry.get_password() {
+        Ok(value) => serde_json::from_str(&value)
+            .map(Some)
+            .map_err(|_| "AI 配置已损坏，请重新配置".to_string()),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err("无法读取 Windows 凭据管理器中的 AI 配置".to_string()),
+    }
 }
 
 fn registration_material(password: &str) -> Result<(MasterKey, String, String, String), String> {
@@ -381,11 +438,20 @@ fn crypto_context(state: &DesktopState) -> Result<(Arc<Repository>, Arc<MasterKe
 
 #[tauri::command]
 fn list_items(state: State<'_, DesktopState>) -> Result<Vec<Item>, String> {
-    with_repository(&state, |repository, master_key| {
+    let configured = stored_ai_config(&state).ok().flatten().is_some();
+    let mut items = with_repository(&state, |repository, master_key| {
         repository
             .list(master_key, true)
             .map_err(|_| "无法读取本地记录".to_string())
-    })
+    })?;
+    if !configured {
+        for item in &mut items {
+            if item.ai_status != "complete" {
+                item.ai_status = "unconfigured".into();
+            }
+        }
+    }
+    Ok(items)
 }
 
 #[tauri::command]
@@ -406,6 +472,238 @@ fn delete_item(state: State<'_, DesktopState>, id: Uuid) -> Result<(), String> {
     })
 }
 
+#[tauri::command]
+fn get_ai_config(state: State<'_, DesktopState>) -> Result<AiConfigStatus, String> {
+    let stored = stored_ai_config(&state)?;
+    Ok(AiConfigStatus {
+        configured: stored.is_some(),
+        base_url: stored.as_ref().map(|config| config.base_url.clone()),
+        model: stored.as_ref().map(|config| config.model.clone()),
+        processing: state.ai_processing.load(Ordering::Acquire),
+    })
+}
+
+#[tauri::command]
+async fn set_ai_config(
+    state: State<'_, DesktopState>,
+    base_url: String,
+    model: String,
+    api_key: String,
+) -> Result<AiConfigStatus, String> {
+    let config =
+        validate_config(&AiConfig { base_url, model }).map_err(|error| error.to_string())?;
+    let api_key = if api_key.trim().is_empty() {
+        stored_ai_config(&state)?
+            .map(|stored| stored.api_key)
+            .ok_or_else(|| "请输入 API Key".to_string())?
+    } else {
+        api_key
+    };
+    let client = OpenAiCompatibleClient::new(config.clone(), api_key.clone())
+        .map_err(|error| error.to_string())?;
+    client.probe().await.map_err(|error| error.to_string())?;
+    let user_id = current_user_id(&state)?;
+    let value = serde_json::to_string(&StoredAiConfig {
+        base_url: config.base_url.clone(),
+        model: config.model.clone(),
+        api_key,
+    })
+    .map_err(|_| "无法编码 AI 配置".to_string())?;
+    ai_credential_entry(user_id)?
+        .set_password(&value)
+        .map_err(|_| "无法将 AI Key 写入 Windows 凭据管理器".to_string())?;
+    with_repository(&state, |repository, _| {
+        repository
+            .reset_ai_jobs()
+            .map(|_| ())
+            .map_err(|_| "无法重建 AI 处理队列".to_string())
+    })?;
+    Ok(AiConfigStatus {
+        configured: true,
+        base_url: Some(config.base_url),
+        model: Some(config.model),
+        processing: false,
+    })
+}
+
+#[tauri::command]
+fn clear_ai_config(state: State<'_, DesktopState>) -> Result<(), String> {
+    let user_id = current_user_id(&state)?;
+    match ai_credential_entry(user_id)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(_) => Err("无法删除 Windows 凭据管理器中的 AI 配置".to_string()),
+    }
+}
+
+#[tauri::command]
+fn rebuild_ai_metadata(state: State<'_, DesktopState>) -> Result<usize, String> {
+    if stored_ai_config(&state)?.is_none() {
+        return Err("尚未配置 AI 模型".to_string());
+    }
+    with_repository(&state, |repository, _| {
+        repository
+            .reset_ai_jobs()
+            .map_err(|_| "无法重建 AI 处理队列".to_string())
+    })
+}
+
+struct AiProcessingGuard<'a>(&'a AtomicBool);
+
+impl Drop for AiProcessingGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+#[tauri::command]
+async fn process_ai_queue(state: State<'_, DesktopState>) -> Result<AiProcessResult, String> {
+    if state.ai_processing.swap(true, Ordering::AcqRel) {
+        return Ok(AiProcessResult {
+            completed: 0,
+            failed: 0,
+        });
+    }
+    let _guard = AiProcessingGuard(&state.ai_processing);
+    let stored = stored_ai_config(&state)?.ok_or_else(|| "尚未配置 AI 模型".to_string())?;
+    let client = OpenAiCompatibleClient::new(
+        AiConfig {
+            base_url: stored.base_url,
+            model: stored.model,
+        },
+        stored.api_key,
+    )
+    .map_err(|error| error.to_string())?;
+    let (repository, master_key) = crypto_context(&state)?;
+    let jobs = repository
+        .claim_ai_jobs(&master_key, 20)
+        .map_err(|_| "无法读取 AI 处理队列".to_string())?;
+    let mut result = AiProcessResult {
+        completed: 0,
+        failed: 0,
+    };
+    for item in jobs {
+        let mut attachments = Vec::new();
+        let mut attachment_error = None;
+        for id in &item.content.attachment_ids {
+            let descriptor = match repository.attachment_descriptor(*id) {
+                Ok(value) => value,
+                Err(_) => {
+                    attachment_error = Some("附件描述缺失".to_string());
+                    break;
+                }
+            };
+            if descriptor.media_type.starts_with("video/") {
+                match media_ai::ensure_ffmpeg(&state.data_dir, &state.client).await {
+                    Ok(ffmpeg) => {
+                        match media_ai::extract_video_inputs(&repository, &master_key, *id, &ffmpeg)
+                        {
+                            Ok(mut inputs) => attachments.append(&mut inputs),
+                            Err(error) => attachment_error = Some(error),
+                        }
+                    }
+                    Err(error) => attachment_error = Some(error),
+                }
+                if attachment_error.is_some() {
+                    break;
+                }
+                continue;
+            }
+            if descriptor.media_type.starts_with("audio/")
+                && repository
+                    .attachment_ciphertext_bytes(*id)
+                    .unwrap_or(u64::MAX)
+                    > (32 * 1024 * 1024 + 1024 * 1024) as u64
+            {
+                match media_ai::ensure_ffmpeg(&state.data_dir, &state.client).await {
+                    Ok(ffmpeg) => {
+                        match media_ai::extract_audio_input(&repository, &master_key, *id, &ffmpeg)
+                        {
+                            Ok(input) => attachments.push(input),
+                            Err(error) => attachment_error = Some(error),
+                        }
+                    }
+                    Err(error) => attachment_error = Some(error),
+                }
+                if attachment_error.is_some() {
+                    break;
+                }
+                continue;
+            }
+            if descriptor.media_type.starts_with("image/")
+                && repository
+                    .attachment_ciphertext_bytes(*id)
+                    .unwrap_or(u64::MAX)
+                    > (32 * 1024 * 1024 + 1024 * 1024) as u64
+            {
+                match media_ai::ensure_ffmpeg(&state.data_dir, &state.client).await {
+                    Ok(ffmpeg) => {
+                        match media_ai::extract_image_input(&repository, &master_key, *id, &ffmpeg)
+                        {
+                            Ok(input) => attachments.push(input),
+                            Err(error) => attachment_error = Some(error),
+                        }
+                    }
+                    Err(error) => attachment_error = Some(error),
+                }
+                if attachment_error.is_some() {
+                    break;
+                }
+                continue;
+            }
+            if repository
+                .attachment_ciphertext_bytes(*id)
+                .unwrap_or(u64::MAX)
+                > (32 * 1024 * 1024 + 1024 * 1024) as u64
+            {
+                attachment_error = Some("附件超过单模型处理上限".to_string());
+                break;
+            }
+            let mut bytes = Vec::new();
+            if repository
+                .read_attachment(&master_key, *id, &mut bytes)
+                .is_err()
+            {
+                attachment_error = Some("无法解密 AI 处理附件".to_string());
+                break;
+            }
+            attachments.push(AiAttachment {
+                media_type: descriptor.media_type,
+                display_name: format!("附件-{}", descriptor.id),
+                bytes,
+            });
+        }
+        let response = match attachment_error {
+            Some(error) => Err((error, 3_600)),
+            None => client.metadata(&item, &attachments).await.map_err(|error| {
+                let attempts = repository.ai_job_attempts(item.id).unwrap_or(1);
+                let retry = error.retry_after_seconds(attempts);
+                (error.to_string(), retry)
+            }),
+        };
+        match response {
+            Ok(metadata) => {
+                if repository
+                    .complete_ai_job(&master_key, item.id, metadata)
+                    .is_ok()
+                {
+                    result.completed += 1;
+                } else {
+                    let _ = repository.fail_ai_job(item.id, "无法保存 AI 元数据", 60);
+                    result.failed += 1;
+                }
+            }
+            Err((message, retry)) => {
+                let _ = repository.fail_ai_job(item.id, &message, retry);
+                result.failed += 1;
+            }
+        }
+    }
+    repository
+        .rebuild_search_index(&master_key)
+        .map_err(|_| "无法更新本地全文索引".to_string())?;
+    Ok(result)
+}
+
 fn media_attachment(
     attachment: Attachment,
     media_type: impl Into<String>,
@@ -420,6 +718,29 @@ fn media_attachment(
         ciphertext_sha256: attachment.ciphertext_sha256,
         duration_seconds,
     }
+}
+
+fn described_media_attachment(
+    repository: &Repository,
+    attachment: Attachment,
+    media_type: impl Into<String>,
+    display_name: impl Into<String>,
+    duration_seconds: Option<u64>,
+) -> Result<MediaAttachment, String> {
+    let media_type = media_type.into();
+    let display_name = display_name.into();
+    repository
+        .save_attachment_descriptor(&AttachmentDescriptor {
+            id: attachment.id,
+            media_type: media_type.clone(),
+        })
+        .map_err(|_| "无法保存附件描述".to_string())?;
+    Ok(media_attachment(
+        attachment,
+        media_type,
+        display_name,
+        duration_seconds,
+    ))
 }
 
 #[tauri::command]
@@ -443,12 +764,13 @@ fn store_attachment_bytes(
     let attachment = repository
         .save_attachment(&master_key, id, bytes.as_slice())
         .map_err(|_| "无法加密保存粘贴图片".to_string())?;
-    Ok(media_attachment(
+    described_media_attachment(
+        &repository,
         attachment,
         media_type,
         sanitize_display_name(&display_name),
         None,
-    ))
+    )
 }
 
 #[tauri::command]
@@ -491,12 +813,13 @@ fn capture_screenshot_to(
     let attachment = repository
         .save_attachment(master_key, id, png.as_slice())
         .map_err(|_| "无法加密保存截图".to_string())?;
-    Ok(media_attachment(
+    described_media_attachment(
+        repository,
         attachment,
         "image/png",
         format!("截图-{}.png", Utc::now().format("%Y%m%d-%H%M%S")),
         None,
-    ))
+    )
 }
 
 #[tauri::command]
@@ -544,7 +867,7 @@ fn import_attachment_from_path(
     let attachment = repository
         .save_attachment(master_key, id, input)
         .map_err(|_| "无法加密导入附件".to_string())?;
-    Ok(media_attachment(attachment, media_type, display_name, None))
+    described_media_attachment(repository, attachment, media_type, display_name, None)
 }
 
 fn media_type_from_path(path: &Path) -> Result<&'static str, String> {
@@ -715,12 +1038,13 @@ fn finish_recording_session(
     let attachment = repository
         .save_attachment(master_key, id, wav.as_slice())
         .map_err(|_| "无法加密保存录音".to_string())?;
-    Ok(media_attachment(
+    described_media_attachment(
+        repository,
         attachment,
         "audio/wav",
         format!("录音-{}.wav", Utc::now().format("%Y%m%d-%H%M%S")),
         Some(duration),
-    ))
+    )
 }
 
 fn encode_wav(samples: &[i16], config: &StreamConfig) -> Result<Vec<u8>, String> {
@@ -1125,6 +1449,11 @@ pub fn run() {
             list_items,
             save_item,
             delete_item,
+            get_ai_config,
+            set_ai_config,
+            clear_ai_config,
+            rebuild_ai_metadata,
+            process_ai_queue,
             store_attachment_bytes,
             capture_screenshot,
             pick_and_import_attachment,

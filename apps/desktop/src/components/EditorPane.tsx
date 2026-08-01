@@ -43,7 +43,15 @@ export function EditorPane({ item, onChange, onSave, onDelete, onRecord }: { ite
   if (!item) return <section className="editor-pane empty-editor"><Sparkles size={24} /><strong>选择一条记录</strong><span>在时间线中选择记录，或创建新的记录。</span></section>;
 
   const currentItem = item;
-  const updateContent = (patch: Partial<Item['content']>) => onChange({ ...currentItem, content: { ...currentItem.content, ...patch } });
+  const updateContent = (patch: Partial<Item['content']>) => onChange({
+    ...currentItem,
+    content: {
+      ...currentItem.content,
+      ...patch,
+      ai_metadata: Object.prototype.hasOwnProperty.call(patch, 'ai_metadata') ? patch.ai_metadata! : null,
+    },
+    ai_status: 'pending',
+  });
   const insert = (before: string, after = '') => updateContent({ markdown: `${currentItem.content.markdown}${currentItem.content.markdown ? '\n' : ''}${before}${after}` });
   const markerOptions = [...new Set([...BUILT_IN_MARKERS, ...currentItem.content.markers])];
 

@@ -27,6 +27,64 @@ export interface MediaAttachment {
   duration_seconds: number | null;
 }
 
+export interface AiConfigStatus {
+  configured: boolean;
+  base_url: string | null;
+  model: string | null;
+  processing: boolean;
+}
+
+export interface AiProcessResult {
+  completed: number;
+  failed: number;
+}
+
+const DEV_AI_KEY = 'snapline-dev-ai-config';
+
+export async function getAiConfig(): Promise<AiConfigStatus> {
+  if (!isTauri()) {
+    const stored = localStorage.getItem(DEV_AI_KEY);
+    const config = stored ? JSON.parse(stored) as { base_url: string; model: string } : null;
+    return { configured: Boolean(config), base_url: config?.base_url || null, model: config?.model || null, processing: false };
+  }
+  return invoke<AiConfigStatus>('get_ai_config');
+}
+
+export async function setAiConfig(baseUrl: string, model: string, apiKey: string): Promise<AiConfigStatus> {
+  if (!isTauri()) {
+    if (!baseUrl.trim() || !model.trim() || (!apiKey.trim() && !localStorage.getItem(DEV_AI_KEY))) throw new Error('请填写完整的模型配置');
+    const config = { base_url: baseUrl.trim().replace(/\/$/, ''), model: model.trim() };
+    localStorage.setItem(DEV_AI_KEY, JSON.stringify(config));
+    return { configured: true, ...config, processing: false };
+  }
+  return invoke<AiConfigStatus>('set_ai_config', { baseUrl, model, apiKey });
+}
+
+export async function clearAiConfig(): Promise<void> {
+  if (!isTauri()) {
+    localStorage.removeItem(DEV_AI_KEY);
+    return;
+  }
+  await invoke<void>('clear_ai_config');
+}
+
+export async function rebuildAiMetadata(): Promise<number> {
+  if (!isTauri()) return 0;
+  return invoke<number>('rebuild_ai_metadata');
+}
+
+export async function processAiQueue(): Promise<AiProcessResult> {
+  if (!isTauri()) return { completed: 0, failed: 0 };
+  const total = { completed: 0, failed: 0 };
+  for (let batch = 0; batch < 25; batch += 1) {
+    const result = await invoke<AiProcessResult>('process_ai_queue');
+    total.completed += result.completed;
+    total.failed += result.failed;
+    if (result.completed + result.failed < 20) break;
+  }
+  return total;
+}
+
 export async function sessionStatus(): Promise<SessionStatus> {
   if (!isTauri()) {
     return {

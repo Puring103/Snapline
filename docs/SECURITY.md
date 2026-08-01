@@ -18,6 +18,15 @@
 - Refresh Token 和后续 AI API Key 写入 Windows Credential Manager。
 - SQLite 只保存加密记录信封、非敏感同步状态和加密附件头；标题、Markdown、标签、特殊标记、AI 元数据和附件原文不以明文落盘。
 - 附件直接从输入流写入加密临时文件，完成同步和校验后原子移动为正式对象，Snapline 不创建自己的明文中间文件。
+- AI Base URL、模型和 API Key 作为单个凭据写入当前用户的 Windows Credential Manager；读取配置的前端命令只返回 Base URL、模型和状态，永不返回 API Key。
+- AI 元数据随记录内容使用记录 DEK 加密。FTS5 索引只存在于已解锁进程的内存 SQLite 中，登录后从解密元数据重建，数据库文件不保存标题、转写、摘要或搜索文本。
+- 视频处理使用固定的 FFmpeg 8.1.2 Windows 构建。首次使用时从固定 HTTPS URL 下载并验证固定 SHA-256；视频密文直接流入 FFmpeg stdin，关键帧和压缩音轨从 stdout 进入模型请求，不创建明文源视频。
+
+## AI 服务边界
+
+配置保存前，客户端使用最小 PNG、WAV 和严格 JSON Schema 请求验证用户指定模型。远程 Base URL 必须使用 HTTPS；仅回环地址允许 HTTP。模型请求直接从 Windows 客户端发出，Snapline API、PostgreSQL 和同步信封均不包含 AI Key。
+
+记录正文和附件中的指令按不可信数据处理。元数据请求使用独立系统指令，并对模型返回结果执行字段集合、类型、长度和数量限制。无 AI 配置、Key 失效或模型服务离线时，记录、加密附件、自动保存和云同步不受影响；处理作业保留并按错误类别退避重试。
 
 ## 服务端与网络
 

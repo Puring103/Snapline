@@ -115,3 +115,25 @@ cargo test --workspace --offline
 - 来源类型采用包含匹配；多个普通标签和特殊标记分别采用 AND 匹配。测试覆盖 `图片 + 账目 + #项目` 的组合命中、加入不相容标记后的空结果以及一键清除恢复。
 - `账目` 始终作为系统预置特殊标记提供，但其记录行为与用户自定义标记完全一致，不存在金额、收支、统计或报表逻辑。
 - 前端生产构建通过，完整 CodeMirror 仍保持独立懒加载 chunk；其体积警告不影响快速记录首屏。
+
+## M9 单模型多模态处理
+
+2026-08-01 已验收：
+
+```powershell
+cd apps/desktop
+npm test -- --run
+npm run build
+cd ../..
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --offline -- -D warnings
+$env:SNAPLINE_MEDIA_AI_TEST='1'
+cargo test -p snapline-desktop --offline pinned_ffmpeg_extracts_encrypted_video_without_plaintext_output -- --ignored --nocapture
+cargo test --workspace --offline
+```
+
+- Vitest 6 个测试文件、22 个交互/工具测试通过。覆盖设置弹窗、首次 Key 要求、已有配置留空沿用 Key、开发环境不持久化 Key、无 API 配置仍可自动保存，以及内容修改使旧元数据失效。
+- Rust 常规测试覆盖 HTTPS/回环 URL 限制、结构化字段和长度校验、OpenAI 兼容模拟服务、图片和音频能力探测、无效 Key、429、坏 JSON、持久作业认领/完成/重建及指数退避状态。
+- 元数据摘要和 `search_text` 经记录 DEK 加密后落盘；磁盘扫描未发现测试摘要或索引文本。FTS5 仅在内存中重建并正确命中，未引入 Embedding 或向量数据库。
+- 固定 FFmpeg ZIP 的下载 URL 与 SHA-256 受测试保护。真实下载完成校验后，测试视频先加密并删除明文，再从密文 stdin 抽取 JPEG 关键帧和完整 MP3 音轨；断言没有恢复明文源视频。
+- 图片、音频、视频和严格 JSON Schema 使用同一个用户填写的模型。视频最多抽取每分钟一帧、30 帧；30 分钟录音压缩为单声道 32 kbit/s MP3 后处理。处理数据由客户端直连用户的 AI 服务，API Key 不进入 Snapline 服务端。

@@ -77,3 +77,21 @@ it('creates a normalized custom marker in the full editor and automatically save
   await waitFor(() => expect(saves).toHaveBeenCalledTimes(1));
   expect(saves.mock.calls[0][0].content.markers).toEqual(['客户 反馈']);
 });
+
+it('invalidates stale AI metadata when record content changes', () => {
+  const itemWithMetadata: Item = {
+    ...initialItem,
+    content: {
+      ...initialItem.content,
+      ai_metadata: { summary: '旧摘要', topics: [], entities: [], keywords: [], search_text: '旧索引' },
+    },
+    ai_status: 'complete',
+  };
+  const changed = vi.fn();
+  render(<EditorPane item={itemWithMetadata} onChange={changed} onDelete={() => undefined} onRecord={() => undefined} onSave={async () => undefined} />);
+  fireEvent.change(screen.getByPlaceholderText('无标题记录'), { target: { value: '新标题' } });
+  expect(changed).toHaveBeenCalledWith(expect.objectContaining({
+    ai_status: 'pending',
+    content: expect.objectContaining({ title: '新标题', ai_metadata: null }),
+  }));
+});

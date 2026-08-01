@@ -2,11 +2,11 @@ import { Archive, Bot, CircleDot, Hash, Inbox, LogOut, Pin, Plus, Settings, Spar
 import type { Item, View } from '../types';
 import { Logo } from './Logo';
 
-export function Sidebar({ items, view, onView, onNew, onAi, onLogout }: { items: Item[]; view: View; onView: (view: View) => void; onNew: () => void; onAi: () => void; onLogout: () => void }) {
+export function Sidebar({ items, view, onView, onNew, onAi, onSettings, onLogout }: { items: Item[]; view: View; onView: (view: View) => void; onNew: () => void; onAi: () => void; onSettings: () => void; onLogout: () => void }) {
   const tags = [...new Set(items.flatMap((item) => item.content.tags))].slice(0, 5);
   const markers = [...new Set(['账目', '重要', '待办', ...items.flatMap((item) => item.content.markers)])].slice(0, 5);
   return <aside className="sidebar">
-    <div className="sidebar-head"><Logo /><button className="icon-button" aria-label="设置" title="设置"><Settings size={17} /></button></div>
+    <div className="sidebar-head"><Logo /><button className="icon-button" aria-label="设置" title="设置" onClick={onSettings}><Settings size={17} /></button></div>
     <button className="new-record-button" onClick={onNew}><Plus size={17} />新记录<span>⌘ N</span></button>
     <nav className="main-nav">
       <button className={view === 'all' ? 'active' : ''} onClick={() => onView('all')}><Inbox size={17} />全部记录<em>{items.filter((i) => !i.archived).length}</em></button>

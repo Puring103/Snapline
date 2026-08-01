@@ -14,6 +14,12 @@ export interface ItemContent {
     topics: string[];
     entities: string[];
     keywords: string[];
+    people?: string[];
+    locations?: string[];
+    event_time?: string | null;
+    language?: string;
+    suggested_tags?: string[];
+    suggested_markers?: string[];
     search_text: string;
   };
 }

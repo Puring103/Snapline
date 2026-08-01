@@ -17,6 +17,7 @@ describe('desktop workspace', () => {
     fireEvent.change(title, { target: { value: '自动保存测试' } });
     expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument();
     await waitFor(() => expect(localStorage.getItem('snapline-dev-items-v1')).toContain('自动保存测试'));
+    expect(screen.getByText('AI 未配置')).toBeInTheDocument();
   });
 
   it('filters by the built-in account marker without an accounting module', async () => {

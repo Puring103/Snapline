@@ -4761,6 +4761,7 @@ name = "snapline-desktop"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "chrono",
  "cpal",
  "hound",
@@ -4769,6 +4770,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
  "snapline-crypto",
  "snapline-desktop-core",
  "tauri",

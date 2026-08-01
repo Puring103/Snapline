@@ -48,6 +48,35 @@ CREATE TABLE IF NOT EXISTS attachments (
     created_at TEXT NOT NULL,
     sync_status TEXT NOT NULL DEFAULT 'pending'
 );
+CREATE TABLE IF NOT EXISTS attachment_descriptors (
+    id TEXT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE,
+    media_type TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ai_jobs (
+    item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+    content_fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT,
+    last_error TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ai_jobs_status_idx ON ai_jobs(status,next_attempt_at);
+INSERT OR IGNORE INTO ai_jobs
+    (item_id,content_fingerprint,status,attempts,next_attempt_at,last_error,updated_at)
+    SELECT id,'legacy','pending',0,NULL,NULL,updated_at FROM items;
+"#;
+
+const SEARCH_SCHEMA: &str = r#"
+CREATE VIRTUAL TABLE IF NOT EXISTS record_search USING fts5(
+    item_id UNINDEXED,
+    title,
+    search_text,
+    transcript,
+    tags,
+    markers,
+    tokenize='unicode61'
+);
 "#;
 
 #[derive(Debug, thiserror::Error)]
@@ -66,6 +95,8 @@ pub enum StorageError {
     Io(#[from] std::io::Error),
     #[error("attachment storage is unavailable for an in-memory repository")]
     AttachmentStorageUnavailable,
+    #[error("AI job is unavailable")]
+    AiJobUnavailable,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -80,6 +111,7 @@ pub enum SourceType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct AiMetadata {
     pub summary: String,
     pub transcript: Option<String>,
@@ -130,6 +162,7 @@ pub struct Item {
     pub archived: bool,
     pub pinned: bool,
     pub sync_status: String,
+    pub ai_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,8 +182,15 @@ pub struct Attachment {
     pub sync_status: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttachmentDescriptor {
+    pub id: Uuid,
+    pub media_type: String,
+}
+
 pub struct Repository {
     connection: Mutex<Connection>,
+    search: Mutex<Connection>,
     attachment_dir: Option<PathBuf>,
 }
 
@@ -159,6 +199,12 @@ impl Repository {
         let path = path.as_ref();
         let connection = Connection::open(path)?;
         connection.execute_batch(SCHEMA)?;
+        connection.execute(
+            "UPDATE ai_jobs SET status='pending' WHERE status='processing'",
+            [],
+        )?;
+        let search = Connection::open_in_memory()?;
+        search.execute_batch(SEARCH_SCHEMA)?;
         let attachment_dir = path
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -166,6 +212,7 @@ impl Repository {
         fs::create_dir_all(&attachment_dir)?;
         Ok(Self {
             connection: Mutex::new(connection),
+            search: Mutex::new(search),
             attachment_dir: Some(attachment_dir),
         })
     }
@@ -173,14 +220,27 @@ impl Repository {
     pub fn open_in_memory() -> Result<Self, StorageError> {
         let connection = Connection::open_in_memory()?;
         connection.execute_batch(SCHEMA)?;
+        connection.execute(
+            "UPDATE ai_jobs SET status='pending' WHERE status='processing'",
+            [],
+        )?;
+        let search = Connection::open_in_memory()?;
+        search.execute_batch(SEARCH_SCHEMA)?;
         Ok(Self {
             connection: Mutex::new(connection),
+            search: Mutex::new(search),
             attachment_dir: None,
         })
     }
 
     pub fn save(&self, master_key: &MasterKey, input: SaveItem) -> Result<Item, StorageError> {
         let now = Utc::now();
+        let content_fingerprint = content_fingerprint(&input.content)?;
+        let ai_status = if input.content.ai_metadata.is_some() {
+            "complete"
+        } else {
+            "pending"
+        };
         let plaintext = serde_json::to_vec(&input.content)?;
         let encrypted = master_key.encrypt(input.id.as_bytes(), &plaintext)?;
         let mut connection = self.connection.lock().expect("repository mutex poisoned");
@@ -211,7 +271,24 @@ impl Repository {
             "INSERT INTO outbox (object_id,operation,created_at) VALUES (?1,'upsert',?2)",
             params![input.id.to_string(), now.to_rfc3339()],
         )?;
+        transaction.execute(
+            "INSERT INTO ai_jobs (item_id,content_fingerprint,status,attempts,next_attempt_at,last_error,updated_at) \
+             VALUES (?1,?2,?3,0,NULL,NULL,?4) \
+             ON CONFLICT(item_id) DO UPDATE SET content_fingerprint=excluded.content_fingerprint, \
+             status=CASE WHEN ai_jobs.content_fingerprint<>excluded.content_fingerprint OR excluded.status='complete' \
+                         THEN excluded.status ELSE ai_jobs.status END, \
+             attempts=CASE WHEN ai_jobs.content_fingerprint<>excluded.content_fingerprint THEN 0 ELSE ai_jobs.attempts END, \
+             next_attempt_at=CASE WHEN ai_jobs.content_fingerprint<>excluded.content_fingerprint THEN NULL ELSE ai_jobs.next_attempt_at END, \
+             last_error=CASE WHEN ai_jobs.content_fingerprint<>excluded.content_fingerprint THEN NULL ELSE ai_jobs.last_error END, \
+             updated_at=excluded.updated_at",
+            params![input.id.to_string(), content_fingerprint, ai_status, now.to_rfc3339()],
+        )?;
         transaction.commit()?;
+        if input.content.ai_metadata.is_some() {
+            self.index_item(&input.id, &input.content)?;
+        } else {
+            self.remove_from_index(input.id)?;
+        }
         Ok(Item {
             id: input.id,
             content: input.content,
@@ -221,19 +298,20 @@ impl Repository {
             archived: input.archived,
             pinned: input.pinned,
             sync_status: "pending".into(),
+            ai_status: ai_status.into(),
         })
     }
 
     pub fn get(&self, master_key: &MasterKey, id: Uuid) -> Result<Item, StorageError> {
         let connection = self.connection.lock().expect("repository mutex poisoned");
         let stored = connection.query_row(
-            "SELECT nonce,ciphertext,key_nonce,wrapped_key,created_at,updated_at,version,archived,pinned,sync_status \
-             FROM items WHERE id=?1",
+            "SELECT i.nonce,i.ciphertext,i.key_nonce,i.wrapped_key,i.created_at,i.updated_at,i.version,i.archived,i.pinned,i.sync_status,COALESCE(j.status,'pending') \
+             FROM items i LEFT JOIN ai_jobs j ON j.item_id=i.id WHERE i.id=?1",
             [id.to_string()],
             |row| Ok(StoredItem { encrypted: EncryptedRecord { nonce: row.get(0)?, ciphertext: row.get(1)?,
                 key_nonce: row.get(2)?, wrapped_key: row.get(3)? }, created_at: row.get(4)?,
                 updated_at: row.get(5)?, version: row.get(6)?, archived: row.get(7)?, pinned: row.get(8)?,
-                sync_status: row.get(9)? }),
+                sync_status: row.get(9)?, ai_status: row.get(10)? }),
         ).optional()?.ok_or(StorageError::NotFound)?;
         decrypt_item(master_key, id, stored)
     }
@@ -245,8 +323,8 @@ impl Repository {
     ) -> Result<Vec<Item>, StorageError> {
         let connection = self.connection.lock().expect("repository mutex poisoned");
         let mut statement = connection.prepare(
-            "SELECT id,nonce,ciphertext,key_nonce,wrapped_key,created_at,updated_at,version,archived,pinned,sync_status \
-             FROM items WHERE (?1 OR archived=0) ORDER BY pinned DESC,updated_at DESC",
+            "SELECT i.id,i.nonce,i.ciphertext,i.key_nonce,i.wrapped_key,i.created_at,i.updated_at,i.version,i.archived,i.pinned,i.sync_status,COALESCE(j.status,'pending') \
+             FROM items i LEFT JOIN ai_jobs j ON j.item_id=i.id WHERE (?1 OR i.archived=0) ORDER BY i.pinned DESC,i.updated_at DESC",
         )?;
         let rows = statement.query_map([include_archived], |row| {
             Ok((
@@ -265,6 +343,7 @@ impl Repository {
                     archived: row.get(8)?,
                     pinned: row.get(9)?,
                     sync_status: row.get(10)?,
+                    ai_status: row.get(11)?,
                 },
             ))
         })?;
@@ -287,7 +366,212 @@ impl Repository {
             params![id.to_string(), now],
         )?;
         transaction.commit()?;
+        self.remove_from_index(id)?;
         Ok(())
+    }
+
+    pub fn claim_ai_jobs(
+        &self,
+        master_key: &MasterKey,
+        limit: usize,
+    ) -> Result<Vec<Item>, StorageError> {
+        let now = Utc::now();
+        let ids = {
+            let mut connection = self.connection.lock().expect("repository mutex poisoned");
+            let transaction = connection.transaction()?;
+            let ids = {
+                let mut statement = transaction.prepare(
+                    "SELECT item_id FROM ai_jobs \
+                     WHERE status='pending' OR (status='failed' AND (next_attempt_at IS NULL OR next_attempt_at<=?1)) \
+                     ORDER BY updated_at ASC LIMIT ?2",
+                )?;
+                statement
+                    .query_map(params![now.to_rfc3339(), limit.min(50) as i64], |row| {
+                        row.get::<_, String>(0)
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            for id in &ids {
+                transaction.execute(
+                    "UPDATE ai_jobs SET status='processing',attempts=attempts+1,updated_at=?2 WHERE item_id=?1",
+                    params![id, now.to_rfc3339()],
+                )?;
+            }
+            transaction.commit()?;
+            ids
+        };
+        ids.into_iter()
+            .map(|id| {
+                Uuid::parse_str(&id)
+                    .map_err(|_| StorageError::AiJobUnavailable)
+                    .and_then(|id| self.get(master_key, id))
+            })
+            .collect()
+    }
+
+    pub fn complete_ai_job(
+        &self,
+        master_key: &MasterKey,
+        id: Uuid,
+        metadata: AiMetadata,
+    ) -> Result<Item, StorageError> {
+        let mut item = self.get(master_key, id)?;
+        item.content.ai_metadata = Some(metadata);
+        let plaintext = serde_json::to_vec(&item.content)?;
+        let encrypted = master_key.encrypt(id.as_bytes(), &plaintext)?;
+        let now = Utc::now();
+        let mut connection = self.connection.lock().expect("repository mutex poisoned");
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "UPDATE items SET nonce=?2,ciphertext=?3,key_nonce=?4,wrapped_key=?5,updated_at=?6,version=version+1,sync_status='pending' WHERE id=?1",
+            params![id.to_string(), encrypted.nonce, encrypted.ciphertext, encrypted.key_nonce, encrypted.wrapped_key, now.to_rfc3339()],
+        )?;
+        transaction.execute(
+            "UPDATE ai_jobs SET status='complete',next_attempt_at=NULL,last_error=NULL,updated_at=?2 WHERE item_id=?1",
+            params![id.to_string(), now.to_rfc3339()],
+        )?;
+        transaction.execute(
+            "INSERT INTO outbox (object_id,operation,created_at) VALUES (?1,'upsert',?2)",
+            params![id.to_string(), now.to_rfc3339()],
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        self.index_item(&id, &item.content)?;
+        item.updated_at = now;
+        item.version += 1;
+        item.sync_status = "pending".into();
+        item.ai_status = "complete".into();
+        Ok(item)
+    }
+
+    pub fn fail_ai_job(
+        &self,
+        id: Uuid,
+        message: &str,
+        retry_after_seconds: i64,
+    ) -> Result<(), StorageError> {
+        let now = Utc::now();
+        let retry_at = now + chrono::Duration::seconds(retry_after_seconds.clamp(1, 86_400));
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        if connection.execute(
+            "UPDATE ai_jobs SET status='failed',next_attempt_at=?2,last_error=?3,updated_at=?4 WHERE item_id=?1",
+            params![id.to_string(), retry_at.to_rfc3339(), message.chars().take(500).collect::<String>(), now.to_rfc3339()],
+        )? == 0 {
+            return Err(StorageError::AiJobUnavailable);
+        }
+        Ok(())
+    }
+
+    pub fn ai_job_attempts(&self, id: Uuid) -> Result<i64, StorageError> {
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        connection
+            .query_row(
+                "SELECT attempts FROM ai_jobs WHERE item_id=?1",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(StorageError::AiJobUnavailable)
+    }
+
+    pub fn reset_ai_jobs(&self) -> Result<usize, StorageError> {
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        Ok(connection.execute(
+            "UPDATE ai_jobs SET status='pending',attempts=0,next_attempt_at=NULL,last_error=NULL,updated_at=?1",
+            [Utc::now().to_rfc3339()],
+        )?)
+    }
+
+    pub fn rebuild_search_index(&self, master_key: &MasterKey) -> Result<usize, StorageError> {
+        let items = self.list(master_key, true)?;
+        let search = self.search.lock().expect("search index mutex poisoned");
+        search.execute("DELETE FROM record_search", [])?;
+        drop(search);
+        let mut indexed = 0;
+        for item in items {
+            if item.content.ai_metadata.is_some() {
+                self.index_item(&item.id, &item.content)?;
+                indexed += 1;
+            }
+        }
+        Ok(indexed)
+    }
+
+    pub fn search_index(&self, query: &str, limit: usize) -> Result<Vec<Uuid>, StorageError> {
+        let terms = query
+            .split_whitespace()
+            .filter(|term| !term.is_empty())
+            .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let search = self.search.lock().expect("search index mutex poisoned");
+        let mut statement = search.prepare(
+            "SELECT item_id FROM record_search WHERE record_search MATCH ?1 ORDER BY rank LIMIT ?2",
+        )?;
+        statement
+            .query_map(params![terms, limit.min(100) as i64], |row| {
+                row.get::<_, String>(0)
+            })?
+            .filter_map(|row| row.ok().and_then(|id| Uuid::parse_str(&id).ok()).map(Ok))
+            .collect()
+    }
+
+    fn index_item(&self, id: &Uuid, content: &ItemContent) -> Result<(), StorageError> {
+        let Some(metadata) = content.ai_metadata.as_ref() else {
+            return self.remove_from_index(*id);
+        };
+        let search = self.search.lock().expect("search index mutex poisoned");
+        search.execute(
+            "DELETE FROM record_search WHERE item_id=?1",
+            [id.to_string()],
+        )?;
+        search.execute(
+            "INSERT INTO record_search (item_id,title,search_text,transcript,tags,markers) VALUES (?1,?2,?3,?4,?5,?6)",
+            params![id.to_string(), content.title, metadata.search_text, metadata.transcript.as_deref().unwrap_or_default(), content.tags.join(" "), content.markers.join(" ")],
+        )?;
+        Ok(())
+    }
+
+    fn remove_from_index(&self, id: Uuid) -> Result<(), StorageError> {
+        let search = self.search.lock().expect("search index mutex poisoned");
+        search.execute(
+            "DELETE FROM record_search WHERE item_id=?1",
+            [id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_attachment_descriptor(
+        &self,
+        descriptor: &AttachmentDescriptor,
+    ) -> Result<(), StorageError> {
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        connection.execute(
+            "INSERT INTO attachment_descriptors (id,media_type) VALUES (?1,?2) \
+             ON CONFLICT(id) DO UPDATE SET media_type=excluded.media_type",
+            params![descriptor.id.to_string(), descriptor.media_type],
+        )?;
+        Ok(())
+    }
+
+    pub fn attachment_descriptor(&self, id: Uuid) -> Result<AttachmentDescriptor, StorageError> {
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        connection
+            .query_row(
+                "SELECT media_type FROM attachment_descriptors WHERE id=?1",
+                [id.to_string()],
+                |row| {
+                    Ok(AttachmentDescriptor {
+                        id,
+                        media_type: row.get(0)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or(StorageError::NotFound)
     }
 
     pub fn save_attachment(
@@ -429,6 +713,13 @@ fn hash_file(path: &Path) -> Result<(u64, String), std::io::Error> {
     Ok((bytes, format!("{:x}", hasher.finalize())))
 }
 
+fn content_fingerprint(content: &ItemContent) -> Result<String, serde_json::Error> {
+    let mut indexable = content.clone();
+    indexable.ai_metadata = None;
+    let bytes = serde_json::to_vec(&indexable)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
 struct StoredItem {
     encrypted: EncryptedRecord,
     created_at: String,
@@ -437,6 +728,7 @@ struct StoredItem {
     archived: bool,
     pinned: bool,
     sync_status: String,
+    ai_status: String,
 }
 
 fn decrypt_item(
@@ -454,6 +746,7 @@ fn decrypt_item(
         archived: stored.archived,
         pinned: stored.pinned,
         sync_status: stored.sync_status,
+        ai_status: stored.ai_status,
     })
 }
 
@@ -603,6 +896,111 @@ mod tests {
         let mut restored = Vec::new();
         repository.read_attachment(&key, id, &mut restored).unwrap();
         assert_eq!(restored, plaintext);
+    }
+
+    #[test]
+    fn ai_queue_encrypts_metadata_and_rebuilds_memory_only_fts() {
+        let directory = TempDir::new().unwrap();
+        let database = directory.path().join("snapline.db");
+        let repository = Repository::open(&database).unwrap();
+        let key = MasterKey::generate();
+        let id = Uuid::new_v4();
+        let saved = repository
+            .save(
+                &key,
+                SaveItem {
+                    id,
+                    content: ItemContent {
+                        title: "Private launch note".into(),
+                        markdown: "The cobalt launch happens next Tuesday".into(),
+                        ..Default::default()
+                    },
+                    archived: false,
+                    pinned: false,
+                },
+            )
+            .unwrap();
+        assert_eq!(saved.ai_status, "pending");
+        let claimed = repository.claim_ai_jobs(&key, 10).unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].ai_status, "processing");
+        assert_eq!(repository.ai_job_attempts(id).unwrap(), 1);
+        let completed = repository
+            .complete_ai_job(
+                &key,
+                id,
+                AiMetadata {
+                    summary: "Confidential launch summary".into(),
+                    transcript: None,
+                    topics: vec!["launch".into()],
+                    entities: vec![],
+                    keywords: vec!["cobalt".into()],
+                    people: vec![],
+                    locations: vec![],
+                    event_time: None,
+                    language: "en".into(),
+                    suggested_tags: vec![],
+                    suggested_markers: vec![],
+                    search_text: "cobalt launch schedule".into(),
+                },
+            )
+            .unwrap();
+        assert_eq!(completed.ai_status, "complete");
+        assert_eq!(repository.search_index("cobalt", 10).unwrap(), vec![id]);
+        assert_eq!(repository.rebuild_search_index(&key).unwrap(), 1);
+        assert_eq!(repository.search_index("schedule", 10).unwrap(), vec![id]);
+        assert_eq!(repository.reset_ai_jobs().unwrap(), 1);
+        assert_eq!(repository.claim_ai_jobs(&key, 10).unwrap().len(), 1);
+
+        drop(repository);
+        let disk = fs::read(database).unwrap();
+        let text = String::from_utf8_lossy(&disk);
+        assert!(!text.contains("Confidential launch summary"));
+        assert!(!text.contains("cobalt launch schedule"));
+    }
+
+    #[test]
+    fn opening_a_pre_ai_database_backfills_historical_jobs() {
+        let directory = TempDir::new().unwrap();
+        let database = directory.path().join("legacy.db");
+        let key = MasterKey::generate();
+        let id = Uuid::new_v4();
+        let content = private_content();
+        let encrypted = key
+            .encrypt(id.as_bytes(), &serde_json::to_vec(&content).unwrap())
+            .unwrap();
+        let now = Utc::now().to_rfc3339();
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE items (
+                    id TEXT PRIMARY KEY, nonce TEXT NOT NULL, ciphertext TEXT NOT NULL,
+                    key_nonce TEXT NOT NULL, wrapped_key TEXT NOT NULL, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, version INTEGER NOT NULL, archived INTEGER NOT NULL,
+                    pinned INTEGER NOT NULL, sync_status TEXT NOT NULL
+                );",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO items VALUES (?1,?2,?3,?4,?5,?6,?6,1,0,0,'pending')",
+                params![
+                    id.to_string(),
+                    encrypted.nonce,
+                    encrypted.ciphertext,
+                    encrypted.key_nonce,
+                    encrypted.wrapped_key,
+                    now
+                ],
+            )
+            .unwrap();
+        drop(connection);
+
+        let repository = Repository::open(&database).unwrap();
+        let jobs = repository.claim_ai_jobs(&key, 10).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].id, id);
+        assert_eq!(jobs[0].content, content);
     }
 
     #[test]
