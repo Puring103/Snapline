@@ -137,3 +137,23 @@ cargo test --workspace --offline
 - 元数据摘要和 `search_text` 经记录 DEK 加密后落盘；磁盘扫描未发现测试摘要或索引文本。FTS5 仅在内存中重建并正确命中，未引入 Embedding 或向量数据库。
 - 固定 FFmpeg ZIP 的下载 URL 与 SHA-256 受测试保护。真实下载完成校验后，测试视频先加密并删除明文，再从密文 stdin 抽取 JPEG 关键帧和完整 MP3 音轨；断言没有恢复明文源视频。
 - 图片、音频、视频和严格 JSON Schema 使用同一个用户填写的模型。视频最多抽取每分钟一帧、30 帧；30 分钟录音压缩为单声道 32 kbit/s MP3 后处理。处理数据由客户端直连用户的 AI 服务，API Key 不进入 Snapline 服务端。
+
+## M10 Agent 搜索与对话
+
+2026-08-01 已验收：
+
+```powershell
+cd apps/desktop
+npm test -- --run
+npm run build
+cd ../..
+cargo fmt --all -- --check
+cargo clippy -p snapline-desktop-core -p snapline-desktop --all-targets --offline -- -D warnings
+cargo test -p snapline-desktop --offline
+```
+
+- Vitest 7 个测试文件、26 个交互/工具测试通过。覆盖发送问题、回答与引用渲染、引用跳转、4000 字符限制、失败后保留已有对话、未配置状态和生产构建。
+- Rust 常规测试 18 个通过，3 个需要真实媒体、桌面或 `myserver` 的测试显式忽略。Agent 测试覆盖两轮工具调用、引用只来自实际交给模型的记录、记录提示注入按不可信数据传递、6 轮上限、工具白名单、拒绝额外路径/SQL 参数、RFC3339 日期校验、20 条结果上限和 12000 字符正文截断。
+- Agent 只有 `search_records`、`get_record`、`search_transcripts`、`search_by_marker`、`search_by_tag`、`list_recent_records`、`get_attachment_metadata` 七个只读工具。最多 6 轮、每轮 8 次调用、总工具上下文 120000 字符；不能执行任意 SQL、命令或读取文件路径。
+- 搜索使用已解锁进程内存中的 FTS5 与解密后的结构化过滤，不使用 Embedding 或向量数据库。API Key 保持在 Windows Credential Manager，Snapline `myserver` 服务端不参与 AI 请求。
+- 完整工作区测试通过 SSH 隧道连接 `myserver` 上仅绑定回环端口的一次性 PostgreSQL 17 容器，合计 40 个测试通过、0 个失败、3 个条件忽略；测试后隧道与容器均已删除，正式数据库未被修改。

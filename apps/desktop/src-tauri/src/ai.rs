@@ -203,6 +203,32 @@ impl OpenAiCompatibleClient {
         };
         parse_metadata(&text)
     }
+
+    pub(crate) fn model(&self) -> &str {
+        &self.config.model
+    }
+
+    pub(crate) async fn completion(&self, request: &Value) -> Result<Value, AiError> {
+        let response = self
+            .client
+            .post(format!("{}/chat/completions", self.config.base_url))
+            .bearer_auth(&self.api_key)
+            .json(request)
+            .send()
+            .await
+            .map_err(|_| AiError::Network)?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(match status {
+                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => AiError::Unauthorized,
+                StatusCode::TOO_MANY_REQUESTS => AiError::RateLimited,
+                StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => AiError::Capability,
+                _ if status.is_server_error() => AiError::Server,
+                _ => AiError::InvalidResponse,
+            });
+        }
+        response.json().await.map_err(|_| AiError::InvalidResponse)
+    }
 }
 
 fn metadata_request(

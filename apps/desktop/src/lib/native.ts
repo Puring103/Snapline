@@ -39,6 +39,20 @@ export interface AiProcessResult {
   failed: number;
 }
 
+export interface AgentCitation {
+  id: string;
+  title: string;
+  summary: string;
+  source_type: string;
+  updated_at: string;
+}
+
+export interface AgentAnswer {
+  answer: string;
+  citations: AgentCitation[];
+  rounds: number;
+}
+
 const DEV_AI_KEY = 'snapline-dev-ai-config';
 
 export async function getAiConfig(): Promise<AiConfigStatus> {
@@ -83,6 +97,28 @@ export async function processAiQueue(): Promise<AiProcessResult> {
     if (result.completed + result.failed < 20) break;
   }
   return total;
+}
+
+export async function askAgent(question: string): Promise<AgentAnswer> {
+  const normalized = question.trim();
+  if (!normalized || [...normalized].length > 4_000) throw new Error('问题为空或超过 4000 字符');
+  if (isTauri()) return invoke<AgentAnswer>('ask_agent', { question: normalized });
+
+  const items = JSON.parse(localStorage.getItem('snapline-dev-items-v1') || '[]') as Array<{
+    id: string;
+    content: { title: string; markdown: string; tags: string[]; markers: string[]; source_type: string; ai_metadata?: { summary?: string; search_text?: string } | null };
+    updated_at: string;
+  }>;
+  const terms = normalized.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const matches = items.filter((item) => {
+    const searchable = [item.content.title, item.content.markdown, ...item.content.tags, ...item.content.markers, item.content.ai_metadata?.search_text || ''].join(' ').toLocaleLowerCase();
+    return terms.some((term) => searchable.includes(term));
+  }).slice(0, 5);
+  return {
+    answer: matches.length ? `找到 ${matches.length} 条相关记录。开发模式仅进行本地文本搜索。` : '没有找到相关记录。',
+    citations: matches.map((item) => ({ id: item.id, title: item.content.title || '无标题记录', summary: item.content.ai_metadata?.summary || item.content.markdown.slice(0, 120), source_type: item.content.source_type, updated_at: item.updated_at })),
+    rounds: 1,
+  };
 }
 
 export async function sessionStatus(): Promise<SessionStatus> {

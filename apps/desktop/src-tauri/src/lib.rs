@@ -30,6 +30,7 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutS
 use uuid::Uuid;
 use xcap::Monitor;
 
+mod agent;
 mod ai;
 mod media_ai;
 
@@ -702,6 +703,26 @@ async fn process_ai_queue(state: State<'_, DesktopState>) -> Result<AiProcessRes
         .rebuild_search_index(&master_key)
         .map_err(|_| "无法更新本地全文索引".to_string())?;
     Ok(result)
+}
+
+#[tauri::command]
+async fn ask_agent(
+    state: State<'_, DesktopState>,
+    question: String,
+) -> Result<agent::AgentAnswer, String> {
+    let stored = stored_ai_config(&state)?.ok_or_else(|| "尚未配置 AI 模型".to_string())?;
+    let client = OpenAiCompatibleClient::new(
+        AiConfig {
+            base_url: stored.base_url,
+            model: stored.model,
+        },
+        stored.api_key,
+    )
+    .map_err(|error| error.to_string())?;
+    let (repository, master_key) = crypto_context(&state)?;
+    agent::run_agent(&client, &repository, &master_key, &question)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 fn media_attachment(
@@ -1454,6 +1475,7 @@ pub fn run() {
             clear_ai_config,
             rebuild_ai_metadata,
             process_ai_queue,
+            ask_agent,
             store_attachment_bytes,
             capture_screenshot,
             pick_and_import_attachment,
