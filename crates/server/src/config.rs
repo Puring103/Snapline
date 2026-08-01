@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, str::FromStr};
+use std::{env, net::SocketAddr, path::PathBuf, str::FromStr};
 
 use anyhow::{Context, Result, bail};
 
@@ -9,6 +9,7 @@ pub struct Config {
     pub jwt_secret: String,
     pub access_token_ttl_seconds: i64,
     pub refresh_token_ttl_seconds: i64,
+    pub object_dir: PathBuf,
 }
 
 impl Config {
@@ -27,6 +28,9 @@ impl Config {
             jwt_secret,
             access_token_ttl_seconds: parse_i64("SNAPLINE_ACCESS_TOKEN_TTL_SECONDS", 900)?,
             refresh_token_ttl_seconds: parse_i64("SNAPLINE_REFRESH_TOKEN_TTL_SECONDS", 2_592_000)?,
+            object_dir: PathBuf::from(
+                env::var("SNAPLINE_OBJECT_DIR").unwrap_or_else(|_| "data/objects".into()),
+            ),
         })
     }
 }

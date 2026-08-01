@@ -6,6 +6,7 @@ use axum::{
 use serde_json::{Value, json};
 use snapline_server::{app, auth::AuthResponse, config::Config};
 use sqlx::{PgPool, postgres::PgPoolOptions};
+use std::path::PathBuf;
 use tower::ServiceExt;
 
 async fn test_app() -> (Router, PgPool) {
@@ -27,6 +28,7 @@ async fn test_app() -> (Router, PgPool) {
         jwt_secret: "integration-test-secret-at-least-32-characters".into(),
         access_token_ttl_seconds: 300,
         refresh_token_ttl_seconds: 3600,
+        object_dir: PathBuf::from("target/test-objects-auth"),
     };
     (app(pool.clone(), &config), pool)
 }

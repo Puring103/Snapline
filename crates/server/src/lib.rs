@@ -1,3 +1,4 @@
+pub mod attachments;
 pub mod auth;
 pub mod config;
 pub mod error;
@@ -7,6 +8,7 @@ pub mod sync;
 
 use axum::{
     Json, Router,
+    extract::DefaultBodyLimit,
     routing::{delete, get, post},
 };
 use serde::Serialize;
@@ -34,6 +36,22 @@ pub fn app(pool: PgPool, config: &Config) -> Router {
         .route("/api/v1/sync/push", post(sync::push))
         .route("/api/v1/sync/pull", get(sync::pull))
         .route("/api/v1/sync/ack", post(sync::ack))
+        .route("/api/v1/attachments", post(attachments::create))
+        .route("/api/v1/attachments/{id}", get(attachments::status))
+        .route(
+            "/api/v1/attachments/{id}/parts/{part}",
+            axum::routing::put(attachments::upload_part).layer(DefaultBodyLimit::max(
+                snapline_domain::ATTACHMENT_PART_BYTES as usize + 1,
+            )),
+        )
+        .route(
+            "/api/v1/attachments/{id}/complete",
+            post(attachments::complete),
+        )
+        .route(
+            "/api/v1/attachments/{id}/content",
+            get(attachments::download),
+        )
         .with_state(state)
 }
 

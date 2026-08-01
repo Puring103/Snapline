@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use sqlx::PgPool;
 
 use crate::{auth::TokenService, config::Config, rate_limit::LoginLimiter};
@@ -7,6 +9,7 @@ pub struct AppState {
     pub pool: PgPool,
     pub tokens: TokenService,
     pub login_limiter: LoginLimiter,
+    pub object_dir: PathBuf,
 }
 
 impl AppState {
@@ -19,6 +22,7 @@ impl AppState {
                 config.refresh_token_ttl_seconds,
             ),
             login_limiter: LoginLimiter::default(),
+            object_dir: config.object_dir.clone(),
         }
     }
 }

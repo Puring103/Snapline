@@ -12,6 +12,7 @@ use snapline_server::{
     sync::{PullResponse, PushResponse},
 };
 use sqlx::postgres::PgPoolOptions;
+use std::path::PathBuf;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -78,6 +79,7 @@ async fn encrypted_sync_is_idempotent_isolated_and_conflict_aware() {
         jwt_secret: "integration-test-secret-at-least-32-characters".into(),
         access_token_ttl_seconds: 300,
         refresh_token_ttl_seconds: 3600,
+        object_dir: PathBuf::from("target/test-objects-sync"),
     };
     let app = app(pool, &config);
     let owner = register(app.clone(), &format!("sync-{}@example.com", Uuid::new_v4())).await;
