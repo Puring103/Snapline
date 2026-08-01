@@ -157,3 +157,16 @@ cargo test -p snapline-desktop --offline
 - Agent 只有 `search_records`、`get_record`、`search_transcripts`、`search_by_marker`、`search_by_tag`、`list_recent_records`、`get_attachment_metadata` 七个只读工具。最多 6 轮、每轮 8 次调用、总工具上下文 120000 字符；不能执行任意 SQL、命令或读取文件路径。
 - 搜索使用已解锁进程内存中的 FTS5 与解密后的结构化过滤，不使用 Embedding 或向量数据库。API Key 保持在 Windows Credential Manager，Snapline `myserver` 服务端不参与 AI 请求。
 - 完整工作区测试通过 SSH 隧道连接 `myserver` 上仅绑定回环端口的一次性 PostgreSQL 17 容器，合计 40 个测试通过、0 个失败、3 个条件忽略；测试后隧道与容器均已删除，正式数据库未被修改。
+
+## M11 桌面同步闭环
+
+2026-08-01 已验收：
+
+- 本地 SQLite 新增独立服务端版本、pull cursor 和加密冲突表；outbox 按对象合并最新操作，但只有服务端确认后才删除。测试覆盖双仓库密文往返、服务端版本推进、本地/远端冲突选择，以及 push 响应丢失后保留更新的本地内容。
+- Access Token 在到期前两分钟使用 Windows Credential Manager 中的 Refresh Token 轮换；401 会强制刷新一次。设备撤销或刷新失效会删除凭据并清空 UMK、仓库和会话状态。
+- 每次登录、自动保存、删除、快捷记录完成、恢复联网及每 30 秒触发同步。pull 分页应用后持久化 cursor 并 ack；push 使用由设备和 outbox 序列派生的稳定幂等键，校验逐项确认对象。
+- 附件先于引用记录上传，使用 8 MiB 分片并跳过服务端已持有分片。加密附件元数据由 UMK 认证加密；下载流式写入临时密文文件，大小、SHA-256 和对象 ID 验证通过后原子导入，不产生明文临时文件。
+- Vitest 8 个测试文件、27 个测试通过；Rust 最终完整工作区在 `myserver` 一次性 PostgreSQL 17 上共 43 个常规测试通过、0 失败、4 个条件忽略；Clippy 零警告，生产前端构建通过。
+- 更新后的服务端已部署到 `myserver`，API 仍仅绑定 `127.0.0.1:58080`，PostgreSQL 无主机端口。对象卷由一次性 root 初始化容器设置给非 root API UID `10001`，API 继续以非 root 运行。
+- 真实 `myserver` 双设备测试通过：设备 A 上传一条记录和约 9 MiB 加密视频，设备 B 增量拉取、校验并完整解密；撤销设备 A 后刷新被拒绝且本地会话清空。两个测试账号和对应密文对象目录均已精确删除。
+- 当前公网入口仍为开发用 HTTP。测试仅使用随机临时凭据与内容；正式账号、真实记录和长期同步必须先配置 HTTPS。

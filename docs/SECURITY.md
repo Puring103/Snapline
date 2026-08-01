@@ -21,6 +21,7 @@
 - AI Base URL、模型和 API Key 作为单个凭据写入当前用户的 Windows Credential Manager；读取配置的前端命令只返回 Base URL、模型和状态，永不返回 API Key。
 - AI 元数据随记录内容使用记录 DEK 加密。FTS5 索引只存在于已解锁进程的内存 SQLite 中，登录后从解密元数据重建，数据库文件不保存标题、转写、摘要或搜索文本。
 - 视频处理使用固定的 FFmpeg 8.1.2 Windows 构建。首次使用时从固定 HTTPS URL 下载并验证固定 SHA-256；视频密文直接流入 FFmpeg stdin，关键帧和压缩音轨从 stdout 进入模型请求，不创建明文源视频。
+- 同步 outbox、服务端版本和 pull cursor 不含内容明文；冲突的远端版本保持服务端密文形式，只有在已解锁客户端展示冲突时解密。附件下载先写入有界密文临时文件，经大小、SHA-256、对象 ID 和 AEAD 验证后导入。
 
 ## AI 服务边界
 
@@ -33,6 +34,8 @@ Agent 只能访问当前已解锁账户的七个白名单只读工具，不能�
 ## 服务端与网络
 
 密码使用 Argon2id 哈希；Refresh Token 在 PostgreSQL 中只保存 SHA-256 哈希并在刷新时轮换。所有资源访问同时约束已认证用户和设备，撤销设备会使现有会话失效。
+
+桌面端在 Access Token 临近过期或收到 401 时轮换 Refresh Token，新 Token 原子替换 Windows 凭据。刷新失败或设备撤销会删除本地凭据并清空内存中的 UMK 和仓库句柄。同步 push 使用稳定幂等键；服务器确认对象必须与请求逐项匹配，不能用错误确认清除 outbox。
 
 端到端加密不替代 TLS。当前 `http://122.51.119.75/snapline/` 只允许开发验证；明文 HTTP 会暴露密码和 Token。正式账号、真实内容和 AI Key 使用前必须配置域名、可信证书及 HTTPS，并将 HTTP 重定向到 HTTPS。
 

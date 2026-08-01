@@ -12,6 +12,8 @@ http://122.51.119.75/snapline/
 
 PostgreSQL 仅在 Compose 内部网络监听，API 仅绑定主机 `127.0.0.1:58080`，附件使用 Docker 持久卷保存密文对象。
 
+Compose 中的 `object-init` 是一次性初始化服务，只负责把密文对象卷设置为 API 的非 root UID `10001`；完成后退出。`snapline-api` 始终以 UID `10001` 运行。
+
 ## 部署
 
 本地先运行完整测试，然后执行：

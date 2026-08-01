@@ -10,6 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use snapline_crypto::{EncryptedAttachmentHeader, EncryptedRecord, MasterKey};
+use snapline_domain::{EncryptedEnvelope, SyncChange, SyncOperation};
 use uuid::Uuid;
 
 const SCHEMA: &str = r#"
@@ -36,6 +37,25 @@ CREATE TABLE IF NOT EXISTS outbox (
     created_at TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT
+);
+CREATE TABLE IF NOT EXISTS sync_state (
+    object_id TEXT PRIMARY KEY,
+    server_version INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sync_meta (
+    key TEXT PRIMARY KEY,
+    value INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO sync_meta (key,value) VALUES ('pull_cursor',0);
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+    object_id TEXT PRIMARY KEY,
+    version INTEGER NOT NULL,
+    device_id TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    wrapped_key TEXT NOT NULL,
+    client_updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS attachments (
     id TEXT PRIMARY KEY,
@@ -97,6 +117,8 @@ pub enum StorageError {
     AttachmentStorageUnavailable,
     #[error("AI job is unavailable")]
     AiJobUnavailable,
+    #[error("sync state is invalid")]
+    InvalidSyncState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -186,6 +208,50 @@ pub struct Attachment {
 pub struct AttachmentDescriptor {
     pub id: Uuid,
     pub media_type: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttachmentSyncData {
+    pub attachment: Attachment,
+    pub header: EncryptedAttachmentHeader,
+    pub descriptor: AttachmentDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct SyncedItemPayload {
+    content: ItemContent,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    archived: bool,
+    pinned: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingSyncChange {
+    pub sequence: i64,
+    pub envelope: EncryptedEnvelope,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SyncConflict {
+    pub object_id: Uuid,
+    pub local: Option<Item>,
+    pub remote: Option<Item>,
+    pub remote_deleted: bool,
+    pub remote_version: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictChoice {
+    Local,
+    Remote,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteApply {
+    Applied,
+    Conflict,
+    Ignored,
 }
 
 pub struct Repository {
@@ -367,6 +433,229 @@ impl Repository {
         )?;
         transaction.commit()?;
         self.remove_from_index(id)?;
+        Ok(())
+    }
+
+    pub fn pending_sync_changes(
+        &self,
+        master_key: &MasterKey,
+        device_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<PendingSyncChange>, StorageError> {
+        let rows = {
+            let connection = self.connection.lock().expect("repository mutex poisoned");
+            let mut statement = connection.prepare(
+                "SELECT o.sequence,o.object_id,o.operation,s.server_version \
+                 FROM outbox o \
+                 JOIN (SELECT object_id,MAX(sequence) AS sequence FROM outbox \
+                       WHERE operation IN ('upsert','delete') GROUP BY object_id) latest \
+                   ON latest.sequence=o.sequence \
+                 LEFT JOIN sync_state s ON s.object_id=o.object_id \
+                 WHERE NOT EXISTS(SELECT 1 FROM sync_conflicts c WHERE c.object_id=o.object_id) \
+                 ORDER BY o.sequence LIMIT ?1",
+            )?;
+            statement
+                .query_map([limit.clamp(1, 100) as i64], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        rows.into_iter()
+            .map(|(sequence, id, operation, base_version)| {
+                let id = Uuid::parse_str(&id).map_err(|_| StorageError::InvalidSyncState)?;
+                let (operation, encrypted, updated_at) = if operation == "delete" {
+                    (
+                        SyncOperation::Delete,
+                        master_key.encrypt(id.as_bytes(), b"deleted")?,
+                        Utc::now(),
+                    )
+                } else {
+                    let item = self.get(master_key, id)?;
+                    let payload = SyncedItemPayload {
+                        content: item.content,
+                        created_at: item.created_at,
+                        updated_at: item.updated_at,
+                        archived: item.archived,
+                        pinned: item.pinned,
+                    };
+                    (
+                        SyncOperation::Upsert,
+                        master_key.encrypt(id.as_bytes(), &serde_json::to_vec(&payload)?)?,
+                        payload.updated_at,
+                    )
+                };
+                let wrapped_key = pack_key(&encrypted)?;
+                Ok(PendingSyncChange {
+                    sequence,
+                    envelope: EncryptedEnvelope {
+                        object_id: id,
+                        object_type: "item".into(),
+                        device_id,
+                        base_version,
+                        operation,
+                        ciphertext: encrypted.ciphertext,
+                        nonce: encrypted.nonce,
+                        wrapped_key,
+                        client_updated_at: updated_at,
+                    },
+                })
+            })
+            .collect()
+    }
+
+    pub fn complete_sync_push(&self, accepted: &[(Uuid, i64, i64)]) -> Result<(), StorageError> {
+        let mut connection = self.connection.lock().expect("repository mutex poisoned");
+        let transaction = connection.transaction()?;
+        for (id, version, sequence) in accepted {
+            transaction.execute(
+                "INSERT INTO sync_state (object_id,server_version) VALUES (?1,?2) \
+                 ON CONFLICT(object_id) DO UPDATE SET server_version=excluded.server_version",
+                params![id.to_string(), version],
+            )?;
+            transaction.execute(
+                "DELETE FROM outbox WHERE object_id=?1 AND sequence<=?2 AND operation IN ('upsert','delete')",
+                params![id.to_string(), sequence],
+            )?;
+            let remains: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM outbox WHERE object_id=?1 AND operation IN ('upsert','delete'))",
+                [id.to_string()],
+                |row| row.get(0),
+            )?;
+            if !remains {
+                transaction.execute(
+                    "UPDATE items SET sync_status='synced' WHERE id=?1",
+                    [id.to_string()],
+                )?;
+            }
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn pull_cursor(&self) -> Result<i64, StorageError> {
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        connection
+            .query_row(
+                "SELECT value FROM sync_meta WHERE key='pull_cursor'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(StorageError::Database)
+    }
+
+    pub fn set_pull_cursor(&self, cursor: i64) -> Result<(), StorageError> {
+        if cursor < 0 {
+            return Err(StorageError::InvalidSyncState);
+        }
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        connection.execute(
+            "UPDATE sync_meta SET value=MAX(value,?1) WHERE key='pull_cursor'",
+            [cursor],
+        )?;
+        Ok(())
+    }
+
+    pub fn apply_remote_change(
+        &self,
+        master_key: &MasterKey,
+        current_device: Uuid,
+        change: &SyncChange,
+    ) -> Result<RemoteApply, StorageError> {
+        if change.envelope.object_type != "item" || change.version <= 0 {
+            return Ok(RemoteApply::Ignored);
+        }
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        let server_version = connection
+            .query_row(
+                "SELECT server_version FROM sync_state WHERE object_id=?1",
+                [change.envelope.object_id.to_string()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        if server_version >= change.version {
+            return Ok(RemoteApply::Ignored);
+        }
+        let has_pending: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM outbox WHERE object_id=?1 AND operation IN ('upsert','delete'))",
+            [change.envelope.object_id.to_string()],
+            |row| row.get(0),
+        )?;
+        drop(connection);
+        if has_pending && change.envelope.device_id != current_device {
+            self.store_conflict(change)?;
+            return Ok(RemoteApply::Conflict);
+        }
+        if has_pending {
+            let connection = self.connection.lock().expect("repository mutex poisoned");
+            connection.execute(
+                "INSERT INTO sync_state (object_id,server_version) VALUES (?1,?2) \
+                 ON CONFLICT(object_id) DO UPDATE SET server_version=MAX(sync_state.server_version,excluded.server_version)",
+                params![change.envelope.object_id.to_string(), change.version],
+            )?;
+            return Ok(RemoteApply::Ignored);
+        }
+        self.apply_remote_force(master_key, change, false)?;
+        Ok(RemoteApply::Applied)
+    }
+
+    pub fn list_sync_conflicts(
+        &self,
+        master_key: &MasterKey,
+    ) -> Result<Vec<SyncConflict>, StorageError> {
+        let changes = self.stored_conflicts()?;
+        changes
+            .into_iter()
+            .map(|change| {
+                let local = self.get(master_key, change.envelope.object_id).ok();
+                let remote_deleted = change.envelope.operation == SyncOperation::Delete;
+                let remote = if remote_deleted {
+                    None
+                } else {
+                    Some(remote_item(master_key, &change)?)
+                };
+                Ok(SyncConflict {
+                    object_id: change.envelope.object_id,
+                    local,
+                    remote,
+                    remote_deleted,
+                    remote_version: change.version,
+                })
+            })
+            .collect()
+    }
+
+    pub fn resolve_sync_conflict(
+        &self,
+        master_key: &MasterKey,
+        id: Uuid,
+        choice: ConflictChoice,
+    ) -> Result<(), StorageError> {
+        let change = self
+            .stored_conflicts()?
+            .into_iter()
+            .find(|change| change.envelope.object_id == id)
+            .ok_or(StorageError::NotFound)?;
+        match choice {
+            ConflictChoice::Local => {
+                let connection = self.connection.lock().expect("repository mutex poisoned");
+                connection.execute(
+                    "INSERT INTO sync_state (object_id,server_version) VALUES (?1,?2) \
+                     ON CONFLICT(object_id) DO UPDATE SET server_version=excluded.server_version",
+                    params![id.to_string(), change.version],
+                )?;
+                connection.execute(
+                    "DELETE FROM sync_conflicts WHERE object_id=?1",
+                    [id.to_string()],
+                )?;
+            }
+            ConflictChoice::Remote => self.apply_remote_force(master_key, &change, true)?,
+        }
         Ok(())
     }
 
@@ -574,6 +863,156 @@ impl Repository {
             .ok_or(StorageError::NotFound)
     }
 
+    pub fn pending_attachments(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<AttachmentSyncData>, StorageError> {
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        let mut statement = connection.prepare(
+            "SELECT a.id,a.nonce_prefix,a.key_nonce,a.wrapped_key,a.chunk_bytes,a.ciphertext_bytes, \
+                    a.ciphertext_sha256,a.created_at,a.sync_status,d.media_type \
+             FROM attachments a JOIN attachment_descriptors d ON d.id=a.id \
+             WHERE a.sync_status<>'synced' AND EXISTS(SELECT 1 FROM outbox o WHERE o.object_id=a.id AND o.operation='attachment') \
+             ORDER BY a.created_at LIMIT ?1",
+        )?;
+        statement
+            .query_map([limit.clamp(1, 20) as i64], |row| {
+                let id = Uuid::parse_str(&row.get::<_, String>(0)?)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                let created = row.get::<_, String>(7)?;
+                Ok((
+                    id,
+                    EncryptedAttachmentHeader {
+                        nonce_prefix: row.get(1)?,
+                        key_nonce: row.get(2)?,
+                        wrapped_key: row.get(3)?,
+                        chunk_bytes: row.get(4)?,
+                    },
+                    row.get::<_, u64>(5)?,
+                    row.get::<_, String>(6)?,
+                    created,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                ))
+            })?
+            .map(|row| {
+                let (id, header, bytes, sha, created, status, media_type) = row?;
+                Ok(AttachmentSyncData {
+                    attachment: Attachment {
+                        id,
+                        ciphertext_bytes: bytes,
+                        ciphertext_sha256: sha,
+                        created_at: parse_time(&created)?,
+                        sync_status: status,
+                    },
+                    header,
+                    descriptor: AttachmentDescriptor { id, media_type },
+                })
+            })
+            .collect()
+    }
+
+    pub fn has_attachment(&self, id: Uuid) -> Result<bool, StorageError> {
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM attachments WHERE id=?1)",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(StorageError::Database)
+    }
+
+    pub fn read_attachment_ciphertext_part(
+        &self,
+        id: Uuid,
+        offset: u64,
+        length: usize,
+    ) -> Result<Vec<u8>, StorageError> {
+        use std::io::{Seek, SeekFrom};
+        let directory = self
+            .attachment_dir
+            .as_ref()
+            .ok_or(StorageError::AttachmentStorageUnavailable)?;
+        let total = self.attachment_ciphertext_bytes(id)?;
+        if offset > total || length as u64 > total.saturating_sub(offset) {
+            return Err(StorageError::InvalidSyncState);
+        }
+        let mut file = File::open(directory.join(format!("{id}.blob")))?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut bytes = vec![0_u8; length];
+        file.read_exact(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    pub fn mark_attachment_synced(&self, id: Uuid) -> Result<(), StorageError> {
+        let mut connection = self.connection.lock().expect("repository mutex poisoned");
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "UPDATE attachments SET sync_status='synced' WHERE id=?1",
+            [id.to_string()],
+        )?;
+        transaction.execute(
+            "DELETE FROM outbox WHERE object_id=?1 AND operation='attachment'",
+            [id.to_string()],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn import_encrypted_attachment(
+        &self,
+        data: &AttachmentSyncData,
+        mut ciphertext: impl Read,
+    ) -> Result<(), StorageError> {
+        let directory = self
+            .attachment_dir
+            .as_ref()
+            .ok_or(StorageError::AttachmentStorageUnavailable)?;
+        let temporary = directory.join(format!(
+            ".{}-{}.download",
+            data.attachment.id,
+            Uuid::new_v4()
+        ));
+        let destination = directory.join(format!("{}.blob", data.attachment.id));
+        let mut output = File::create(&temporary)?;
+        let mut hasher = Sha256::new();
+        let mut total = 0_u64;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = ciphertext.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            output.write_all(&buffer[..read])?;
+            hasher.update(&buffer[..read]);
+            total += read as u64;
+        }
+        output.sync_all()?;
+        if total != data.attachment.ciphertext_bytes
+            || format!("{:x}", hasher.finalize()) != data.attachment.ciphertext_sha256
+        {
+            drop(output);
+            let _ = fs::remove_file(&temporary);
+            return Err(StorageError::InvalidSyncState);
+        }
+        drop(output);
+        fs::rename(&temporary, &destination)?;
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        connection.execute(
+            "INSERT INTO attachments (id,nonce_prefix,key_nonce,wrapped_key,chunk_bytes,ciphertext_bytes,ciphertext_sha256,created_at,sync_status) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'synced') ON CONFLICT(id) DO NOTHING",
+            params![data.attachment.id.to_string(), data.header.nonce_prefix, data.header.key_nonce, data.header.wrapped_key,
+                data.header.chunk_bytes, data.attachment.ciphertext_bytes, data.attachment.ciphertext_sha256,
+                data.attachment.created_at.to_rfc3339()],
+        )?;
+        connection.execute(
+            "INSERT INTO attachment_descriptors (id,media_type) VALUES (?1,?2) ON CONFLICT(id) DO NOTHING",
+            params![data.attachment.id.to_string(), data.descriptor.media_type],
+        )?;
+        Ok(())
+    }
+
     pub fn save_attachment(
         &self,
         master_key: &MasterKey,
@@ -694,6 +1133,231 @@ impl Repository {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error.into()),
         }
+    }
+
+    fn store_conflict(&self, change: &SyncChange) -> Result<(), StorageError> {
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        connection.execute(
+            "INSERT INTO sync_conflicts \
+             (object_id,version,device_id,operation,nonce,ciphertext,wrapped_key,client_updated_at) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8) \
+             ON CONFLICT(object_id) DO UPDATE SET version=excluded.version,device_id=excluded.device_id, \
+             operation=excluded.operation,nonce=excluded.nonce,ciphertext=excluded.ciphertext, \
+             wrapped_key=excluded.wrapped_key,client_updated_at=excluded.client_updated_at",
+            params![
+                change.envelope.object_id.to_string(),
+                change.version,
+                change.envelope.device_id.to_string(),
+                operation_name(&change.envelope.operation),
+                change.envelope.nonce,
+                change.envelope.ciphertext,
+                change.envelope.wrapped_key,
+                change.envelope.client_updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn stored_conflicts(&self) -> Result<Vec<SyncChange>, StorageError> {
+        let connection = self.connection.lock().expect("repository mutex poisoned");
+        let mut statement = connection.prepare(
+            "SELECT object_id,version,device_id,operation,nonce,ciphertext,wrapped_key,client_updated_at \
+             FROM sync_conflicts ORDER BY client_updated_at DESC",
+        )?;
+        statement
+            .query_map([], |row| {
+                let operation = match row.get::<_, String>(3)?.as_str() {
+                    "upsert" => SyncOperation::Upsert,
+                    "delete" => SyncOperation::Delete,
+                    _ => return Err(rusqlite::Error::InvalidQuery),
+                };
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    operation,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                ))
+            })?
+            .map(|row| {
+                let (id, version, device, operation, nonce, ciphertext, wrapped_key, updated) =
+                    row?;
+                Ok(SyncChange {
+                    cursor: 0,
+                    version,
+                    envelope: EncryptedEnvelope {
+                        object_id: Uuid::parse_str(&id)
+                            .map_err(|_| StorageError::InvalidSyncState)?,
+                        object_type: "item".into(),
+                        device_id: Uuid::parse_str(&device)
+                            .map_err(|_| StorageError::InvalidSyncState)?,
+                        base_version: version - 1,
+                        operation,
+                        ciphertext,
+                        nonce,
+                        wrapped_key,
+                        client_updated_at: parse_time(&updated)?,
+                    },
+                    server_created_at: DateTime::UNIX_EPOCH,
+                })
+            })
+            .collect()
+    }
+
+    fn apply_remote_force(
+        &self,
+        master_key: &MasterKey,
+        change: &SyncChange,
+        discard_local: bool,
+    ) -> Result<(), StorageError> {
+        let id = change.envelope.object_id;
+        let payload = if change.envelope.operation == SyncOperation::Upsert {
+            Some(remote_payload(master_key, change)?)
+        } else {
+            None
+        };
+        let content_fingerprint = payload
+            .as_ref()
+            .map(|payload| content_fingerprint(&payload.content))
+            .transpose()?;
+        let encrypted_content = payload
+            .as_ref()
+            .map(|payload| {
+                master_key
+                    .encrypt(id.as_bytes(), &serde_json::to_vec(&payload.content)?)
+                    .map_err(StorageError::Crypto)
+            })
+            .transpose()?;
+        let mut connection = self.connection.lock().expect("repository mutex poisoned");
+        let transaction = connection.transaction()?;
+        if discard_local {
+            transaction.execute("DELETE FROM outbox WHERE object_id=?1", [id.to_string()])?;
+        }
+        if let (Some(payload), Some(encrypted), Some(fingerprint)) =
+            (&payload, encrypted_content, content_fingerprint)
+        {
+            let local_version = transaction
+                .query_row(
+                    "SELECT version FROM items WHERE id=?1",
+                    [id.to_string()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .unwrap_or(0)
+                + 1;
+            transaction.execute(
+                "INSERT INTO items \
+                 (id,nonce,ciphertext,key_nonce,wrapped_key,created_at,updated_at,version,archived,pinned,sync_status) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'synced') \
+                 ON CONFLICT(id) DO UPDATE SET nonce=excluded.nonce,ciphertext=excluded.ciphertext, \
+                 key_nonce=excluded.key_nonce,wrapped_key=excluded.wrapped_key,updated_at=excluded.updated_at, \
+                 version=excluded.version,archived=excluded.archived,pinned=excluded.pinned,sync_status='synced'",
+                params![id.to_string(), encrypted.nonce, encrypted.ciphertext, encrypted.key_nonce,
+                    encrypted.wrapped_key, payload.created_at.to_rfc3339(), payload.updated_at.to_rfc3339(),
+                    local_version, payload.archived, payload.pinned],
+            )?;
+            let ai_status = if payload.content.ai_metadata.is_some() {
+                "complete"
+            } else {
+                "pending"
+            };
+            transaction.execute(
+                "INSERT INTO ai_jobs (item_id,content_fingerprint,status,attempts,next_attempt_at,last_error,updated_at) \
+                 VALUES (?1,?2,?3,0,NULL,NULL,?4) \
+                 ON CONFLICT(item_id) DO UPDATE SET content_fingerprint=excluded.content_fingerprint, \
+                 status=excluded.status,attempts=0,next_attempt_at=NULL,last_error=NULL,updated_at=excluded.updated_at",
+                params![id.to_string(), fingerprint, ai_status, Utc::now().to_rfc3339()],
+            )?;
+        } else {
+            transaction.execute("DELETE FROM items WHERE id=?1", [id.to_string()])?;
+        }
+        transaction.execute(
+            "INSERT INTO sync_state (object_id,server_version) VALUES (?1,?2) \
+             ON CONFLICT(object_id) DO UPDATE SET server_version=excluded.server_version",
+            params![id.to_string(), change.version],
+        )?;
+        transaction.execute(
+            "DELETE FROM sync_conflicts WHERE object_id=?1",
+            [id.to_string()],
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        if let Some(payload) = payload {
+            if payload.content.ai_metadata.is_some() {
+                self.index_item(&id, &payload.content)?;
+            } else {
+                self.remove_from_index(id)?;
+            }
+        } else {
+            self.remove_from_index(id)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct PackedKey<'a> {
+    key_nonce: &'a str,
+    wrapped_key: &'a str,
+}
+
+#[derive(Deserialize)]
+struct OwnedPackedKey {
+    key_nonce: String,
+    wrapped_key: String,
+}
+
+fn pack_key(encrypted: &EncryptedRecord) -> Result<String, StorageError> {
+    Ok(serde_json::to_string(&PackedKey {
+        key_nonce: &encrypted.key_nonce,
+        wrapped_key: &encrypted.wrapped_key,
+    })?)
+}
+
+fn remote_payload(
+    master_key: &MasterKey,
+    change: &SyncChange,
+) -> Result<SyncedItemPayload, StorageError> {
+    let key: OwnedPackedKey = serde_json::from_str(&change.envelope.wrapped_key)?;
+    let encrypted = EncryptedRecord {
+        nonce: change.envelope.nonce.clone(),
+        ciphertext: change.envelope.ciphertext.clone(),
+        key_nonce: key.key_nonce,
+        wrapped_key: key.wrapped_key,
+    };
+    Ok(serde_json::from_slice(&master_key.decrypt(
+        change.envelope.object_id.as_bytes(),
+        &encrypted,
+    )?)?)
+}
+
+fn remote_item(master_key: &MasterKey, change: &SyncChange) -> Result<Item, StorageError> {
+    let payload = remote_payload(master_key, change)?;
+    Ok(Item {
+        id: change.envelope.object_id,
+        content: payload.content.clone(),
+        created_at: payload.created_at,
+        updated_at: payload.updated_at,
+        version: change.version,
+        archived: payload.archived,
+        pinned: payload.pinned,
+        sync_status: "conflict".into(),
+        ai_status: if payload.content.ai_metadata.is_some() {
+            "complete"
+        } else {
+            "pending"
+        }
+        .into(),
+    })
+}
+
+fn operation_name(operation: &SyncOperation) -> &'static str {
+    match operation {
+        SyncOperation::Upsert => "upsert",
+        SyncOperation::Delete => "delete",
     }
 }
 
@@ -1025,5 +1689,265 @@ mod tests {
         encrypted[9] ^= 1;
         fs::write(path, encrypted).unwrap();
         assert!(repository.read_attachment(&key, id, Vec::new()).is_err());
+    }
+
+    #[test]
+    fn durable_sync_round_trip_and_conflict_resolution_use_server_versions() {
+        let first = Repository::open_in_memory().unwrap();
+        let second = Repository::open_in_memory().unwrap();
+        let key = MasterKey::generate();
+        let first_device = Uuid::new_v4();
+        let second_device = Uuid::new_v4();
+        let id = Uuid::new_v4();
+        first
+            .save(
+                &key,
+                SaveItem {
+                    id,
+                    content: ItemContent {
+                        title: "first device".into(),
+                        ..Default::default()
+                    },
+                    archived: false,
+                    pinned: true,
+                },
+            )
+            .unwrap();
+        let pending = first.pending_sync_changes(&key, first_device, 100).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].envelope.base_version, 0);
+        let initial = SyncChange {
+            cursor: 1,
+            version: 1,
+            envelope: pending[0].envelope.clone(),
+            server_created_at: Utc::now(),
+        };
+        first
+            .complete_sync_push(&[(id, 1, pending[0].sequence)])
+            .unwrap();
+        assert!(
+            first
+                .pending_sync_changes(&key, first_device, 100)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            second
+                .apply_remote_change(&key, second_device, &initial)
+                .unwrap(),
+            RemoteApply::Applied
+        );
+        assert_eq!(second.get(&key, id).unwrap().content.title, "first device");
+        assert!(second.get(&key, id).unwrap().pinned);
+
+        second
+            .save(
+                &key,
+                SaveItem {
+                    id,
+                    content: ItemContent {
+                        title: "second edit".into(),
+                        ..Default::default()
+                    },
+                    archived: false,
+                    pinned: false,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            second.pending_sync_changes(&key, second_device, 1).unwrap()[0]
+                .envelope
+                .base_version,
+            1
+        );
+        first
+            .save(
+                &key,
+                SaveItem {
+                    id,
+                    content: ItemContent {
+                        title: "first edit".into(),
+                        ..Default::default()
+                    },
+                    archived: true,
+                    pinned: false,
+                },
+            )
+            .unwrap();
+        let first_pending = first.pending_sync_changes(&key, first_device, 1).unwrap();
+        let concurrent = SyncChange {
+            cursor: 2,
+            version: 2,
+            envelope: first_pending[0].envelope.clone(),
+            server_created_at: Utc::now(),
+        };
+        assert_eq!(
+            second
+                .apply_remote_change(&key, second_device, &concurrent)
+                .unwrap(),
+            RemoteApply::Conflict
+        );
+        let conflicts = second.list_sync_conflicts(&key).unwrap();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(
+            conflicts[0].local.as_ref().unwrap().content.title,
+            "second edit"
+        );
+        assert_eq!(
+            conflicts[0].remote.as_ref().unwrap().content.title,
+            "first edit"
+        );
+        second
+            .resolve_sync_conflict(&key, id, ConflictChoice::Local)
+            .unwrap();
+        assert!(second.list_sync_conflicts(&key).unwrap().is_empty());
+        assert_eq!(
+            second.pending_sync_changes(&key, second_device, 1).unwrap()[0]
+                .envelope
+                .base_version,
+            2
+        );
+
+        assert_eq!(
+            second
+                .apply_remote_change(&key, second_device, &concurrent)
+                .unwrap(),
+            RemoteApply::Ignored
+        );
+        let newer = SyncChange {
+            cursor: 3,
+            version: 3,
+            ..concurrent
+        };
+        assert_eq!(
+            second
+                .apply_remote_change(&key, second_device, &newer)
+                .unwrap(),
+            RemoteApply::Conflict
+        );
+        second
+            .resolve_sync_conflict(&key, id, ConflictChoice::Remote)
+            .unwrap();
+        assert_eq!(second.get(&key, id).unwrap().content.title, "first edit");
+        assert!(second.get(&key, id).unwrap().archived);
+        assert!(
+            second
+                .pending_sync_changes(&key, second_device, 100)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn encrypted_attachment_sync_streams_parts_and_imports_verified_ciphertext() {
+        let first_dir = TempDir::new().unwrap();
+        let second_dir = TempDir::new().unwrap();
+        let first = Repository::open(first_dir.path().join("snapline.db")).unwrap();
+        let second = Repository::open(second_dir.path().join("snapline.db")).unwrap();
+        let key = MasterKey::generate();
+        let id = Uuid::new_v4();
+        let plaintext = vec![42_u8; 2 * 1024 * 1024 + 321];
+        first
+            .save_attachment(&key, id, plaintext.as_slice())
+            .unwrap();
+        first
+            .save_attachment_descriptor(&AttachmentDescriptor {
+                id,
+                media_type: "video/mp4".into(),
+            })
+            .unwrap();
+        let data = first.pending_attachments(10).unwrap().pop().unwrap();
+        let first_part = first
+            .read_attachment_ciphertext_part(id, 0, 1024 * 1024)
+            .unwrap();
+        let remainder = first
+            .read_attachment_ciphertext_part(
+                id,
+                first_part.len() as u64,
+                data.attachment.ciphertext_bytes as usize - first_part.len(),
+            )
+            .unwrap();
+        let mut ciphertext = first_part;
+        ciphertext.extend_from_slice(&remainder);
+        second
+            .import_encrypted_attachment(&data, ciphertext.as_slice())
+            .unwrap();
+        let mut restored = Vec::new();
+        second.read_attachment(&key, id, &mut restored).unwrap();
+        assert_eq!(restored, plaintext);
+        assert_eq!(
+            second.attachment_descriptor(id).unwrap().media_type,
+            "video/mp4"
+        );
+        first.mark_attachment_synced(id).unwrap();
+        assert!(first.pending_attachments(10).unwrap().is_empty());
+
+        ciphertext[10] ^= 1;
+        let third_dir = TempDir::new().unwrap();
+        let third = Repository::open(third_dir.path().join("snapline.db")).unwrap();
+        assert!(
+            third
+                .import_encrypted_attachment(&data, ciphertext.as_slice())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn own_echo_after_lost_push_response_rebases_without_overwriting_newer_local_edit() {
+        let repository = Repository::open_in_memory().unwrap();
+        let key = MasterKey::generate();
+        let device = Uuid::new_v4();
+        let id = Uuid::new_v4();
+        repository
+            .save(
+                &key,
+                SaveItem {
+                    id,
+                    content: ItemContent {
+                        title: "sent version".into(),
+                        ..Default::default()
+                    },
+                    archived: false,
+                    pinned: false,
+                },
+            )
+            .unwrap();
+        let sent = repository.pending_sync_changes(&key, device, 1).unwrap()[0]
+            .envelope
+            .clone();
+        repository
+            .save(
+                &key,
+                SaveItem {
+                    id,
+                    content: ItemContent {
+                        title: "newer local edit".into(),
+                        ..Default::default()
+                    },
+                    archived: false,
+                    pinned: false,
+                },
+            )
+            .unwrap();
+        let echo = SyncChange {
+            cursor: 1,
+            version: 1,
+            envelope: sent,
+            server_created_at: Utc::now(),
+        };
+        assert_eq!(
+            repository.apply_remote_change(&key, device, &echo).unwrap(),
+            RemoteApply::Ignored
+        );
+        assert_eq!(
+            repository.get(&key, id).unwrap().content.title,
+            "newer local edit"
+        );
+        assert_eq!(
+            repository.pending_sync_changes(&key, device, 1).unwrap()[0]
+                .envelope
+                .base_version,
+            1
+        );
     }
 }

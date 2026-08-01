@@ -25,6 +25,7 @@ serde_json.workspace = true
 sha2.workspace = true
 snapline-crypto = { path = "../../../crates/crypto" }
 snapline-desktop-core = { path = "../../../crates/desktop-core" }
+snapline-domain = { path = "../../../crates/domain" }
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
 tauri-plugin-global-shortcut.workspace = true

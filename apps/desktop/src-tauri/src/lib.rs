@@ -9,6 +9,7 @@ use std::{
     time::Instant,
 };
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use cpal::{
     SampleFormat, Stream, StreamConfig,
@@ -18,8 +19,12 @@ use image::{DynamicImage, ImageFormat};
 use keyring::Entry;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
-use snapline_crypto::{KeyEnvelope, MasterKey, RecoveryKey};
-use snapline_desktop_core::{Attachment, AttachmentDescriptor, Item, Repository, SaveItem};
+use snapline_crypto::{EncryptedRecord, KeyEnvelope, MasterKey, RecoveryKey};
+use snapline_desktop_core::{
+    Attachment, AttachmentDescriptor, AttachmentSyncData, Item, Repository, SaveItem,
+};
+use snapline_desktop_core::{ConflictChoice, SyncConflict};
+use snapline_domain::{EncryptedEnvelope, SyncChange};
 use tauri::{
     AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
     menu::{Menu, MenuItem},
@@ -85,6 +90,15 @@ pub struct AiProcessResult {
     pub failed: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncResult {
+    pub pushed: usize,
+    pub pulled: usize,
+    pub conflicts: usize,
+    pub attachments_uploaded: usize,
+    pub attachments_downloaded: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredAiConfig {
     base_url: String,
@@ -127,6 +141,57 @@ struct LogoutRequest<'a> {
     refresh_token: &'a str,
 }
 
+#[derive(Serialize)]
+struct RefreshRequest<'a> {
+    refresh_token: &'a str,
+}
+
+#[derive(Serialize)]
+struct PushRequest {
+    idempotency_key: Uuid,
+    changes: Vec<EncryptedEnvelope>,
+}
+
+#[derive(Deserialize)]
+struct AcceptedChange {
+    object_id: Uuid,
+    version: i64,
+}
+
+#[derive(Deserialize)]
+struct PushResponse {
+    accepted: Vec<AcceptedChange>,
+}
+
+#[derive(Deserialize)]
+struct PullResponse {
+    changes: Vec<SyncChange>,
+    next_cursor: i64,
+    has_more: bool,
+}
+
+#[derive(Serialize)]
+struct AckRequest {
+    cursor: i64,
+}
+
+#[derive(Serialize)]
+struct CreateAttachmentRequest {
+    id: Uuid,
+    total_size: u64,
+    part_size: u64,
+    total_parts: u32,
+    ciphertext_sha256: String,
+    encrypted_metadata: String,
+}
+
+#[derive(Deserialize)]
+struct AttachmentResponse {
+    status: String,
+    uploaded_parts: Vec<u32>,
+    encrypted_metadata: String,
+}
+
 struct Session {
     user_id: Uuid,
     device_id: Uuid,
@@ -156,6 +221,7 @@ pub struct DesktopState {
     unlocked: Mutex<UnlockedState>,
     recording: Mutex<Option<RecordingSession>>,
     ai_processing: AtomicBool,
+    sync_processing: AtomicBool,
 }
 
 impl DesktopState {
@@ -171,6 +237,7 @@ impl DesktopState {
             unlocked: Mutex::new(UnlockedState::default()),
             recording: Mutex::new(None),
             ai_processing: AtomicBool::new(false),
+            sync_processing: AtomicBool::new(false),
         })
     }
 
@@ -397,6 +464,535 @@ async fn logout_account(state: State<'_, DesktopState>) -> Result<(), String> {
         .map_err(|_| "本地会话状态不可用".to_string())?;
     *unlocked = UnlockedState::default();
     Ok(())
+}
+
+fn invalidate_session(state: &DesktopState, user_id: Uuid) {
+    if let Ok(entry) = credential_entry(user_id) {
+        let _ = entry.delete_credential();
+    }
+    if let Ok(mut unlocked) = state.unlocked.lock() {
+        *unlocked = UnlockedState::default();
+    }
+}
+
+async fn access_token(state: &DesktopState, force_refresh: bool) -> Result<String, String> {
+    let (user_id, device_id, token, expires_at) = {
+        let unlocked = state
+            .unlocked
+            .lock()
+            .map_err(|_| "本地会话状态不可用".to_string())?;
+        let session = unlocked
+            .session
+            .as_ref()
+            .ok_or_else(|| "请先登录并解锁".to_string())?;
+        (
+            session.user_id,
+            session.device_id,
+            session.access_token.clone(),
+            session.access_expires_at,
+        )
+    };
+    if !force_refresh && expires_at > Utc::now() + chrono::Duration::minutes(2) {
+        return Ok(token);
+    }
+    let entry = credential_entry(user_id)?;
+    let refresh_token = entry
+        .get_password()
+        .map_err(|_| "登录已过期，请重新登录".to_string())?;
+    let response = state
+        .client
+        .post(state.api_url("auth/refresh"))
+        .json(&RefreshRequest {
+            refresh_token: &refresh_token,
+        })
+        .send()
+        .await
+        .map_err(|_| "无法连接 Snapline 服务端".to_string())?;
+    if response.status() == StatusCode::UNAUTHORIZED {
+        invalidate_session(state, user_id);
+        return Err("设备已撤销或登录已过期，请重新登录".to_string());
+    }
+    let refreshed = parse_response(response).await?;
+    if refreshed.user_id != user_id || refreshed.device_id != device_id {
+        invalidate_session(state, user_id);
+        return Err("服务器返回了不匹配的设备会话".to_string());
+    }
+    entry
+        .set_password(&refreshed.refresh_token)
+        .map_err(|_| "无法轮换 Windows 登录凭据".to_string())?;
+    let mut unlocked = state
+        .unlocked
+        .lock()
+        .map_err(|_| "本地会话状态不可用".to_string())?;
+    let session = unlocked
+        .session
+        .as_mut()
+        .ok_or_else(|| "请先登录并解锁".to_string())?;
+    session.access_token = refreshed.access_token.clone();
+    session.access_expires_at = refreshed.access_expires_at;
+    Ok(refreshed.access_token)
+}
+
+async fn send_authorized(
+    state: &DesktopState,
+    request: impl Fn(&str) -> reqwest::RequestBuilder,
+) -> Result<reqwest::Response, String> {
+    let token = access_token(state, false).await?;
+    let response = request(&token)
+        .send()
+        .await
+        .map_err(|_| "无法连接 Snapline 服务端".to_string())?;
+    if response.status() != StatusCode::UNAUTHORIZED {
+        return Ok(response);
+    }
+    let token = access_token(state, true).await?;
+    request(&token)
+        .send()
+        .await
+        .map_err(|_| "无法连接 Snapline 服务端".to_string())
+}
+
+fn sync_http_error(status: StatusCode) -> String {
+    match status {
+        StatusCode::UNAUTHORIZED => "设备已撤销或登录已过期，请重新登录",
+        StatusCode::CONFLICT => "服务器检测到并发修改",
+        StatusCode::TOO_MANY_REQUESTS => "同步请求过多，请稍后重试",
+        _ if status.is_server_error() => "Snapline 服务端暂时不可用",
+        _ => "同步请求失败",
+    }
+    .into()
+}
+
+async fn pull_remote(
+    state: &DesktopState,
+    repository: &Repository,
+    master_key: &MasterKey,
+    device_id: Uuid,
+) -> Result<usize, String> {
+    let mut pulled = 0;
+    loop {
+        let cursor = repository
+            .pull_cursor()
+            .map_err(|_| "无法读取同步游标".to_string())?;
+        let response = send_authorized(state, |token| {
+            state
+                .client
+                .get(state.api_url("sync/pull"))
+                .bearer_auth(token)
+                .query(&[("cursor", cursor), ("limit", 100_i64)])
+        })
+        .await?;
+        if !response.status().is_success() {
+            return Err(sync_http_error(response.status()));
+        }
+        let page: PullResponse = response
+            .json()
+            .await
+            .map_err(|_| "服务器返回了无效同步数据".to_string())?;
+        for change in &page.changes {
+            repository
+                .apply_remote_change(master_key, device_id, change)
+                .map_err(|_| "远端密文无法验证或应用".to_string())?;
+        }
+        repository
+            .set_pull_cursor(page.next_cursor)
+            .map_err(|_| "无法保存同步游标".to_string())?;
+        let ack = send_authorized(state, |token| {
+            state
+                .client
+                .post(state.api_url("sync/ack"))
+                .bearer_auth(token)
+                .json(&AckRequest {
+                    cursor: page.next_cursor,
+                })
+        })
+        .await?;
+        if !ack.status().is_success() {
+            return Err(sync_http_error(ack.status()));
+        }
+        pulled += page.changes.len();
+        if !page.has_more {
+            return Ok(pulled);
+        }
+    }
+}
+
+fn sync_idempotency_key(
+    device_id: Uuid,
+    pending: &[snapline_desktop_core::PendingSyncChange],
+) -> Uuid {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(device_id.as_bytes());
+    for change in pending {
+        hasher.update(change.envelope.object_id.as_bytes());
+        hasher.update(change.sequence.to_le_bytes());
+    }
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
+}
+
+async fn push_local(
+    state: &DesktopState,
+    repository: &Repository,
+    master_key: &MasterKey,
+    device_id: Uuid,
+) -> Result<usize, String> {
+    let mut pushed = 0;
+    loop {
+        let pending = repository
+            .pending_sync_changes(master_key, device_id, 100)
+            .map_err(|_| "无法读取本地同步队列".to_string())?;
+        if pending.is_empty() {
+            return Ok(pushed);
+        }
+        let body = PushRequest {
+            idempotency_key: sync_idempotency_key(device_id, &pending),
+            changes: pending
+                .iter()
+                .map(|change| change.envelope.clone())
+                .collect(),
+        };
+        let response = send_authorized(state, |token| {
+            state
+                .client
+                .post(state.api_url("sync/push"))
+                .bearer_auth(token)
+                .json(&body)
+        })
+        .await?;
+        if !response.status().is_success() {
+            return Err(sync_http_error(response.status()));
+        }
+        let accepted: PushResponse = response
+            .json()
+            .await
+            .map_err(|_| "服务器返回了无效同步确认".to_string())?;
+        if accepted.accepted.len() != pending.len() {
+            return Err("服务器同步确认数量不一致".to_string());
+        }
+        if accepted
+            .accepted
+            .iter()
+            .zip(&pending)
+            .any(|(accepted, pending)| accepted.object_id != pending.envelope.object_id)
+        {
+            return Err("服务器同步确认对象不匹配".to_string());
+        }
+        let completed = accepted
+            .accepted
+            .iter()
+            .zip(&pending)
+            .map(|(accepted, pending)| (accepted.object_id, accepted.version, pending.sequence))
+            .collect::<Vec<_>>();
+        repository
+            .complete_sync_push(&completed)
+            .map_err(|_| "无法提交本地同步状态".to_string())?;
+        pushed += completed.len();
+    }
+}
+
+fn attachment_server_checksum(hex: &str) -> Result<String, String> {
+    if hex.len() != 64 {
+        return Err("本地附件校验值无效".into());
+    }
+    let bytes = (0..64)
+        .step_by(2)
+        .map(|index| {
+            u8::from_str_radix(&hex[index..index + 2], 16)
+                .map_err(|_| "本地附件校验值无效".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn encrypt_attachment_metadata(
+    master_key: &MasterKey,
+    data: &AttachmentSyncData,
+) -> Result<String, String> {
+    let plaintext = serde_json::to_vec(data).map_err(|_| "无法编码附件元数据".to_string())?;
+    let encrypted = master_key
+        .encrypt(data.attachment.id.as_bytes(), &plaintext)
+        .map_err(|_| "无法加密附件元数据".to_string())?;
+    serde_json::to_string(&encrypted).map_err(|_| "无法编码附件密文元数据".to_string())
+}
+
+fn decrypt_attachment_metadata(
+    master_key: &MasterKey,
+    id: Uuid,
+    value: &str,
+) -> Result<AttachmentSyncData, String> {
+    let encrypted: EncryptedRecord =
+        serde_json::from_str(value).map_err(|_| "远端附件元数据无效".to_string())?;
+    let plaintext = master_key
+        .decrypt(id.as_bytes(), &encrypted)
+        .map_err(|_| "远端附件元数据认证失败".to_string())?;
+    let data: AttachmentSyncData =
+        serde_json::from_slice(&plaintext).map_err(|_| "远端附件元数据无效".to_string())?;
+    if data.attachment.id != id || data.descriptor.id != id {
+        return Err("远端附件元数据对象不匹配".into());
+    }
+    Ok(data)
+}
+
+async fn upload_attachments(
+    state: &DesktopState,
+    repository: &Repository,
+    master_key: &MasterKey,
+) -> Result<usize, String> {
+    let mut uploaded = 0;
+    loop {
+        let pending = repository
+            .pending_attachments(10)
+            .map_err(|_| "无法读取附件同步队列".to_string())?;
+        if pending.is_empty() {
+            return Ok(uploaded);
+        }
+        for data in pending {
+            let total_parts = u32::try_from(
+                data.attachment
+                    .ciphertext_bytes
+                    .div_ceil(snapline_domain::ATTACHMENT_PART_BYTES),
+            )
+            .map_err(|_| "附件分片数量过大".to_string())?;
+            let body = CreateAttachmentRequest {
+                id: data.attachment.id,
+                total_size: data.attachment.ciphertext_bytes,
+                part_size: snapline_domain::ATTACHMENT_PART_BYTES,
+                total_parts,
+                ciphertext_sha256: attachment_server_checksum(&data.attachment.ciphertext_sha256)?,
+                encrypted_metadata: encrypt_attachment_metadata(master_key, &data)?,
+            };
+            let response = send_authorized(state, |token| {
+                state
+                    .client
+                    .post(state.api_url("attachments"))
+                    .bearer_auth(token)
+                    .json(&body)
+            })
+            .await?;
+            if !response.status().is_success() {
+                return Err(sync_http_error(response.status()));
+            }
+            let status: AttachmentResponse = response
+                .json()
+                .await
+                .map_err(|_| "服务器返回了无效附件状态".to_string())?;
+            if status.encrypted_metadata != body.encrypted_metadata {
+                return Err("服务器附件元数据与本地对象不匹配".into());
+            }
+            if status.status != "complete" {
+                for part in 0..total_parts {
+                    if status.uploaded_parts.contains(&part) {
+                        continue;
+                    }
+                    let offset = u64::from(part) * snapline_domain::ATTACHMENT_PART_BYTES;
+                    let length = data
+                        .attachment
+                        .ciphertext_bytes
+                        .saturating_sub(offset)
+                        .min(snapline_domain::ATTACHMENT_PART_BYTES)
+                        as usize;
+                    let bytes = repository
+                        .read_attachment_ciphertext_part(data.attachment.id, offset, length)
+                        .map_err(|_| "无法读取加密附件分片".to_string())?;
+                    let path = format!("attachments/{}/parts/{part}", data.attachment.id);
+                    let response = send_authorized(state, |token| {
+                        state
+                            .client
+                            .put(state.api_url(&path))
+                            .bearer_auth(token)
+                            .body(bytes.clone())
+                    })
+                    .await?;
+                    if !response.status().is_success() {
+                        return Err(sync_http_error(response.status()));
+                    }
+                }
+                let path = format!("attachments/{}/complete", data.attachment.id);
+                let response = send_authorized(state, |token| {
+                    state.client.post(state.api_url(&path)).bearer_auth(token)
+                })
+                .await?;
+                if !response.status().is_success() {
+                    return Err(sync_http_error(response.status()));
+                }
+            }
+            repository
+                .mark_attachment_synced(data.attachment.id)
+                .map_err(|_| "无法提交附件同步状态".to_string())?;
+            uploaded += 1;
+        }
+    }
+}
+
+async fn download_attachments(
+    state: &DesktopState,
+    repository: &Repository,
+    master_key: &MasterKey,
+) -> Result<usize, String> {
+    use std::io::Write;
+    let ids = repository
+        .list(master_key, true)
+        .map_err(|_| "无法读取附件引用".to_string())?
+        .into_iter()
+        .flat_map(|item| item.content.attachment_ids)
+        .collect::<std::collections::HashSet<_>>();
+    let mut downloaded = 0;
+    for id in ids {
+        if repository
+            .has_attachment(id)
+            .map_err(|_| "无法读取附件状态".to_string())?
+        {
+            continue;
+        }
+        let path = format!("attachments/{id}");
+        let response = send_authorized(state, |token| {
+            state.client.get(state.api_url(&path)).bearer_auth(token)
+        })
+        .await?;
+        if !response.status().is_success() {
+            return Err(sync_http_error(response.status()));
+        }
+        let status: AttachmentResponse = response
+            .json()
+            .await
+            .map_err(|_| "服务器返回了无效附件状态".to_string())?;
+        if status.status != "complete" {
+            return Err("远端附件尚未上传完成".into());
+        }
+        let data = decrypt_attachment_metadata(master_key, id, &status.encrypted_metadata)?;
+        let content_path = format!("attachments/{id}/content");
+        let mut response = send_authorized(state, |token| {
+            state
+                .client
+                .get(state.api_url(&content_path))
+                .bearer_auth(token)
+        })
+        .await?;
+        if !response.status().is_success() {
+            return Err(sync_http_error(response.status()));
+        }
+        let temporary = state
+            .data_dir
+            .join(format!(".sync-{id}-{}.cipher", Uuid::new_v4()));
+        let mut output =
+            File::create(&temporary).map_err(|_| "无法创建附件下载文件".to_string())?;
+        let mut total = 0_u64;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| "附件下载中断".to_string())?
+        {
+            total = total
+                .checked_add(chunk.len() as u64)
+                .ok_or_else(|| "附件大小溢出".to_string())?;
+            if total > snapline_domain::MAX_ATTACHMENT_BYTES {
+                let _ = fs::remove_file(&temporary);
+                return Err("远端附件超过大小限制".into());
+            }
+            output
+                .write_all(&chunk)
+                .map_err(|_| "无法写入附件密文".to_string())?;
+        }
+        output
+            .sync_all()
+            .map_err(|_| "无法持久化附件密文".to_string())?;
+        drop(output);
+        let input = File::open(&temporary).map_err(|_| "无法读取附件下载文件".to_string())?;
+        let imported = repository
+            .import_encrypted_attachment(&data, input)
+            .map_err(|_| "附件密文校验失败".to_string());
+        let _ = fs::remove_file(&temporary);
+        imported?;
+        downloaded += 1;
+    }
+    Ok(downloaded)
+}
+
+struct SyncProcessingGuard<'a>(&'a AtomicBool);
+
+impl Drop for SyncProcessingGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+#[tauri::command]
+async fn sync_now(state: State<'_, DesktopState>) -> Result<SyncResult, String> {
+    if state.sync_processing.swap(true, Ordering::AcqRel) {
+        return Ok(SyncResult {
+            pushed: 0,
+            pulled: 0,
+            conflicts: 0,
+            attachments_uploaded: 0,
+            attachments_downloaded: 0,
+        });
+    }
+    let _guard = SyncProcessingGuard(&state.sync_processing);
+    let (repository, master_key) = crypto_context(&state)?;
+    let device_id = state
+        .unlocked
+        .lock()
+        .map_err(|_| "本地会话状态不可用".to_string())?
+        .session
+        .as_ref()
+        .map(|session| session.device_id)
+        .ok_or_else(|| "请先登录并解锁".to_string())?;
+    let attachments_uploaded = upload_attachments(&state, &repository, &master_key).await?;
+    let mut pulled = pull_remote(&state, &repository, &master_key, device_id).await?;
+    let pushed = match push_local(&state, &repository, &master_key, device_id).await {
+        Ok(value) => value,
+        Err(error) if error == "服务器检测到并发修改" => {
+            pulled += pull_remote(&state, &repository, &master_key, device_id).await?;
+            push_local(&state, &repository, &master_key, device_id).await?
+        }
+        Err(error) => return Err(error),
+    };
+    pulled += pull_remote(&state, &repository, &master_key, device_id).await?;
+    let attachments_downloaded = download_attachments(&state, &repository, &master_key).await?;
+    let conflicts = repository
+        .list_sync_conflicts(&master_key)
+        .map_err(|_| "无法读取同步冲突".to_string())?
+        .len();
+    Ok(SyncResult {
+        pushed,
+        pulled,
+        conflicts,
+        attachments_uploaded,
+        attachments_downloaded,
+    })
+}
+
+#[tauri::command]
+fn list_sync_conflicts(state: State<'_, DesktopState>) -> Result<Vec<SyncConflict>, String> {
+    with_repository(&state, |repository, master_key| {
+        repository
+            .list_sync_conflicts(master_key)
+            .map_err(|_| "无法读取同步冲突".to_string())
+    })
+}
+
+#[tauri::command]
+fn resolve_sync_conflict(
+    state: State<'_, DesktopState>,
+    id: Uuid,
+    choice: String,
+) -> Result<(), String> {
+    let choice = match choice.as_str() {
+        "local" => ConflictChoice::Local,
+        "remote" => ConflictChoice::Remote,
+        _ => return Err("冲突处理方式无效".to_string()),
+    };
+    with_repository(&state, |repository, master_key| {
+        repository
+            .resolve_sync_conflict(master_key, id, choice)
+            .map_err(|_| "无法处理同步冲突".to_string())
+    })
 }
 
 fn with_repository<T>(
@@ -1470,6 +2066,9 @@ pub fn run() {
             list_items,
             save_item,
             delete_item,
+            sync_now,
+            list_sync_conflicts,
+            resolve_sync_conflict,
             get_ai_config,
             set_ai_config,
             clear_ai_config,
@@ -1755,5 +2354,151 @@ mod tests {
             .delete_credential()
             .unwrap();
         println!("LIVE_TEST_EMAIL={email}");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires SNAPLINE_SYNC_LIVE_TEST=1 and the deployed myServer API"]
+    async fn live_myserver_two_device_record_attachment_sync_and_revocation() {
+        assert_eq!(std::env::var("SNAPLINE_SYNC_LIVE_TEST").as_deref(), Ok("1"));
+        let first_dir = tempfile::tempdir().unwrap();
+        let second_dir = tempfile::tempdir().unwrap();
+        let first =
+            DesktopState::new(first_dir.path().to_path_buf(), DEFAULT_SERVER_URL.into()).unwrap();
+        let email = format!("sync-smoke-{}@example.com", Uuid::new_v4());
+        let password = "temporary sync smoke password";
+        let (master_key, wrapped_master_key, recovery_blob, _) =
+            registration_material(password).unwrap();
+        let registered = parse_response(
+            first
+                .client
+                .post(first.api_url("auth/register"))
+                .json(&RegisterRequest {
+                    email: &email,
+                    password,
+                    device_name: "Sync Device A",
+                    platform: "windows",
+                    wrapped_master_key,
+                    recovery_blob,
+                })
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let first_refresh = registered.refresh_token.clone();
+        first.unlock(&registered, master_key).unwrap();
+        let (first_repository, first_key) = crypto_context(&first).unwrap();
+        let attachment_id = Uuid::new_v4();
+        let attachment_plaintext = vec![17_u8; 9 * 1024 * 1024 + 333];
+        first_repository
+            .save_attachment(&first_key, attachment_id, attachment_plaintext.as_slice())
+            .unwrap();
+        first_repository
+            .save_attachment_descriptor(&AttachmentDescriptor {
+                id: attachment_id,
+                media_type: "video/mp4".into(),
+            })
+            .unwrap();
+        let item_id = Uuid::new_v4();
+        first_repository
+            .save(
+                &first_key,
+                SaveItem {
+                    id: item_id,
+                    content: ItemContent {
+                        title: "cross-device encrypted record".into(),
+                        markdown: "private sync body".into(),
+                        attachment_ids: vec![attachment_id],
+                        ..Default::default()
+                    },
+                    archived: false,
+                    pinned: true,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            upload_attachments(&first, &first_repository, &first_key)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            push_local(&first, &first_repository, &first_key, registered.device_id)
+                .await
+                .unwrap(),
+            1
+        );
+
+        let second =
+            DesktopState::new(second_dir.path().to_path_buf(), DEFAULT_SERVER_URL.into()).unwrap();
+        let logged_in = parse_response(
+            second
+                .client
+                .post(second.api_url("auth/login"))
+                .json(&LoginRequest {
+                    email: &email,
+                    password,
+                    device_name: "Sync Device B",
+                    platform: "windows",
+                })
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let second_key = master_key_from_response(password, &logged_in).unwrap();
+        second.unlock(&logged_in, second_key).unwrap();
+        let (second_repository, second_key) = crypto_context(&second).unwrap();
+        assert!(
+            pull_remote(
+                &second,
+                &second_repository,
+                &second_key,
+                logged_in.device_id
+            )
+            .await
+            .unwrap()
+                >= 1
+        );
+        assert_eq!(
+            download_attachments(&second, &second_repository, &second_key)
+                .await
+                .unwrap(),
+            1
+        );
+        let synced = second_repository.get(&second_key, item_id).unwrap();
+        assert_eq!(synced.content.title, "cross-device encrypted record");
+        assert!(synced.pinned);
+        let mut restored = Vec::new();
+        second_repository
+            .read_attachment(&second_key, attachment_id, &mut restored)
+            .unwrap();
+        assert_eq!(restored, attachment_plaintext);
+
+        let revoke = second
+            .client
+            .delete(second.api_url(&format!("devices/{}", registered.device_id)))
+            .bearer_auth(access_token(&second, false).await.unwrap())
+            .send()
+            .await
+            .unwrap();
+        assert!(revoke.status().is_success());
+        credential_entry(registered.user_id)
+            .unwrap()
+            .set_password(&first_refresh)
+            .unwrap();
+        assert!(
+            access_token(&first, true)
+                .await
+                .unwrap_err()
+                .contains("撤销")
+        );
+        assert!(first.unlocked.lock().unwrap().session.is_none());
+        let _ = credential_entry(registered.user_id)
+            .unwrap()
+            .delete_credential();
+        println!("SYNC_LIVE_TEST_EMAIL={email}");
     }
 }

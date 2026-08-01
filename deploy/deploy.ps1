@@ -10,10 +10,10 @@ try {
     Push-Location $projectRoot
     $deploymentInputs = @(
         "Cargo.toml", "Cargo.lock", ".cargo", "crates", "deploy", "docs", "vendor",
-        ".env.example", ".gitignore", "README.md"
+        ".env.example", ".gitignore", ".dockerignore", "README.md"
     )
     if (Test-Path "apps") { $deploymentInputs += "apps" }
-    tar -czf $archive $deploymentInputs
+    tar -czf $archive --exclude='apps/desktop/node_modules' --exclude='apps/desktop/dist' --exclude='*.log' $deploymentInputs
     if ($LASTEXITCODE -ne 0) { throw "Failed to create deployment archive" }
     Pop-Location
 

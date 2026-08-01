@@ -3,8 +3,8 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY .cargo .cargo
 COPY vendor vendor
-COPY crates/domain crates/domain
-COPY crates/server crates/server
+COPY crates crates
+COPY apps/desktop/src-tauri apps/desktop/src-tauri
 RUN cargo build --offline --locked --release -p snapline-server
 
 FROM debian:bookworm-slim

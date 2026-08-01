@@ -36,6 +36,7 @@ pub struct AttachmentResponse {
     pub id: Uuid,
     pub status: String,
     pub uploaded_parts: Vec<u32>,
+    pub encrypted_metadata: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -45,6 +46,7 @@ struct AttachmentRow {
     total_parts: i32,
     ciphertext_sha256: String,
     status: String,
+    encrypted_metadata: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -235,7 +237,7 @@ async fn get_attachment(
     id: Uuid,
 ) -> Result<AttachmentRow, ApiError> {
     sqlx::query_as::<_, AttachmentRow>(
-        "SELECT total_size,part_size,total_parts,ciphertext_sha256,status \
+        "SELECT total_size,part_size,total_parts,ciphertext_sha256,status,encrypted_metadata \
          FROM attachments WHERE user_id=$1 AND id=$2",
     )
     .bind(user_id)
@@ -268,6 +270,7 @@ async fn status_response(
         id,
         status: attachment.status,
         uploaded_parts,
+        encrypted_metadata: attachment.encrypted_metadata,
     })
 }
 

@@ -1,6 +1,14 @@
 name: snapline
 
 services:
+  object-init:
+    image: alpine:3.22
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /data/objects && chown -R 10001:10001 /data/objects"]
+    volumes:
+      - object-data:/data/objects
+    networks: [backend]
+
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -23,6 +31,8 @@ services:
       dockerfile: crates/server/Dockerfile
     restart: unless-stopped
     depends_on:
+      object-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     environment:

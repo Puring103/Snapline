@@ -53,6 +53,22 @@ export interface AgentAnswer {
   rounds: number;
 }
 
+export interface SyncResult {
+  pushed: number;
+  pulled: number;
+  conflicts: number;
+  attachments_uploaded: number;
+  attachments_downloaded: number;
+}
+
+export interface SyncConflict {
+  object_id: string;
+  local: import('../types').Item | null;
+  remote: import('../types').Item | null;
+  remote_deleted: boolean;
+  remote_version: number;
+}
+
 const DEV_AI_KEY = 'snapline-dev-ai-config';
 
 export async function getAiConfig(): Promise<AiConfigStatus> {
@@ -119,6 +135,21 @@ export async function askAgent(question: string): Promise<AgentAnswer> {
     citations: matches.map((item) => ({ id: item.id, title: item.content.title || '无标题记录', summary: item.content.ai_metadata?.summary || item.content.markdown.slice(0, 120), source_type: item.content.source_type, updated_at: item.updated_at })),
     rounds: 1,
   };
+}
+
+export async function syncNow(): Promise<SyncResult> {
+  if (!isTauri()) return { pushed: 0, pulled: 0, conflicts: 0, attachments_uploaded: 0, attachments_downloaded: 0 };
+  return invoke<SyncResult>('sync_now');
+}
+
+export async function listSyncConflicts(): Promise<SyncConflict[]> {
+  if (!isTauri()) return [];
+  return invoke<SyncConflict[]>('list_sync_conflicts');
+}
+
+export async function resolveSyncConflict(id: string, choice: 'local' | 'remote'): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>('resolve_sync_conflict', { id, choice });
 }
 
 export async function sessionStatus(): Promise<SessionStatus> {
