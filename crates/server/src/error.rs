@@ -17,6 +17,8 @@ pub enum ApiError {
     Conflict,
     #[error("internal server error")]
     Internal,
+    #[error("too many requests")]
+    RateLimited,
 }
 
 impl ApiError {
@@ -27,6 +29,7 @@ impl ApiError {
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::Conflict => (StatusCode::CONFLICT, "conflict"),
             Self::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+            Self::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
         }
     }
 }

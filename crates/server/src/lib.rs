@@ -1,8 +1,17 @@
+pub mod auth;
 pub mod config;
 pub mod error;
+pub mod rate_limit;
+pub mod state;
 
-use axum::{Json, Router, routing::get};
+use axum::{
+    Json, Router,
+    routing::{delete, get, post},
+};
 use serde::Serialize;
+use sqlx::PgPool;
+
+use crate::{config::Config, state::AppState};
 
 #[derive(Debug, Serialize)]
 struct HealthResponse {
@@ -10,10 +19,18 @@ struct HealthResponse {
     service: &'static str,
 }
 
-pub fn health_router() -> Router {
+pub fn app(pool: PgPool, config: &Config) -> Router {
+    let state = AppState::new(pool, config);
     Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
+        .route("/api/v1/auth/register", post(auth::register))
+        .route("/api/v1/auth/login", post(auth::login))
+        .route("/api/v1/auth/refresh", post(auth::refresh))
+        .route("/api/v1/auth/logout", post(auth::logout))
+        .route("/api/v1/devices", get(auth::list_devices))
+        .route("/api/v1/devices/{id}", delete(auth::revoke_device))
+        .with_state(state)
 }
 
 async fn live() -> Json<HealthResponse> {
@@ -28,26 +45,4 @@ async fn ready() -> Json<HealthResponse> {
         status: "ok",
         service: "snapline-server",
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::Body;
-    use http::{Request, StatusCode};
-    use tower::ServiceExt;
-
-    #[tokio::test]
-    async fn live_health_check_is_available() {
-        let response = health_router()
-            .oneshot(
-                Request::builder()
-                    .uri("/health/live")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
 }

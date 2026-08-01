@@ -12,6 +12,7 @@ async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
 chrono.workspace = true
+email_address.workspace = true
 http.workspace = true
 jsonwebtoken.workspace = true
 rand.workspace = true
@@ -29,4 +30,3 @@ uuid.workspace = true
 
 [dev-dependencies]
 tower.workspace = true
-

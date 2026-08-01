@@ -1,5 +1,6 @@
 use anyhow::Result;
-use snapline_server::{config::Config, health_router};
+use snapline_server::{app, config::Config};
+use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
@@ -13,8 +14,13 @@ async fn main() -> Result<()> {
         .init();
 
     let config = Config::from_env()?;
+    let pool = PgPoolOptions::new()
+        .max_connections(20)
+        .connect(&config.database_url)
+        .await?;
+    sqlx::migrate!().run(&pool).await?;
     let listener = TcpListener::bind(config.bind).await?;
     tracing::info!(address = %config.bind, "snapline server listening");
-    axum::serve(listener, health_router()).await?;
+    axum::serve(listener, app(pool, &config)).await?;
     Ok(())
 }
